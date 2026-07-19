@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
 
@@ -17,12 +17,51 @@ interface ServiceInfo {
   recognized?: string
   category?: string
   icon?: string
+  logSource?: string
+  logPaths?: string[]
+  logCommand?: string
+}
+
+interface LogLine {
+  line: string
+  num: number
+}
+
+interface LogResponse {
+  source: string
+  target: string
+  lines: LogLine[]
+  total: number
+  warnings?: string[]
 }
 
 export default function ServicesModule() {
   const [data, setData] = useState<{ os: string; managed: boolean; services: ServiceInfo[]; note?: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
+  const [logTarget, setLogTarget] = useState<ServiceInfo | null>(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed'>('all')
+
+  const visible = useMemo(() => {
+    if (!data) return []
+    const q = search.trim().toLowerCase()
+    const list = data.services.filter((s) => {
+      if (q) {
+        const hay = `${s.name} ${s.recognized || ''} ${s.category || ''}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      switch (statusFilter) {
+        case 'running': return s.subStatus === 'running'
+        case 'exited': return s.subStatus === 'exited'
+        case 'failed': return s.status === 'failed'
+        default: return true
+      }
+    })
+    // 稳定的基础排序:按名称,避免每次轮询/筛选时行位置跳动
+    list.sort((a, b) => a.name.localeCompare(b.name))
+    return list
+  }, [data, search, statusFilter])
 
   const load = useCallback(() => {
     getJSON('/api/core/services').then(setData).catch(() => setMsg('加载失败'))
@@ -54,8 +93,13 @@ export default function ServicesModule() {
   return (
     <div className="module">
       <div className="module-head">
-        <h2>服务发现</h2>
-        <span className="pill">{activeCount}/{data.services.length} 活跃 · {data.os}</span>
+        <h2>服务发现 <span className="pill pill-sub">{activeCount}/{data.services.length} 活跃 · {data.os}</span></h2>
+        <div className="head-tools">
+          <div className="search-box">
+            <span className="search-ico">🔍</span>
+            <input className="ipt search-ipt" placeholder="搜索服务，如 nginx" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+        </div>
       </div>
 
       {!data.managed && (
@@ -69,15 +113,23 @@ export default function ServicesModule() {
             <thead>
               <tr>
                 <th>名称</th>
-                <th>状态</th>
+                <th>
+                  状态
+                  <select className="sel sel-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
+                    <option value="all">全部</option>
+                    <option value="running">运行中</option>
+                    <option value="exited">已退出</option>
+                    <option value="failed">失败</option>
+                  </select>
+                </th>
                 <th>说明</th>
                 <th>单元文件 / PID</th>
-                <th>日志</th>
+                <th>日志命令</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              {data.services.map((s) => (
+              {visible.map((s) => (
                 <tr key={s.id}>
                   <td className="mono">
                     {s.icon && <span className="svc-icon">{s.icon}</span>}
@@ -96,7 +148,11 @@ export default function ServicesModule() {
                     <span>{s.description}</span>
                   </td>
                   <td className="mono small">{s.isProcess ? `PID ${s.pid}` : s.unitFile || '—'}</td>
-                  <td className="mono small dim">{s.logHint || '—'}</td>
+                  <td className="mono small dim">
+                    {s.logCommand
+                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft: 6 }}>{s.logCommand}</span></>
+                      : '—'}
+                  </td>
                   <td>
                     <div className="btn-row">
                       <button className="btn btn-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'start')}>启动</button>
@@ -111,6 +167,126 @@ export default function ServicesModule() {
           </table>
         </div>
       </Card>
+
+      {logTarget && (
+        <LogModal service={logTarget} onClose={() => setLogTarget(null)} />
+      )}
     </div>
   )
+}
+
+function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => void }) {
+  const [logLines, setLogLines] = useState<LogLine[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [loadingLog, setLoadingLog] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [tab, setTab] = useState<'journalctl' | 'file'>('journalctl')
+  const [filePath, setFilePath] = useState<string>('')
+  const [filter, setFilter] = useState('')
+  const refreshTimer = useRef<number | null>(null)
+
+  const hasJournal = service.logSource === 'journalctl' || service.logSource === 'both'
+  const hasFile = (service.logPaths && service.logPaths.length > 0) || service.logSource === 'file'
+
+  const fetchLog = useCallback(async () => {
+    setLoadingLog(true)
+    let url = ''
+    if (tab === 'journalctl') {
+      url = `/api/core/services/logs?source=journalctl&target=${encodeURIComponent(service.name)}&lines=100`
+    } else {
+      const p = filePath || (service.logPaths && service.logPaths[0]) || ''
+      if (!p) {
+        setLoadingLog(false)
+        return
+      }
+      url = `/api/core/services/logs?source=file&path=${encodeURIComponent(p)}&lines=100`
+    }
+    try {
+      const res = (await getJSON(url)) as LogResponse
+      setLogLines(res.lines || [])
+      setWarnings(res.warnings || [])
+    } catch {
+      setWarnings(['日志获取失败'])
+    }
+    setLoadingLog(false)
+  }, [tab, filePath, service.name, service.logPaths])
+
+  useEffect(() => {
+    fetchLog()
+    if (autoRefresh) {
+      refreshTimer.current = window.setInterval(() => fetchLog(), 5000)
+    }
+    return () => {
+      if (refreshTimer.current) window.clearInterval(refreshTimer.current)
+    }
+  }, [autoRefresh, fetchLog])
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal log-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-title">
+            {service.icon && <span className="svc-icon">{service.icon}</span>}
+            <b>{service.recognized || service.name}</b>
+            <span className="dim small"> · {service.name}</span>
+          </div>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>✕ 关闭</button>
+        </div>
+
+        <div className="log-panel-head">
+          {hasJournal && hasFile ? (
+            <div className="tab-row">
+              <button className={`tab ${tab === 'journalctl' ? 'tab-active' : ''}`} onClick={() => setTab('journalctl')}>📋 journalctl</button>
+              <button className={`tab ${tab === 'file' ? 'tab-active' : ''}`} onClick={() => setTab('file')}>📁 文件日志</button>
+            </div>
+          ) : hasJournal ? (
+            <span className="log-srclabel">📋 journalctl 日志</span>
+          ) : hasFile ? (
+            <span className="log-srclabel">📁 文件日志</span>
+          ) : (
+            <span className="log-srclabel">⚠ 无可识别日志来源</span>
+          )}
+          <div className="log-tools">
+            {tab === 'file' && service.logPaths && service.logPaths.length > 1 && (
+              <select className="sel sel-sm" value={filePath || service.logPaths[0]} onChange={(e) => setFilePath(e.target.value)}>
+                {service.logPaths.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+            <input className="ipt ipt-sm" placeholder="过滤关键词…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <label className="chk"><input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} /> 自动刷新</label>
+            <button className="btn btn-sm btn-ghost" onClick={() => fetchLog()}>刷新</button>
+          </div>
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="log-warn">{warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</div>
+        )}
+
+        <div className="log-body">
+          {loadingLog ? (
+            <div className="log-loading">加载中…</div>
+          ) : logLines.length === 0 ? (
+            <div className="log-empty">（无日志内容）</div>
+          ) : (
+            logLines
+              .filter((l) => !filter || l.line.toLowerCase().includes(filter.toLowerCase()))
+              .map((l) => (
+                <div key={l.num} className={`log-line ${lineLevel(l.line)}`}>
+                  <span className="log-num">{l.num}</span>
+                  <span className="log-text">{l.line}</span>
+                </div>
+              ))
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function lineLevel(line: string): string {
+  const l = line.toLowerCase()
+  if (l.includes('error') || l.includes('err') || l.includes('fail') || l.includes('fatal')) return 'lvl-err'
+  if (l.includes('warn') || l.includes('warning')) return 'lvl-warn'
+  if (l.includes('info') || l.includes('notice')) return 'lvl-info'
+  return 'lvl-default'
 }
