@@ -211,7 +211,7 @@ export default function ResourcesModule() {
   let liveOption: any
   if (metric === 'combined') {
     liveOption = {
-      grid: { left: 40, right: 12, top: 24, bottom: 24 },
+      grid: { left: 40, right: 70, top: 24, bottom: 24 },
       legend: { top: 0, textStyle: { color: dim }, data: ['CPU%', '下行', '上行'] },
       tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
