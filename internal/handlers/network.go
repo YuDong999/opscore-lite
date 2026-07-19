@@ -21,7 +21,9 @@ func Network(w http.ResponseWriter, r *http.Request) {
 	ifaceErr := ""
 	if il, err := net.Interfaces(); err == nil {
 		for _, i := range il {
-			var addrs []string
+			// 关键修复: 用非 nil 空 slice, 否则无地址接口(如 virbr0-nic/dummy0)
+			// 序列化后是 null, 前端 i.addrs.join() 直接崩溃白屏。
+			addrs := []string{}
 			for _, a := range i.Addrs {
 				addrs = append(addrs, a.Addr)
 			}
