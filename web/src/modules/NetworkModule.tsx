@@ -5,6 +5,8 @@ import FirewallModule from './FirewallModule'
 
 interface NetData {
   interfaces: { name: string; mtu: number; flags: string[]; addrs: string[] }[]
+  ifaceError?: string
+  listenError?: string
   listeners: {
     protocol: string
     local: string
@@ -51,6 +53,13 @@ export default function NetworkModule() {
       {tab === 'network' &&
         (data ? (
           <div className="grid grid-2">
+            {(data.ifaceError || data.listenError) && (
+              <div className="banner banner-warn small" style={{ gridColumn: '1 / -1' }}>
+                后端采集出现错误(已尽量返回其余数据):
+                {data.ifaceError && <div>· 网络接口: {data.ifaceError}</div>}
+                {data.listenError && <div>· 监听端口: {data.listenError}</div>}
+              </div>
+            )}
             <Card title="网络接口" subtitle="interface / MTU / 地址">
               <div className="table-wrap">
                 <table className="data-table">

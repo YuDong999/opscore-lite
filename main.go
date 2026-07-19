@@ -2,9 +2,11 @@ package main
 
 import (
 	"embed"
+	"flag"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"opscore/internal/handlers"
 	"opscore/internal/metrics"
 	"strings"
@@ -15,6 +17,20 @@ var dist embed.FS
 
 func main() {
 	metrics.Start() // 启动后台指标采集
+
+	// 监听地址(自适应部署):
+	//  - 默认 :9090,避免与常见 nginx 占用的 8080 冲突,无 nginx 时可直接访问。
+	//  - 有 nginx 反代时建议 -addr 127.0.0.1:9090,仅本机监听,由 nginx 对外暴露。
+	//  - 优先级:-addr 参数 > OPCORE_ADDR 环境变量 > 默认 :9090。
+	addr := ":9090"
+	if env := os.Getenv("OPCORE_ADDR"); env != "" {
+		addr = env
+	}
+	flagAddr := flag.String("addr", "", "监听地址,如 :9090 或 127.0.0.1:9090(默认 :9090,OPCORE_ADDR 可覆盖)")
+	flag.Parse()
+	if *flagAddr != "" {
+		addr = *flagAddr
+	}
 
 	mux := http.NewServeMux()
 	// ── 核心模块 API ──
@@ -48,8 +64,7 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	addr := ":8080"
-	log.Println("OpsCore demo 已启动 -> http://localhost:8080")
+	log.Println("OpsCore demo 已启动 -> http://" + addr)
 	log.Fatal(http.ListenAndServe(addr, cors(mux)))
 }
 

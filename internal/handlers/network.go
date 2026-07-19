@@ -18,6 +18,7 @@ func Network(w http.ResponseWriter, r *http.Request) {
 		Addrs []string `json:"addrs"`
 	}
 	var ifaces []Iface
+	ifaceErr := ""
 	if il, err := net.Interfaces(); err == nil {
 		for _, i := range il {
 			var addrs []string
@@ -26,6 +27,9 @@ func Network(w http.ResponseWriter, r *http.Request) {
 			}
 			ifaces = append(ifaces, Iface{Name: i.Name, MTU: i.MTU, Flags: i.Flags, Addrs: addrs})
 		}
+	} else {
+		// 即便接口采集失败,也把错误带回前端,避免"空白无提示"
+		ifaceErr = err.Error()
 	}
 
 	type Listen struct {
@@ -42,6 +46,7 @@ func Network(w http.ResponseWriter, r *http.Request) {
 		Verified bool   `json:"verified"` // 端口提示与进程身份一致 → 已确认
 	}
 	var listens []Listen
+	connErr := ""
 	if conns, err := net.Connections("all"); err == nil {
 		for _, c := range conns {
 			if !strings.EqualFold(c.Status, "listen") {
@@ -80,7 +85,16 @@ func Network(w http.ResponseWriter, r *http.Request) {
 			}
 			listens = append(listens, li)
 		}
+	} else {
+		connErr = err.Error()
 	}
 
-	WriteJSON(w, map[string]any{"interfaces": ifaces, "listeners": listens})
+	resp := map[string]any{"interfaces": ifaces, "listeners": listens}
+	if ifaceErr != "" {
+		resp["ifaceError"] = ifaceErr
+	}
+	if connErr != "" {
+		resp["listenError"] = connErr
+	}
+	WriteJSON(w, resp)
 }

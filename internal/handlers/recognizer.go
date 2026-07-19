@@ -26,6 +26,7 @@ var knownByProc = map[string]SvcMeta{
 	"apache2":       {Label: "Apache", Category: "Web 服务器", Icon: "🌐"},
 	"httpd":         {Label: "Apache", Category: "Web 服务器", Icon: "🌐"},
 	"sshd":          {Label: "OpenSSH", Category: "远程访问", Icon: "🔑"},
+	"docker":        {Label: "Docker", Category: "容器", Icon: "🐳"},
 	"dockerd":       {Label: "Docker", Category: "容器", Icon: "🐳"},
 	"containerd":    {Label: "containerd", Category: "容器", Icon: "🐳"},
 	"kubelet":       {Label: "Kubelet", Category: "容器编排", Icon: "☸️"},

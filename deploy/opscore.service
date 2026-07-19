@@ -1,0 +1,40 @@
+# ============================================================
+# OpsCore systemd 单元(开机自启 + 崩溃自动拉起)
+# 用法:
+#   1. 把二进制放到 /opt/opscore/opscore
+#   2. 建专用低权用户: useradd -r -s /usr/sbin/nologin opscore
+#   3. chown -R opscore:opscore /opt/opscore
+#   4. 拷贝本文件到 /etc/systemd/system/opscore.service
+#   5. systemctl daemon-reload && systemctl enable --now opscore
+# ============================================================
+
+[Unit]
+Description=OpsCore Demo (单二进制运维控制台)
+After=network.target
+
+[Service]
+Type=simple
+# 有 nginx 反代时:仅本机监听
+ExecStart=/opt/opscore/opscore -addr 127.0.0.1:9090
+# 无 nginx 直连时:监听所有网卡(改这一行即可)
+# ExecStart=/opt/opscore/opscore
+Environment=OPCORE_ADDR=127.0.0.1:9090
+
+Restart=on-failure
+RestartSec=3
+
+# 安全:用专用低权用户运行,不要 root
+User=opscore
+Group=opscore
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/opscore
+
+# 注意:防火墙「写入」与服务「启停」需要 root 权限。
+# 若要以非 root 跑 OpsCore,这些高危操作会失败(只读预览不受影响)。
+# 需要完整功能时,可去掉 User/Group 行以 root 运行(不推荐),
+# 或为 systemctl 配置 sudo/polkit 授权。
+
+[Install]
+WantedBy=multi-user.target
