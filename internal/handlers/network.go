@@ -21,7 +21,7 @@ func Network(w http.ResponseWriter, r *http.Request) {
 	ifaceErr := ""
 	if il, err := net.Interfaces(); err == nil {
 		for _, i := range il {
-			var addrs []string
+			addrs := []string{}
 			for _, a := range i.Addrs {
 				addrs = append(addrs, a.Addr)
 			}
