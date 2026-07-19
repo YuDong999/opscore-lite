@@ -1,0 +1,42 @@
+# OpsCore 容器化部署 —— 关键:让它"看得到真机"
+#
+# OpsCore 的价值是观察/控制宿主机本身(网络接口、监听端口、systemd 服务、
+# 宿主机 Docker)。默认容器Namespace是隔离的,会看到"假机器"。
+# 因此必须:privileged + host 网络 + host PID + 挂载宿主关键目录。
+#
+# 端口策略(配合已有 nginx):
+#   - 默认 OPCORE_ADDR=127.0.0.1:9090 → 仅本机监听,由宿主机 nginx 反代对外暴露
+#   - 若不用 nginx、想直连:改成 OPCORE_ADDR=:9090 (host 网络下即宿主 :9090)
+#
+# 用法:
+#   docker compose up -d --build        # 首次构建
+#   docker compose up -d                # 之后直接起
+#   docker compose logs -f              # 看日志
+#   docker compose down                 # 停止
+
+services:
+  opscore:
+    build: .
+    image: ikunops/opscore:latest
+    container_name: opscore
+    # 特权模式:读取宿主 /proc、/sys、控制防火墙等需要
+    privileged: true
+    # host 网络:看到宿主真实网络接口与监听端口(否则只能看到容器自己)
+    network_mode: host
+    # host PID:看到宿主真实进程表(PID→进程名识别服务身份的依据)
+    pid: host
+    environment:
+      # 仅本机监听,交给宿主机 nginx 反代;直连改成 ":9090"
+      - OPCORE_ADDR=127.0.0.1:9090
+    volumes:
+      # systemd 单元信息(服务列表/启停)。pid:host 已共享 /proc,这里补 systemd 套接字
+      - /run/systemd/system:/run/systemd/system:ro
+      - /run/dbus:/run/dbus:ro
+      # 宿主 Docker 套接字:识别/管理宿主机上的容器
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 日志与配置(只读),便于某些采集
+      - /var/log:/var/log:ro
+      - /etc:/etc:ro
+    restart: unless-stopped
+    # 说明:dist/opscore 是提交在仓库里的 Linux 静态二进制,可直接复用;
+    # 走多阶段构建会自动从源码重编,二者等价。

@@ -1,0 +1,18 @@
+# 构建上下文排除项:减少拷贝体积,避免把无关产物带进镜像
+.git
+.gitignore
+
+# 前端:compose/docker build 会自动重新 npm build,无需上下文里的产物
+web/node_modules
+web/dist
+
+# 已提交的 Linux 静态二进制(多阶段构建会重新编译,不需要它进上下文)
+dist/opscore
+
+# Windows 二进制(跨平台打包用,容器用不到)
+dist/opscore.exe
+*.exe
+
+# 本地临时
+*.log
+.DS_Store
