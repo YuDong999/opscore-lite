@@ -21,8 +21,6 @@ func Network(w http.ResponseWriter, r *http.Request) {
 	ifaceErr := ""
 	if il, err := net.Interfaces(); err == nil {
 		for _, i := range il {
-			// 关键修复: 用非 nil 空 slice, 否则无地址接口(如 virbr0-nic/dummy0)
-			// 序列化后是 null, 前端 i.addrs.join() 直接崩溃白屏。
 			addrs := []string{}
 			for _, a := range i.Addrs {
 				addrs = append(addrs, a.Addr)
@@ -77,10 +75,7 @@ func Network(w http.ResponseWriter, r *http.Request) {
 							li.Service = meta.Label
 							li.Category = meta.Category
 							li.Icon = meta.Icon
-							// 只有"端口提示"与"进程识别出的服务"一致,才标已确认
-							if li.KnownAs != "" && (meta.Label == li.KnownAs || meta.Category == categoryOfPort(uint16(port))) {
-								li.Verified = true
-							}
+						li.Verified = true
 						}
 					}
 				}

@@ -67,8 +67,17 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 排除虚拟/特殊文件系统,避免把/proc、/sys等当成真实磁盘占用
+	virtualDirs := map[string]bool{
+		"proc": true, "sys": true, "dev": true, "run": true,
+		"snap": true, "boot": true, "mnt": true, "media": true,
+	}
+
 	var collected []DirEntry
 	for _, e := range entries {
+		if e.IsDir() && virtualDirs[e.Name()] {
+			continue // 跳过虚拟文件系统
+		}
 		p := filepath.Join(root, e.Name())
 		if e.IsDir() {
 			size, ok := dirSize(ctx, p)

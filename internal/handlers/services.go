@@ -26,9 +26,13 @@ type ServiceInfo struct {
 	CPUPercent  float64 `json:"cpuPercent,omitempty"`
 	MemPercent  float32 `json:"memPercent,omitempty"`
 	// 常见服务识别(按单元名/进程名,属事实来源,安全标注)
-	Recognized string `json:"recognized,omitempty"`
-	Category   string `json:"category,omitempty"`
-	Icon       string `json:"icon,omitempty"`
+	Recognized string   `json:"recognized,omitempty"`
+	Category   string   `json:"category,omitempty"`
+	Icon       string   `json:"icon,omitempty"`
+	// 日志来源
+	LogSource  string   `json:"logSource"`  // "journalctl" | "file" | "both" | ""
+	LogPaths   []string `json:"logPaths"`   // 日志文件路径列表
+	LogCommand string   `json:"logCommand"` // 可执行的日志查看命令
 }
 
 // ServicesList 返回服务列表与运行平台信息。
@@ -74,6 +78,12 @@ func listSystemd() []ServiceInfo {
 			si.Category = meta.Category
 			si.Icon = meta.Icon
 		}
+		si.LogCommand = "journalctl -u " + unit
+		si.LogSource = "journalctl"
+		if paths := detectLogPaths(unit); len(paths) > 0 {
+			si.LogPaths = paths
+			si.LogSource = "both"
+		}
 		res = append(res, si)
 	}
 	return res
@@ -105,6 +115,13 @@ func listProcesses() []ServiceInfo {
 			res[len(res)-1].Recognized = meta.Label
 			res[len(res)-1].Category = meta.Category
 			res[len(res)-1].Icon = meta.Icon
+		}
+		if paths := detectLogPaths(name); len(paths) > 0 {
+			res[len(res)-1].LogPaths = paths
+			res[len(res)-1].LogSource = "file"
+			if len(paths) > 0 {
+				res[len(res)-1].LogCommand = "tail -n 100 " + paths[0]
+			}
 		}
 	}
 	// 按 CPU 占用降序,取前 50,避免列表过长

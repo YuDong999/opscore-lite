@@ -54,6 +54,46 @@ const fmtBytes = (b: number) => {
   return `${(b / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`
 }
 
+const fmtUptime = (sec: number) => {
+  if (!sec) return '—'
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return `${d} 天 ${h} 小时`
+  if (h > 0) return `${h} 小时 ${m} 分`
+  return `${m} 分`
+}
+
+type ColorStop = { pct: number; r: number; g: number; b: number }
+
+const MEM_COLOR_STOPS: ColorStop[] = [
+  { pct: 0,   r: 34,  g: 197, b: 94  },
+  { pct: 20,  r: 6,   g: 182, b: 212 },
+  { pct: 40,  r: 20,  g: 184, b: 166 },
+  { pct: 60,  r: 249, g: 115, b: 22  },
+  { pct: 80,  r: 245, g: 158, b: 11  },
+  { pct: 100, r: 239, g: 68,  b: 68  },
+]
+
+function interpolateColor(pct: number): string {
+  const clamped = Math.max(0, Math.min(100, pct))
+  let lower = MEM_COLOR_STOPS[0]
+  let upper = MEM_COLOR_STOPS[MEM_COLOR_STOPS.length - 1]
+  for (let i = 0; i < MEM_COLOR_STOPS.length - 1; i++) {
+    if (clamped >= MEM_COLOR_STOPS[i].pct && clamped <= MEM_COLOR_STOPS[i + 1].pct) {
+      lower = MEM_COLOR_STOPS[i]
+      upper = MEM_COLOR_STOPS[i + 1]
+      break
+    }
+  }
+  const range = upper.pct - lower.pct
+  const t = range === 0 ? 0 : (clamped - lower.pct) / range
+  const r = Math.round(lower.r + (upper.r - lower.r) * t)
+  const g = Math.round(lower.g + (upper.g - lower.g) * t)
+  const b = Math.round(lower.b + (upper.b - lower.b) * t)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
 // 时间窗 → 采样点数量(2s 一次:5m=150 / 15m=450 / 1h=1800)
 const WIN_POINTS: Record<TrendWin, number> = { 5: 150, 15: 450, 60: 1800 }
 
@@ -114,12 +154,12 @@ export default function ResourcesModule() {
   if (!snap) return <div className="loading">采集系统指标中…</div>
 
   const txt = dark ? '#e2e8f0' : '#0f172a'
-  const dim = dark ? '#94a3b8' : '#64748b'
+  const dim = dark ? '#94a8b8' : '#64748b'
   const axis = dark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.10)'
 
   // 内存波浪图(liquidfill)
   const memPct = snap.memory.usedPercent
-  const memColor = memPct > 85 ? '#ef4444' : memPct > 65 ? '#f59e0b' : '#06b6d4'
+  const memColor = interpolateColor(memPct)
   const memOption = {
     series: [
       {
@@ -275,7 +315,18 @@ export default function ResourcesModule() {
         <span className="pill">{snap.host.hostname} · {snap.host.platform}</span>
       </div>
 
-      <div className="grid grid-4">
+      <div className="grid grid-5">
+        <Card title="系统信息" subtitle="主机 / 版本 / 规格">
+          <div className="sysinfo">
+            <div className="sysinfo-item"><span className="sysinfo-k">主机名</span><span className="sysinfo-v">{snap.host.hostname || '—'}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">系统</span><span className="sysinfo-v">{snap.host.platform || '—'} {snap.host.os || ''}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">运行时长</span><span className="sysinfo-v">{fmtUptime(snap.host.uptime)}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">CPU</span><span className="sysinfo-v">{snap.cpu.cores} 核{snap.cpu.model ? ` · ${snap.cpu.model}` : ''}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">内存</span><span className="sysinfo-v">{fmtBytes(snap.memory.total)}{snap.memory.swapTotal > 0 ? ` · Swap ${fmtBytes(snap.memory.swapTotal)}` : ''}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">磁盘</span><span className="sysinfo-v">{fmtBytes(snap.disks.reduce((a, d) => a + d.total, 0))} · {snap.disks.length} 个挂载点</span></div>
+          </div>
+        </Card>
+
         <Card title="内存占用" subtitle="波浪图">
           <EChart option={memOption} height={240} />
           <div className="stat-row">

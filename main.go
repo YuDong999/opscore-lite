@@ -39,6 +39,7 @@ func main() {
 	mux.HandleFunc("/api/core/disk/children", handlers.DiskChildren)
 	mux.HandleFunc("/api/core/services", handlers.ServicesList)
 	mux.HandleFunc("/api/core/services/action", handlers.ServiceAction)
+	mux.HandleFunc("/api/core/services/logs", handlers.ServiceLogsHandler)
 	mux.HandleFunc("/api/core/network", handlers.Network)
 	mux.HandleFunc("/api/core/firewall", handlers.FirewallStatusHandler)
 	mux.HandleFunc("/api/core/firewall/rules", handlers.FirewallRules)
