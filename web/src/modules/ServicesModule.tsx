@@ -184,6 +184,8 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
   const [filePath, setFilePath] = useState<string>('')
   const [filter, setFilter] = useState('')
   const refreshTimer = useRef<number | null>(null)
+  const logBodyRef = useRef<HTMLDivElement | null>(null)
+  const followBottom = useRef(true)
 
   const hasJournal = service.logSource === 'journalctl' || service.logSource === 'both'
   const hasFile = (service.logPaths && service.logPaths.length > 0) || service.logSource === 'file'
@@ -220,6 +222,22 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
       if (refreshTimer.current) window.clearInterval(refreshTimer.current)
     }
   }, [autoRefresh, fetchLog])
+
+  // 新日志到达后:若用户停留在底部(或首次打开),自动滚到最新;
+  // 若用户已向上翻看历史,则不强制打断。
+  useEffect(() => {
+    const el = logBodyRef.current
+    if (el && followBottom.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [logLines])
+
+  const onLogScroll = () => {
+    const el = logBodyRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    followBottom.current = atBottom
+  }
 
   return (
     <div className="modal-mask" onClick={onClose}>
@@ -262,7 +280,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
           <div className="log-warn">{warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</div>
         )}
 
-        <div className="log-body">
+        <div className="log-body" ref={logBodyRef} onScroll={onLogScroll}>
           {loadingLog ? (
             <div className="log-loading">加载中…</div>
           ) : logLines.length === 0 ? (
