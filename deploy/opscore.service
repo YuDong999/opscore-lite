@@ -15,10 +15,10 @@ After=network.target
 [Service]
 Type=simple
 # 有 nginx 反代时:仅本机监听
-ExecStart=/opt/opscore/opscore -addr 127.0.0.1:9090
+ExecStart=/opt/opscore/opscore -addr 127.0.0.1:8088
 # 无 nginx 直连时:监听所有网卡(改这一行即可)
 # ExecStart=/opt/opscore/opscore
-Environment=OPCORE_ADDR=127.0.0.1:9090
+Environment=OPCORE_ADDR=127.0.0.1:8088
 
 Restart=on-failure
 RestartSec=3
