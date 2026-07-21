@@ -42,6 +42,25 @@ export default function ServicesModule() {
   const [logTarget, setLogTarget] = useState<ServiceInfo | null>(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed'>('all')
+  const [sortKey, setSortKey] = useState<'cpu' | 'mem' | null>(null)
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+
+  const toggleSort = (key: 'cpu' | 'mem') => {
+    if (sortKey !== key) {
+      setSortKey(key)
+      setSortDir('desc')
+    } else if (sortDir === 'desc') {
+      setSortDir('asc')
+    } else {
+      setSortKey(null)
+      setSortDir('desc')
+    }
+  }
+
+  const sortIndicator = (key: 'cpu' | 'mem') => {
+    if (sortKey !== key) return ''
+    return sortDir === 'desc' ? ' ▼' : ' ▲'
+  }
 
   const visible = useMemo(() => {
     if (!data) return []
@@ -58,10 +77,19 @@ export default function ServicesModule() {
         default: return true
       }
     })
-    // 稳定的基础排序:按名称,避免每次轮询/筛选时行位置跳动
-    list.sort((a, b) => a.name.localeCompare(b.name))
+    // 点击 CPU/内存 列头时按数值排序;否则按名称稳定排序(避免轮询时行跳动)
+    if (sortKey) {
+      const dir = sortDir === 'desc' ? -1 : 1
+      list.sort((a, b) => {
+        const av = sortKey === 'cpu' ? (a.cpuPercent || 0) : (a.memPercent || 0)
+        const bv = sortKey === 'cpu' ? (b.cpuPercent || 0) : (b.memPercent || 0)
+        return (av - bv) * dir
+      })
+    } else {
+      list.sort((a, b) => a.name.localeCompare(b.name))
+    }
     return list
-  }, [data, search, statusFilter])
+  }, [data, search, statusFilter, sortKey, sortDir])
 
   const load = useCallback(() => {
     getJSON('/api/core/services').then(setData).catch(() => setMsg('加载失败'))
@@ -123,6 +151,8 @@ export default function ServicesModule() {
                   </select>
                 </th>
                 <th>说明</th>
+                <th className="sortable" onClick={() => toggleSort('cpu')}>CPU %{sortIndicator('cpu')}</th>
+                <th className="sortable" onClick={() => toggleSort('mem')}>内存 %{sortIndicator('mem')}</th>
                 <th>单元文件 / PID</th>
                 <th>日志命令</th>
                 <th>操作</th>
@@ -147,7 +177,9 @@ export default function ServicesModule() {
                     {s.recognized && s.category && <span className="tag">{s.category}</span>}
                     <span>{s.description}</span>
                   </td>
-                  <td className="mono small">{s.isProcess ? `PID ${s.pid}` : s.unitFile || '—'}</td>
+                  <td className="mono small">{fmtPct(s.cpuPercent)}</td>
+                  <td className="mono small">{fmtPct(s.memPercent)}</td>
+                  <td className="mono small">{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
                   <td className="mono small dim">
                     {s.logCommand
                       ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft: 6 }}>{s.logCommand}</span></>
@@ -184,6 +216,8 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
   const [filePath, setFilePath] = useState<string>('')
   const [filter, setFilter] = useState('')
   const refreshTimer = useRef<number | null>(null)
+  const logBodyRef = useRef<HTMLDivElement | null>(null)
+  const followBottom = useRef(true)
 
   const hasJournal = service.logSource === 'journalctl' || service.logSource === 'both'
   const hasFile = (service.logPaths && service.logPaths.length > 0) || service.logSource === 'file'
@@ -220,6 +254,22 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
       if (refreshTimer.current) window.clearInterval(refreshTimer.current)
     }
   }, [autoRefresh, fetchLog])
+
+  // 新日志到达后:若用户停留在底部(或首次打开),自动滚到最新;
+  // 若用户已向上翻看历史,则不强制打断。
+  useEffect(() => {
+    const el = logBodyRef.current
+    if (el && followBottom.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [logLines])
+
+  const onLogScroll = () => {
+    const el = logBodyRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    followBottom.current = atBottom
+  }
 
   return (
     <div className="modal-mask" onClick={onClose}>
@@ -262,7 +312,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
           <div className="log-warn">{warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</div>
         )}
 
-        <div className="log-body">
+        <div className="log-body" ref={logBodyRef} onScroll={onLogScroll}>
           {loadingLog ? (
             <div className="log-loading">加载中…</div>
           ) : logLines.length === 0 ? (
@@ -289,4 +339,9 @@ function lineLevel(line: string): string {
   if (l.includes('warn') || l.includes('warning')) return 'lvl-warn'
   if (l.includes('info') || l.includes('notice')) return 'lvl-info'
   return 'lvl-default'
+}
+
+function fmtPct(v?: number): string {
+  if (v === undefined || v === null || v === 0) return '—'
+  return v.toFixed(1) + '%'
 }
