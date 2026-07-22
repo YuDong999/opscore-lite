@@ -5,30 +5,41 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"opscore/internal/auth"
 	"opscore/internal/handlers"
 	"opscore/internal/metrics"
+	"path/filepath"
 	"strings"
 )
 
 func main() {
-	metrics.Start() // 启动后台指标采集
+	metrics.Start()
 
-	// 监听地址(自适应部署):
-	//  - 默认 :8088,避免与 Prometheus(9090)、nginx(8080/8081) 冲突。
-	//  - 有 nginx 反代时建议 -addr 127.0.0.1:8088,仅本机监听,由 nginx 对外暴露。
-	//  - 优先级:-addr 参数 > OPCORE_ADDR 环境变量 > 默认 :8088。
 	addr := ":8088"
 	if env := os.Getenv("OPCORE_ADDR"); env != "" {
 		addr = env
 	}
 	flagAddr := flag.String("addr", "", "监听地址,如 :8088 或 127.0.0.1:8088(默认 :8088,OPCORE_ADDR 可覆盖)")
 	flagDist := flag.String("dist", "./web/dist", "前端静态资源目录(默认 ./web/dist,相对二进制路径)")
+	flagData := flag.String("data", "", "数据目录(默认二进制同级 data/,用于配置/备份存储)")
 	flag.Parse()
 	if *flagAddr != "" {
 		addr = *flagAddr
 	}
 
+	dataDir := *flagData
+	if dataDir == "" {
+		exe, _ := os.Executable()
+		dataDir = filepath.Join(filepath.Dir(exe), "data")
+	}
+	auth.Init(dataDir)
+	handlers.InitBackup(dataDir)
+	handlers.InitScripts(dataDir)
+
 	mux := http.NewServeMux()
+	// ── 认证 API（不受中间件保护） ──
+	mux.HandleFunc("/api/auth/token", auth.HandleToken)
+
 	// ── 核心模块 API ──
 	mux.HandleFunc("/api/manifest", handlers.Manifest)
 	mux.HandleFunc("/api/core/resources", handlers.Resources)
@@ -42,11 +53,18 @@ func main() {
 	mux.HandleFunc("/api/core/firewall/action", handlers.FirewallAction)
 	mux.HandleFunc("/api/core/firewall/audit", handlers.FirewallAudit)
 
+	// ── 守护中心 API ──
+	mux.HandleFunc("/api/guard/cron", handlers.GuardCronList)
+	mux.HandleFunc("/api/guard/cron/action", handlers.GuardCronAction)
+	mux.HandleFunc("/api/guard/backup", handlers.GuardBackupList)
+	mux.HandleFunc("/api/guard/backup/action", handlers.GuardBackupAction)
+	mux.HandleFunc("/api/guard/script", handlers.GuardScriptList)
+	mux.HandleFunc("/api/guard/script/action", handlers.GuardScriptAction)
+
 	// ── 前端静态资源(SPA) ──
 	fileServer := http.FileServer(http.Dir(*flagDist))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		// 无扩展名的路径视为前端路由,回退 index.html
 		if p != "" && !strings.Contains(p, ".") {
 			indexPath := *flagDist + "/index.html"
 			if b, err := os.ReadFile(indexPath); err == nil {
@@ -59,15 +77,14 @@ func main() {
 	})
 
 	log.Println("OpsCore demo 已启动 -> http://" + addr)
-	log.Fatal(http.ListenAndServe(addr, cors(mux)))
+	log.Fatal(http.ListenAndServe(addr, cors(auth.Middleware(mux))))
 }
 
-// cors 允许跨域,便于 Vite 开发服务器(5173)直连后端(8080)。
 func cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

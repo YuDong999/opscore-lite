@@ -4,6 +4,7 @@
 
 # 本地构建产物
 /opscore
+/opscore-*
 *.exe
 opscore.exe~
 

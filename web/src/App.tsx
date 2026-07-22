@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { getJSON } from './api/client'
 import TopBar from './components/TopBar'
+import LoginPage from './components/LoginPage'
 import ResourcesModule from './modules/ResourcesModule'
 import ServicesModule from './modules/ServicesModule'
 import NetworkModule from './modules/NetworkModule'
 import PluginsModule from './modules/PluginsModule'
+import SettingsModule from './modules/SettingsModule'
+import GuardModule from './modules/GuardModule'
 
 interface Manifest {
   id: string
@@ -18,10 +21,39 @@ interface Manifest {
 
 export default function App() {
   const [modules, setModules] = useState<Manifest[]>([])
+  const [authRequired, setAuthRequired] = useState<boolean | null>(null)
+  const [loggedIn, setLoggedIn] = useState(false)
 
   useEffect(() => {
-    getJSON<Manifest[]>('/api/manifest').then(setModules).catch(() => setModules([]))
+    // 检查是否需要认证
+    fetch('/api/auth/token')
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (d.configured === 'true' && !localStorage.getItem('opscore-token')) {
+          setAuthRequired(true)
+        } else {
+          setAuthRequired(false)
+          loadModules()
+        }
+      })
+      .catch(() => {
+        setAuthRequired(false)
+        loadModules()
+      })
   }, [])
+
+  const loadModules = () => {
+    getJSON<Manifest[]>('/api/manifest').then(setModules).catch(() => setModules([]))
+  }
+
+  const handleLogin = () => {
+    setAuthRequired(false)
+    setLoggedIn(true)
+    loadModules()
+  }
+
+  if (authRequired === null) return <div className="log-loading">加载中...</div>
+  if (authRequired) return <LoginPage onLogin={handleLogin} />
 
   const core = modules.filter((m) => m.group === 'core')
   const plugins = modules.filter((m) => m.group === 'plugin')
@@ -33,7 +65,7 @@ export default function App() {
           <span className="brand-dot" />
           <div>
             <div className="brand-name">OpsCore</div>
-            <div className="brand-sub">运维控制台 · Demo</div>
+            <div className="brand-sub">运维控制台</div>
           </div>
         </div>
 
@@ -67,6 +99,21 @@ export default function App() {
           </>
         )}
         <div className="sidebar-foot">编译期内置 · 其余可插拔</div>
+
+        <nav style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <NavLink to="/settings" className="nav-item" style={{ fontSize: 13, opacity: 0.7 }}>
+            <span className="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </span>
+            <span className="nav-text">
+              <span className="nav-title">设置</span>
+              <span className="nav-desc">主题 · 认证</span>
+            </span>
+          </NavLink>
+        </nav>
       </aside>
 
       <div className="main">
@@ -77,7 +124,9 @@ export default function App() {
             <Route path="/resources" element={<ResourcesModule />} />
             <Route path="/services" element={<ServicesModule />} />
             <Route path="/network" element={<NetworkModule />} />
+            <Route path="/guard" element={<GuardModule />} />
             <Route path="/plugins" element={<PluginsModule />} />
+            <Route path="/settings" element={<SettingsModule />} />
             <Route path="*" element={<Navigate to="/resources" replace />} />
           </Routes>
         </main>
@@ -107,6 +156,12 @@ function icon(name: string) {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
+    shield: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M12 8v4M12 16h.01" />
       </svg>
     ),
     puzzle: (
