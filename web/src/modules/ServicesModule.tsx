@@ -136,20 +136,26 @@ export default function ServicesModule() {
       {msg && <div className={`banner ${msg.startsWith('✗') ? 'banner-err' : 'banner-ok'}`}>{msg}</div>}
 
       <Card title="运行中的服务 / 进程" subtitle="启停 / 重启 · 位置 / 日志">
+        <div className="svc-filter-bar">
+          <span className="svc-filter-label">状态</span>
+          <div className="svc-filter-btns">
+            {(['all', 'running', 'exited', 'failed'] as const).map((f) => (
+              <button
+                key={f}
+                className={`svc-filter-btn ${statusFilter === f ? 'svc-filter-on' : ''}`}
+                onClick={() => setStatusFilter(f)}
+              >
+                {f === 'all' ? '全部' : f === 'running' ? '运行中' : f === 'exited' ? '已退出' : '失败'}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table svc-table">
             <thead>
               <tr>
                 <th>名称</th>
-                <th>
-                  状态
-                  <select className="sel sel-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
-                    <option value="all">全部</option>
-                    <option value="running">运行中</option>
-                    <option value="exited">已退出</option>
-                    <option value="failed">失败</option>
-                  </select>
-                </th>
+                <th>状态</th>
                 <th>说明</th>
                 <th className="sortable" onClick={() => toggleSort('cpu')}>CPU %{sortIndicator('cpu')}</th>
                 <th className="sortable" onClick={() => toggleSort('mem')}>内存 %{sortIndicator('mem')}</th>

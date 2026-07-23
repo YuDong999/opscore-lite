@@ -33,8 +33,6 @@ func main() {
 		dataDir = filepath.Join(filepath.Dir(exe), "data")
 	}
 	auth.Init(dataDir)
-	handlers.InitBackup(dataDir)
-	handlers.InitScripts(dataDir)
 
 	mux := http.NewServeMux()
 	// ── 认证 API（不受中间件保护） ──
@@ -53,13 +51,17 @@ func main() {
 	mux.HandleFunc("/api/core/firewall/action", handlers.FirewallAction)
 	mux.HandleFunc("/api/core/firewall/audit", handlers.FirewallAudit)
 
-	// ── 守护中心 API ──
-	mux.HandleFunc("/api/guard/cron", handlers.GuardCronList)
-	mux.HandleFunc("/api/guard/cron/action", handlers.GuardCronAction)
-	mux.HandleFunc("/api/guard/backup", handlers.GuardBackupList)
-	mux.HandleFunc("/api/guard/backup/action", handlers.GuardBackupAction)
-	mux.HandleFunc("/api/guard/script", handlers.GuardScriptList)
-	mux.HandleFunc("/api/guard/script/action", handlers.GuardScriptAction)
+	// ── 系统诊断 API ──
+	mux.HandleFunc("/api/core/diagnostics", handlers.DiagnosticsInfo)
+	mux.HandleFunc("/api/core/diagnostics/network", handlers.NetworkDiagHandler)
+	mux.HandleFunc("/api/core/diagnostics/login-audit", handlers.LoginAuditHandler)
+	mux.HandleFunc("/api/core/diagnostics/updates", handlers.UpdatesHandler)
+	// ── 任务与存储 API ──
+	mux.HandleFunc("/api/core/tasks/crontab", handlers.CrontabHandler)
+	mux.HandleFunc("/api/core/tasks/disks", handlers.DisksHandler)
+	mux.HandleFunc("/api/core/tasks/disks/action", handlers.DiskActionHandler)
+	// ── 网络配置 API ──
+	mux.HandleFunc("/api/core/network/config", handlers.NetConfigHandler)
 
 	// ── 前端静态资源(SPA) ──
 	fileServer := http.FileServer(http.Dir(*flagDist))

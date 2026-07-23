@@ -8,7 +8,8 @@ import ServicesModule from './modules/ServicesModule'
 import NetworkModule from './modules/NetworkModule'
 import PluginsModule from './modules/PluginsModule'
 import SettingsModule from './modules/SettingsModule'
-import GuardModule from './modules/GuardModule'
+import DiagnosticsModule from './modules/DiagnosticsModule'
+import TasksModule from './modules/TasksModule'
 
 interface Manifest {
   id: string
@@ -124,7 +125,8 @@ export default function App() {
             <Route path="/resources" element={<ResourcesModule />} />
             <Route path="/services" element={<ServicesModule />} />
             <Route path="/network" element={<NetworkModule />} />
-            <Route path="/guard" element={<GuardModule />} />
+            <Route path="/diagnostics" element={<DiagnosticsModule />} />
+            <Route path="/tasks" element={<TasksModule />} />
             <Route path="/plugins" element={<PluginsModule />} />
             <Route path="/settings" element={<SettingsModule />} />
             <Route path="*" element={<Navigate to="/resources" replace />} />
@@ -162,6 +164,17 @@ function icon(name: string) {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         <path d="M12 8v4M12 16h.01" />
+      </svg>
+    ),
+    activity: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+      </svg>
+    ),
+    clipboard: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+        <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
       </svg>
     ),
     puzzle: (
