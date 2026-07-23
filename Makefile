@@ -19,13 +19,20 @@ GO_FLAGS  := -ldflags="-s -w"
 DOCKER_NODE := node:18-alpine
 
 # ---------- 前端 ----------
+# 注意: CentOS 7 (glibc 2.17) 无法运行 Node 18+，必须用 Docker 构建
 web:
-	@command -v node >/dev/null 2>&1 && node -e "require('module')" 2>/dev/null && { \
-		cd web && npm install && npm run build; \
-	} || { \
-		echo "[信息] Node.js 不可用或 glibc 过旧,使用 Docker 构建前端..."; \
-		docker run --rm -v $$(pwd)/web:/work -w /work $(DOCKER_NODE) sh -c "npm install 2>/dev/null && npm run build"; \
-	}
+	@if [ -f web/node_modules/.bin/vite ]; then \
+		echo "[Docker] 构建前端 (跳过 npm install)..."; \
+		docker run --rm -v $$(pwd)/web:/work -w /work $(DOCKER_NODE) ./node_modules/.bin/vite build; \
+	else \
+		echo "[Docker] 构建前端 (首次需要 npm install)..."; \
+		docker run --rm -v $$(pwd)/web:/work -w /work $(DOCKER_NODE) sh -c "npm install && ./node_modules/.bin/vite build"; \
+	fi
+
+# 首次或依赖更新时下载 npm 包（不进 node_modules 时不需要）
+web-deps:
+	@echo "[Docker] 安装前端依赖..."
+	docker run --rm -v $$(pwd)/web:/work -w /work $(DOCKER_NODE) npm install
 
 go:
 	go build $(GO_FLAGS) -o $(BINARY) .
