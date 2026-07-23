@@ -26,11 +26,12 @@
 
 ### 方式一:一键安装 (推荐,零依赖)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YuDong999/opscore-lite/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/YuDong999/opscore-lite/main/opscore-install.sh | bash
 ```
 - **前置条件**: 无 (只需 curl + bash)
 - 自动检测平台,下载最新预构建二进制 + 前端文件
-- 安装到 `/usr/local/bin/opscore`
+- 安装到 `/opt/opscore/`，自动注册 systemd 开机自启
+- 安装完成后询问是否立即启动
 
 ### 方式二:手动下载 (零依赖)
 从 [GitHub Releases](https://github.com/YuDong999/opscore-lite/releases) 下载对应平台的压缩包:

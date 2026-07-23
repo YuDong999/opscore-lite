@@ -5,6 +5,7 @@
 # 本地构建产物
 /opscore
 /opscore-*
+!opscore-install.sh
 *.exe
 opscore.exe~
 

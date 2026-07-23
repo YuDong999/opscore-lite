@@ -60,7 +60,7 @@
 
 ### 一键安装
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YuDong999/opscore-lite/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/YuDong999/opscore-lite/main/opscore-install.sh | bash
 ```
 - 自动检测平台 (linux/darwin/windows, amd64/arm64)
 - 下载最新 Release，安装到 `/usr/local/bin/` + web/dist
