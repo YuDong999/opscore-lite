@@ -18,6 +18,31 @@ func permLabel() string {
 
 func isRoot() bool { return os.Geteuid() == 0 }
 
+// stripSchemeAndPath 从 URL 中剥离协议前缀、userinfo、路径和查询参数，只保留 host[:port]
+// 例: "https://user:pass@example.com:8443/path?q=1" → "example.com:8443"
+func stripSchemeAndPath(target string) string {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return t
+	}
+	lower := strings.ToLower(t)
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(lower, prefix) {
+			t = t[len(prefix):]
+			break
+		}
+	}
+	// 去掉 userinfo (user:pass@)
+	if i := strings.Index(t, "@"); i >= 0 {
+		t = t[i+1:]
+	}
+	// 去掉路径和查询参数
+	if i := strings.Index(t, "/"); i >= 0 {
+		t = t[:i]
+	}
+	return t
+}
+
 func DiagnosticsInfo(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{
 		"permission": permLabel(),
@@ -50,6 +75,12 @@ func NetworkDiagHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 对 ping/traceroute/mtr/nc/dig 等工具剥离 URL scheme，但 curl 需要保留完整的 URL
+	target := body.Target
+	if body.Tool != "http" && needTarget {
+		target = stripSchemeAndPath(body.Target)
+	}
+
 	var cmd *exec.Cmd
 	switch body.Tool {
 	case "ping":
@@ -57,23 +88,23 @@ func NetworkDiagHandler(w http.ResponseWriter, r *http.Request) {
 		if c < 1 || c > 10 {
 			c = 4
 		}
-		cmd = exec.Command("ping", "-c", strconv.Itoa(c), "-W", "3", body.Target)
+		cmd = exec.Command("ping", "-c", strconv.Itoa(c), "-W", "3", target)
 	case "traceroute":
-		cmd = exec.Command("traceroute", "-n", "-m", "20", body.Target)
+		cmd = exec.Command("traceroute", "-n", "-m", "20", target)
 	case "port":
 		if body.Port < 1 || body.Port > 65535 {
 			WriteJSON(w, map[string]any{"error": "端口范围 1-65535", "permission": permLabel()})
 			return
 		}
-		cmd = exec.Command("nc", "-zvn", "-w", "3", body.Target, strconv.Itoa(body.Port))
+		cmd = exec.Command("nc", "-zvn", "-w", "3", target, strconv.Itoa(body.Port))
 	case "dns":
-		cmd = exec.Command("dig", "+short", body.Target)
+		cmd = exec.Command("dig", "+short", target)
 	case "dns-detail":
-		cmd = exec.Command("dig", body.Target)
+		cmd = exec.Command("dig", target)
 	case "mtr":
-		cmd = exec.Command("mtr", "-r", "-c", "5", "-n", body.Target)
+		cmd = exec.Command("mtr", "-r", "-c", "5", "-n", target)
 	case "http":
-		cmd = exec.Command("curl", "-sI", "-o", "/dev/stderr", "-w", "%{http_code}\n%{content_type}\n%{size_download}", body.Target)
+		cmd = exec.Command("curl", "-sI", "-o", "/dev/stderr", "-w", "%{http_code}\n%{content_type}\n%{size_download}", target)
 	case "route":
 		cmd = exec.Command("ip", "route", "show")
 	case "arp":
