@@ -2,12 +2,74 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
+// CrontabEntry 表示 cron 条目
+type CronEntry struct {
+	ID      string `json:"id"`
+	Schedule string `json:"schedule"`
+	Command  string `json:"command"`
+	Comment  string `json:"comment"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// stableID 生成基于输入字符串的确定性ID
+func stableID(s string) string {
+	// 简单的哈希函数生成一致的ID
+	hash := 0
+	for i := 0; i < len(s); i++ {
+		hash = 31*hash + int(s[i])
+		hash &= 0x7fffffff
+	}
+	return strconv.Itoa(hash)
+}
+
+// ParseCrontabEntry 解析单行 crontab，支持注释
+func ParseCrontabEntry(line string) (*CronEntry, error) {
+	// 移除前后空格
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return nil, nil
+	}
+
+	// 标准 crontab 行格式: [分钟] [小时] [日] [月] [周] [命令] [# 注释]
+	parts := strings.Fields(line)
+	if len(parts) < 6 {
+		return nil, fmt.Errorf("无效的 crontab 行: %s", line)
+	}
+
+	// 前5个是时间字段
+	schedule := strings.Join(parts[0:5], " ")
+	
+	// 剩余部分可能包含命令和注释
+	rest := strings.Join(parts[5:], " ")
+	
+	// 查找注释部分（# 开头的部分）
+	commentIdx := strings.Index(rest, "#")
+	var command, comment string
+	if commentIdx != -1 {
+		command = strings.TrimSpace(rest[:commentIdx])
+		comment = strings.TrimSpace(rest[commentIdx+1:])
+	} else {
+		command = strings.TrimSpace(rest)
+		comment = ""
+	}
+
+	return &CronEntry{
+		ID:       stableID(schedule + command), // 基于调度和命令生成稳定ID
+		Schedule: schedule,
+		Command:  command,
+		Comment:  comment,
+	}, nil
+}
+
+// CrontabHandler 处理 crontab 相关的 API 请求
 func CrontabHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -60,6 +122,7 @@ func CrontabHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DisksHandler 处理磁盘信息请求
 func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	lsblk := runCapture("lsblk", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL")
 	mounts := runCapture("mount")
@@ -72,6 +135,7 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DiskActionHandler 处理磁盘操作请求（挂载/卸载/SMART）
 func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", 405)
@@ -113,21 +177,21 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	case "smart":
 		dev := body.Device
 		if dev == "" {
-			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "root"})
+			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "user"})
 			return
 		}
 		if !strings.HasPrefix(dev, "/dev/") {
 			dev = "/dev/" + dev
 		}
 		if _, err := os.Stat(dev); os.IsNotExist(err) {
-			WriteJSON(w, map[string]any{"error": "设备不存在 " + dev, "permission": "root"})
+			WriteJSON(w, map[string]any{"error": "设备不存在 " + dev, "permission": "user"})
 			return
 		}
 		out := runCapture("smartctl", "-a", dev)
 		WriteJSON(w, map[string]any{"output": out, "permission": "root"})
 		return
 	default:
-		WriteJSON(w, map[string]any{"error": "未知操作: " + body.Action, "permission": "root"})
+		WriteJSON(w, map[string]any{"error": "未知操作: " + body.Action, "permission": "user"})
 		return
 	}
 
@@ -143,6 +207,7 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, resp)
 }
 
+// runCapture 执行命令并捕获输出
 func runCapture(name string, args ...string) string {
 	path, err := exec.LookPath(name)
 	if err != nil {

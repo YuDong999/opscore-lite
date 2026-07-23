@@ -51,21 +51,41 @@ type CronTask = {
   month: string
   dayOfWeek: string
   command: string
+  comment: string
 }
 
 function parseCronLine(line: string): CronTask | null {
+  // 移除前后空格
   const trimmed = line.trim()
   if (!trimmed || trimmed.startsWith('#')) return null
-  const parts = trimmed.split(/\s+/)
+  
+  // 检查是否有注释（# 开头的部分）
+  const commentIndex = trimmed.indexOf('#')
+  let cleanLine = trimmed
+  let comment = ''
+  
+  if (commentIndex !== -1) {
+    // 分离命令部分和注释部分
+    comment = trimmed.substring(commentIndex + 1).trim()
+    cleanLine = trimmed.substring(0, commentIndex).trim()
+  }
+  
+  // 解析时间和命令部分
+  const parts = cleanLine.split(/\s+/)
   if (parts.length < 6) return null
+  
+  // 生成基于调度和命令的确定性ID（忽略注释）
+  const id = `${parts[0]}|${parts[1]}|${parts[2]}|${parts[3]}|${parts[4]}|${parts.slice(5).join(' ')}`
+  
   return {
-    id: crypto.randomUUID(),
+    id,
     minute: parts[0],
     hour: parts[1],
     dayOfMonth: parts[2],
     month: parts[3],
     dayOfWeek: parts[4],
     command: parts.slice(5).join(' '),
+    comment,
   }
 }
 
@@ -74,7 +94,12 @@ function parseCrontab(text: string): CronTask[] {
 }
 
 function buildCronLine(task: CronTask): string {
-  return [task.minute, task.hour, task.dayOfMonth, task.month, task.dayOfWeek, task.command].join(' ')
+  const timePart = [task.minute, task.hour, task.dayOfMonth, task.month, task.dayOfWeek].join(' ')
+  if (task.comment.trim() !== '') {
+    return `${timePart} ${task.command} # ${task.comment}`
+  } else {
+    return `${timePart} ${task.command}`
+  }
 }
 
 function buildCrontab(tasks: CronTask[]): string {
@@ -84,7 +109,7 @@ function buildCrontab(tasks: CronTask[]): string {
 function cronToHuman(t: CronTask): string {
   const parts: string[] = []
   if (t.minute === '*') parts.push('每分钟')
-  else if (t.minute.startsWith('*/')) parts.push(`每 ${t.minute.slice(2)} 分钟`)
+   else if (t.minute.startsWith('*/')) parts.push(`每 ${t.minute.slice(2)} 分钟`)
   else if (t.minute.includes(',')) parts.push(`分钟 ${t.minute}`)
   else parts.push(`${t.minute} 分`)
   if (t.hour === '*') parts.push('每小时')
@@ -112,8 +137,8 @@ function cronToHuman(t: CronTask): string {
 
 const MINUTE_OPTS = ['*', '0', '1', '2', '3', '4', '5', '10', '15', '20', '30', '*/5', '*/10', '*/15', '*/30']
 const HOUR_OPTS = ['*', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '*/2', '*/4', '*/6', '*/12']
-const DOM_OPTS = ['*', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '*/2', '*/3', '*/5', '*/7']
-const MONTH_OPTS = ['*', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '*/2', '*/3', '*/4', '*/6']
+const DOM_OPTS = ['*', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '*/2', '*/3']
+const MONTH_OPTS = ['*', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '*/2', '*/3']
 const DOW_OPTS = ['*', '0', '1', '2', '3', '4', '5', '6', '7', '*/2', '*/3']
 
 // ================= 定时任务可视化编辑器 =================
@@ -169,13 +194,14 @@ function CrontabSection() {
 
   const addTask = () => {
     const newTask: CronTask = {
-      id: crypto.randomUUID(),
+      id: 'new-task-' + Date.now(), // 临时ID，保存时会被替换为稳定ID
       minute: '0',
       hour: '3',
       dayOfMonth: '*',
       month: '*',
       dayOfWeek: '*',
       command: '',
+      comment: '',
     }
     setTasks([...tasks, newTask])
     setTimeout(() => setForm({ ...newTask, command: '' }), 0)
@@ -200,8 +226,8 @@ function CrontabSection() {
 
       {showRaw ? (
         <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>
-          <textarea className="input" style={{ width: '100%', minHeight: 240, fontFamily: 'ui-monospace,monospace', fontSize: 12.5, resize: 'vertical' }}
-            value={rawContent} onChange={e => setRawContent(e.target.value)} />
+<textarea className="input" style={{ width: '100%', minHeight: 240, fontFamily: 'ui-monospace,monospace', fontSize: 12.5, resize: 'vertical' }}
+              value={rawContent} onChange={e => setRawContent(e.target.value)} />
         </div>
       ) : (
         <>
@@ -254,6 +280,10 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
             <label className="field-label" style={{ fontSize: 11 }}>命令</label>
             <input className="input" value={form!.command} onChange={e => onChange('command', e.target.value)} placeholder="如 /usr/local/bin/backup.sh" style={{ fontSize: 12.5 }} />
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="field-label" style={{ fontSize: 11 }}>备注</label>
+            <input className="input" value={form!.comment} onChange={e => onChange('comment', e.target.value)} placeholder="备注说明（可选）" style={{ fontSize: 12.5 }} />
+          </div>
           <div className="form-inline" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
             <button className="btn" onClick={onCancel}>取消</button>
             <button className="btn btn-accent" onClick={onSubmit}>保存</button>
@@ -265,6 +295,9 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
             <div>
               <span className="pill" style={{ marginRight: 8, fontSize: 12 }}>{cronToHuman(task)}</span>
               <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-dim)' }}>{task.command}</span>
+              {task.comment.trim() !== '' && (
+                <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-dim)' }}>{`# ${task.comment}`}</span>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button className="btn btn-sm" onClick={() => onEdit(task)}>编辑</button>
@@ -324,14 +357,6 @@ function DisksSection() {
         <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.lsblk}</div>
       </Card>
 
-      <Card title="挂载点" subtitle="mount">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
-      </Card>
-
-      <Card title="磁盘使用" subtitle="df -h">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
-      </Card>
-
       {isRoot && (
         <Card title="挂载操作" subtitle="root">
           <div className="form-inline">
@@ -346,11 +371,19 @@ function DisksSection() {
             </select>
             <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
               onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
-            <button className="btn btn-danger" disabled={!mountDev && !mountPoint}
+            <button className="btn btn-danger" disabled={!mountDev || !mountPoint}
               onClick={() => mountAction('umount', mountDev, mountPoint)}>卸载</button>
           </div>
         </Card>
       )}
+
+      <Card title="挂载点" subtitle="mount">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
+      </Card>
+
+      <Card title="磁盘使用" subtitle="df -h">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
+      </Card>
     </>
   )
 }
@@ -360,7 +393,11 @@ function SmartSection() {
   const [output, setOutput] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
-  const [perm, setPerm] = useState<Permission>('user')
+  const [perm, setPerm] = useState<Permission | null>(null)
+
+  useEffect(() => {
+    getJSON<{ permission: Permission }>('/api/core/tasks/disks').then(d => setPerm(d.permission)).catch(() => {})
+  }, [])
 
   const load = async () => {
     if (!device.trim()) return
@@ -377,13 +414,13 @@ function SmartSection() {
 
   return (
     <Card title="SMART 健康" subtitle="smartctl -a">
-      {perm !== 'root' && <div className="banner banner-err">需要 root 权限</div>}
+      {perm === 'user' && <div className="banner banner-err">需要 root 权限</div>}
       <div className="form-inline" style={{ marginBottom: 12 }}>
         <span className="field-label" style={{ margin: 0 }}>设备</span>
         <select className="sel" value={device} onChange={e => setDevice(e.target.value)}>
           {['sda', 'sdb', 'sdc', 'sdd', 'nvme0n1', 'nvme1n1'].map(d => <option key={d} value={d}>{d}</option>)}
         </select>
-        <button className="btn btn-accent" disabled={loading || perm !== 'root'} onClick={load}>{loading ? '读取中…' : '读取 SMART'}</button>
+        <button className="btn btn-accent" disabled={loading || perm === 'user'} onClick={load}>{loading ? '读取中…' : '读取 SMART'}</button>
       </div>
       {err && <div className="banner banner-err">{err}</div>}
       {output && <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 500, overflowY: 'auto' }}>{output}</div>}

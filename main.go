@@ -75,6 +75,18 @@ func main() {
 				return
 			}
 		}
+		// 设置正确的 Content-Type
+		if strings.HasSuffix(p, ".css") {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		} else if strings.HasSuffix(p, ".js") {
+			w.Header().Set("Content-Type", "application/javascript")
+		} else if strings.HasSuffix(p, ".svg") {
+			w.Header().Set("Content-Type", "image/svg+xml")
+		} else if strings.HasSuffix(p, ".woff") {
+			w.Header().Set("Content-Type", "font/woff")
+		} else if strings.HasSuffix(p, ".woff2") {
+			w.Header().Set("Content-Type", "font/woff2")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 
