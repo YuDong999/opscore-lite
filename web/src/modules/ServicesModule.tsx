@@ -44,6 +44,24 @@ export default function ServicesModule() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed'>('all')
   const [sortKey, setSortKey] = useState<'cpu' | 'mem' | null>(null)
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [copied, setCopied] = useState(false)
+
+  const copyCmd = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = cmd
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   const toggleSort = (key: 'cpu' | 'mem') => {
     if (sortKey !== key) {
@@ -136,26 +154,19 @@ export default function ServicesModule() {
       {msg && <div className={`banner ${msg.startsWith('✗') ? 'banner-err' : 'banner-ok'}`}>{msg}</div>}
 
       <Card title="运行中的服务 / 进程" subtitle="启停 / 重启 · 位置 / 日志">
-        <div className="svc-filter-bar">
-          <span className="svc-filter-label">状态</span>
-          <div className="svc-filter-btns">
-            {(['all', 'running', 'exited', 'failed'] as const).map((f) => (
-              <button
-                key={f}
-                className={`svc-filter-btn ${statusFilter === f ? 'svc-filter-on' : ''}`}
-                onClick={() => setStatusFilter(f)}
-              >
-                {f === 'all' ? '全部' : f === 'running' ? '运行中' : f === 'exited' ? '已退出' : '失败'}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="table-wrap">
           <table className="data-table svc-table">
             <thead>
               <tr>
                 <th>名称</th>
-                <th>状态</th>
+                <th>
+                  <select className="sel sel-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
+                    <option value="all">状态</option>
+                    <option value="running">运行中</option>
+                    <option value="exited">已退出</option>
+                    <option value="failed">失败</option>
+                  </select>
+                </th>
                 <th>说明</th>
                 <th className="sortable" onClick={() => toggleSort('cpu')}>CPU %{sortIndicator('cpu')}</th>
                 <th className="sortable" onClick={() => toggleSort('mem')}>内存 %{sortIndicator('mem')}</th>
@@ -188,7 +199,7 @@ export default function ServicesModule() {
                   <td className="mono small">{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
                   <td className="mono small dim">
                     {s.logCommand
-                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft: 6 }}>{s.logCommand}</span></>
+                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft: 6, cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
                       : '—'}
                   </td>
                   <td>
@@ -209,6 +220,7 @@ export default function ServicesModule() {
       {logTarget && (
         <LogModal service={logTarget} onClose={() => setLogTarget(null)} />
       )}
+      {copied && <div className="toast-copy">已复制</div>}
     </div>
   )
 }
@@ -224,6 +236,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
   const refreshTimer = useRef<number | null>(null)
   const logBodyRef = useRef<HTMLDivElement | null>(null)
   const followBottom = useRef(true)
+  const MAX_LOG_LINES = 800
 
   const hasJournal = service.logSource === 'journalctl' || service.logSource === 'both'
   const hasFile = (service.logPaths && service.logPaths.length > 0) || service.logSource === 'file'
@@ -241,15 +254,32 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
       }
       url = `/api/core/services/logs?source=file&path=${encodeURIComponent(p)}&lines=100`
     }
+    if (filter.trim()) {
+      url += `&filter=${encodeURIComponent(filter.trim())}`
+    }
     try {
       const res = (await getJSON(url)) as LogResponse
-      setLogLines(res.lines || [])
+      const reversed = [...(res.lines || [])].reverse()
+      reversed.forEach((l, i) => { l.num = i + 1 })
+      if (filter.trim()) {
+        setLogLines(reversed)
+      } else {
+        setLogLines(prev => {
+          const lastNum = prev.length > 0 ? prev[prev.length - 1].num : 0
+          const newEntries = reversed.filter(l => l.num > lastNum)
+          const merged = [...prev, ...newEntries]
+          if (merged.length > MAX_LOG_LINES) {
+            return merged.slice(merged.length - MAX_LOG_LINES)
+          }
+          return merged
+        })
+      }
       setWarnings(res.warnings || [])
     } catch {
       setWarnings(['日志获取失败'])
     }
     setLoadingLog(false)
-  }, [tab, filePath, service.name, service.logPaths])
+  }, [tab, filePath, filter, service.name, service.logPaths])
 
   useEffect(() => {
     fetchLog()
@@ -310,7 +340,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
             )}
             <input className="ipt ipt-sm" placeholder="过滤关键词…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <label className="chk"><input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} /> 自动刷新</label>
-            <button className="btn btn-sm btn-ghost" onClick={() => fetchLog()}>刷新</button>
+            <button className="btn btn-sm btn-ghost" onClick={() => { followBottom.current = true; fetchLog() }}>刷新</button>
           </div>
         </div>
 

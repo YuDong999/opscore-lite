@@ -412,6 +412,8 @@ body {
 .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-dim); cursor: pointer; }
 
 .log-warn { padding: 8px 20px; font-size: 12.5px; color: #b91c1c; background: rgba(239,68,68,.1); }
+.toast-copy { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 22px; border-radius: 10px; font-size: 13px; z-index: 100; animation: toast-in 0.25s ease; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 [data-theme='obsidian'] .log-warn,
 [data-theme='twilight'] .log-warn { color: #fca5a5; }
 

@@ -38,7 +38,8 @@ type ServiceInfo struct {
 
 // ServicesList 返回服务列表与运行平台信息。
 func ServicesList(w http.ResponseWriter, r *http.Request) {
-	if runtime.GOOS == "linux" {
+	managed := hasSystemctl()
+	if runtime.GOOS == "linux" && managed {
 		WriteJSON(w, map[string]any{"os": "linux", "managed": true, "services": listSystemd()})
 		return
 	}
@@ -46,8 +47,13 @@ func ServicesList(w http.ResponseWriter, r *http.Request) {
 		"os":       runtime.GOOS,
 		"managed":  false,
 		"services": listProcesses(),
-		"note":     "当前非 Linux,服务启停不可用;以下为进程列表(demo 降级展示)",
+		"note":     "Docker 环境：仅显示进程列表（PID/CPU/内存），无法管理系统服务",
 	})
+}
+
+func hasSystemctl() bool {
+	_, err := exec.LookPath("systemctl")
+	return err == nil
 }
 
 // fetchPsStats 通过一次 `ps -eo pid,%cpu,%mem` 批量取所有进程的 CPU/MEM 占比。
@@ -82,10 +88,11 @@ func fetchPsStats() (map[int32]float64, map[int32]float32) {
 }
 
 // listSystemd 解析 `systemctl list-units --type=service`,把 Linux 命令变成结构化数据。
+// 若 systemctl 不可用(如容器环境),降级为进程列表。
 func listSystemd() []ServiceInfo {
 	out, err := exec.Command("systemctl", "list-units", "--type=service", "--no-legend", "--no-pager").Output()
 	if err != nil {
-		return nil
+		return listProcesses()
 	}
 	cpuMap, memMap := fetchPsStats()
 	var res []ServiceInfo
@@ -144,7 +151,7 @@ func listSystemd() []ServiceInfo {
 func listProcesses() []ServiceInfo {
 	procs, err := process.Processes()
 	if err != nil {
-		return nil
+		return []ServiceInfo{}
 	}
 	cpuMap, memMap := fetchPsStats()
 	var res []ServiceInfo
