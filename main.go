@@ -8,6 +8,7 @@ import (
 	"opscore/internal/auth"
 	"opscore/internal/handlers"
 	"opscore/internal/metrics"
+	"opscore/internal/module"
 	"path/filepath"
 	"strings"
 )
@@ -33,6 +34,7 @@ func main() {
 		dataDir = filepath.Join(filepath.Dir(exe), "data")
 	}
 	auth.Init(dataDir)
+	module.InitPluginStore(dataDir)
 
 	mux := http.NewServeMux()
 	// ── 认证 API（不受中间件保护） ──
@@ -62,6 +64,10 @@ func main() {
 	mux.HandleFunc("/api/core/tasks/disks/action", handlers.DiskActionHandler)
 	// ── 网络配置 API ──
 	mux.HandleFunc("/api/core/network/config", handlers.NetConfigHandler)
+
+	// ── 插件管理 API ──
+	mux.HandleFunc("/api/plugins", handlers.PluginList)
+	mux.HandleFunc("/api/plugins/", handlers.PluginAction)
 
 	// ── 前端静态资源(SPA) ──
 	fileServer := http.FileServer(http.Dir(*flagDist))

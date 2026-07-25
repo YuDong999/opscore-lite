@@ -37,6 +37,11 @@ services:
       # 日志与配置(只读),便于某些采集
       - /var/log:/var/log:ro
       - /etc:/etc:ro
+      # 插件状态持久化
+      - opscore-data:/app/data
     restart: unless-stopped
     # 说明:dist/opscore 是提交在仓库里的 Linux 静态二进制,可直接复用;
     # 走多阶段构建会自动从源码重编,二者等价。
+
+volumes:
+  opscore-data:

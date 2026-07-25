@@ -130,10 +130,6 @@ html, body {
   transition: background-color 0.5s ease, background-image 0.5s ease;
 }
 
-html {
-
-body { overflow-y: scroll; }
-
 html, body, #root { height: 100%; margin: 0; }
 
 body {
