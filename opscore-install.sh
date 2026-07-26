@@ -114,10 +114,23 @@ systemctl daemon-reload
 ok "systemd unit 已安装"
 
 # ========== 询问启动 ==========
-echo ""
-read -p "是否现在启动服务？(y/n): " -n 1 -r
-echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ -t 0 ]]; then
+  echo ""
+  read -p "是否现在启动服务？(y/n): " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    systemctl enable --now opscore
+    sleep 1
+    if systemctl is-active --quiet opscore; then
+      ok "服务已启动"
+    else
+      echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
+    fi
+  else
+    echo "已跳过启动。后续可执行:"
+    echo "  sudo systemctl enable --now opscore"
+  fi
+else
   systemctl enable --now opscore
   sleep 1
   if systemctl is-active --quiet opscore; then
@@ -125,9 +138,6 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   else
     echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
   fi
-else
-  echo "已跳过启动。后续可执行:"
-  echo "  sudo systemctl enable --now opscore"
 fi
 
 # ========== 汇总信息 ==========
