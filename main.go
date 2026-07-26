@@ -44,14 +44,6 @@ func main() {
 	auth.Init(dataDir)
 	module.InitPluginStore(dataDir)
 
-	if notePath := filepath.Join(dataDir, ".install-note"); notePath != "" {
-		if b, err := os.ReadFile(notePath); err == nil && len(b) > 0 {
-			log.Println("—— 安装摘要 ——")
-			log.Print(strings.TrimSpace(string(b)))
-			os.Remove(notePath)
-		}
-	}
-
 	mux := http.NewServeMux()
 	// ── 认证 API（不受中间件保护） ──
 	mux.HandleFunc("/api/auth/token", auth.HandleToken)
@@ -135,7 +127,6 @@ func main() {
   ============================================`)
 	log.Println("OpsCore demo 已启动 -> http://" + addr)
 	log.Println("日志文件: " + filepath.Join(dataDir, "opscore.log"))
-	log.Println("查看日志: tail -100f " + filepath.Join(dataDir, "opscore.log"))
 	log.Fatal(http.ListenAndServe(addr, cors(auth.Middleware(mux))))
 }
 
