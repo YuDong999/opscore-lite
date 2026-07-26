@@ -123,6 +123,15 @@ if [[ -t 0 ]]; then
     sleep 1
     if systemctl is-active --quiet opscore; then
       ok "服务已启动"
+      cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
+安装目录: ${INSTALL_DIR}
+数据目录: ${INSTALL_DIR}/data
+服务名称: opscore
+访问地址: http://<服务器IP>:8088
+        nginx: http://<服务器IP>:8081
+        本地:  http://127.0.0.1:8088
+服务管理: journalctl -u opscore -f
+NOTE
     else
       echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
     fi
@@ -135,34 +144,17 @@ else
   sleep 1
   if systemctl is-active --quiet opscore; then
     ok "服务已启动"
+    cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
+安装目录: ${INSTALL_DIR}
+数据目录: ${INSTALL_DIR}/data
+服务名称: opscore
+访问地址: http://<服务器IP>:8088
+        nginx: http://<服务器IP>:8081
+        本地:  http://127.0.0.1:8088
+服务管理: journalctl -u opscore -f
+NOTE
   else
     echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
   fi
 fi
-
-# ========== 汇总信息 ==========
-echo ""
-echo -e "${GREEN}=========================================="
-echo "  部署完成"
-echo "==========================================${NC}"
-echo ""
-echo "  安装目录:   ${INSTALL_DIR}"
-echo "  数据目录:   ${INSTALL_DIR}/data"
-echo "  服务名称:   opscore"
-echo ""
-echo "  访问地址:"
-echo "    直连:     http://<服务器IP>:8088"
-echo "    nginx:    http://<服务器IP>:8081"
-echo "    本地:     http://127.0.0.1:8088"
-echo ""
-echo "  服务管理:"
-echo "    状态:     systemctl status opscore"
-echo "    启动:     systemctl start opscore"
-echo "    停止:     systemctl stop opscore"
-echo "    重启:     systemctl restart opscore"
-echo "    日志:     journalctl -u opscore -f"
-echo "    自启:     systemctl enable/disable opscore"
-echo ""
-echo "  PATH:       /etc/profile.d/opscore.sh (重登录生效)"
-echo "  手动执行:   ${INSTALL_DIR}/opscore -h"
-echo ""
+exit 0

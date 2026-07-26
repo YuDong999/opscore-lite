@@ -2,15 +2,17 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
+
 	"opscore/internal/auth"
 	"opscore/internal/handlers"
 	"opscore/internal/metrics"
 	"opscore/internal/module"
-	"path/filepath"
-	"strings"
 )
 
 func main() {
@@ -33,8 +35,22 @@ func main() {
 		exe, _ := os.Executable()
 		dataDir = filepath.Join(filepath.Dir(exe), "data")
 	}
+	os.MkdirAll(dataDir, 0755)
+
+	logFile, err := os.OpenFile(filepath.Join(dataDir, "opscore.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+	}
 	auth.Init(dataDir)
 	module.InitPluginStore(dataDir)
+
+	if notePath := filepath.Join(dataDir, ".install-note"); notePath != "" {
+		if b, err := os.ReadFile(notePath); err == nil && len(b) > 0 {
+			log.Println("—— 安装摘要 ——")
+			log.Print(strings.TrimSpace(string(b)))
+			os.Remove(notePath)
+		}
+	}
 
 	mux := http.NewServeMux()
 	// ── 认证 API（不受中间件保护） ──
@@ -107,11 +123,14 @@ func main() {
  ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝
                                                           
         opscore starting...
-        ___ __
-            / (_) /____
-   ______/ / / __/ _ \
-  /_____/ / /_/  __/
-       /_/_/\__/\___/
+
+      :::        ::::::::::: ::::::::::: :::::::::: 
+     :+:            :+:         :+:     :+:         
+    +:+            +:+         +:+     +:+          
+   +#+            +#+         +#+     +#++:++#      
+  +#+            +#+         +#+     +#+            
+ #+#            #+#         #+#     #+#             
+########## ###########     ###     ##########       
 
   ============================================`)
 	log.Println("OpsCore demo 已启动 -> http://" + addr)
