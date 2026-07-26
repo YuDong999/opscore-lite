@@ -134,6 +134,8 @@ func main() {
 
   ============================================`)
 	log.Println("OpsCore demo 已启动 -> http://" + addr)
+	log.Println("日志文件: " + filepath.Join(dataDir, "opscore.log"))
+	log.Println("查看日志: tail -f " + filepath.Join(dataDir, "opscore.log"))
 	log.Fatal(http.ListenAndServe(addr, cors(auth.Middleware(mux))))
 }
 

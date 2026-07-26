@@ -106,7 +106,7 @@ ok "PATH 已加入 /etc/profile.d/opscore.sh"
 info "安装 systemd service..."
 cat > /etc/systemd/system/opscore.service << 'SERVICE'
 [Unit]
-Description=OpsCore Demo (单二进制运维控制台)
+Description=OpsCore Demo (日志: /opt/opscore/data/opscore.log)
 After=network.target
 
 [Service]
@@ -122,48 +122,57 @@ SERVICE
 systemctl daemon-reload
 ok "systemd unit 已安装"
 
+# ========== 先写安装摘要，再启动（opscore 启动时读取并打印） ==========
+cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
+安装目录: ${INSTALL_DIR}
+数据目录: ${INSTALL_DIR}/data
+日志文件: ${INSTALL_DIR}/data/opscore.log
+服务名称: opscore
+
+访问地址:
+  直连:     http://<服务器IP>:8088
+  nginx:    http://<服务器IP>:8081
+  本地:     http://127.0.0.1:8088
+
+服务管理:
+  状态:     systemctl status opscore
+  启动:     systemctl start opscore
+  停止:     systemctl stop opscore
+  重启:     systemctl restart opscore
+  日志:     journalctl -u opscore -f
+  文件日志: tail -f ${INSTALL_DIR}/data/opscope.log
+
+PATH:      /etc/profile.d/opscore.sh (重登录生效)
+手动执行:  ${INSTALL_DIR}/opscore -h
+NOTE
+
 # ========== 询问启动 ==========
+start_service() {
+  systemctl enable --now opscore
+  sleep 1
+  if systemctl is-active --quiet opscore; then
+    ok "服务已启动"
+    echo ""
+    echo -e "${CYAN}━━━ 实时日志（Ctrl+C 退出） ━━━${NC}"
+    echo -e "${YELLOW}日志文件: ${INSTALL_DIR}/data/opscore.log${NC}"
+    echo ""
+    tail -f "${INSTALL_DIR}/data/opscore.log"
+  else
+    echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
+  fi
+}
+
 if [[ -t 0 ]]; then
   echo ""
   read -p "是否现在启动服务？(y/n): " -n 1 -r
   echo ""
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    systemctl enable --now opscore
-    sleep 1
-    if systemctl is-active --quiet opscore; then
-      ok "服务已启动"
-      cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
-安装目录: ${INSTALL_DIR}
-数据目录: ${INSTALL_DIR}/data
-服务名称: opscore
-访问地址: http://<服务器IP>:8088
-        nginx: http://<服务器IP>:8081
-        本地:  http://127.0.0.1:8088
-服务管理: journalctl -u opscore -f
-NOTE
-    else
-      echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
-    fi
+    start_service
   else
     echo "已跳过启动。后续可执行:"
     echo "  sudo systemctl enable --now opscore"
   fi
 else
-  systemctl enable --now opscore
-  sleep 1
-  if systemctl is-active --quiet opscore; then
-    ok "服务已启动"
-    cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
-安装目录: ${INSTALL_DIR}
-数据目录: ${INSTALL_DIR}/data
-服务名称: opscore
-访问地址: http://<服务器IP>:8088
-        nginx: http://<服务器IP>:8081
-        本地:  http://127.0.0.1:8088
-服务管理: journalctl -u opscore -f
-NOTE
-  else
-    echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
-  fi
+  start_service
 fi
 exit 0
