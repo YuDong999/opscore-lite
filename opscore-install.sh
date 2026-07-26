@@ -76,6 +76,9 @@ fi
 info "部署到 ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}/web/dist"
 
+# 先停止运行中的实例
+systemctl stop opscore 2>/dev/null || true
+
 # 二进制在根目录命名 opscore-linux-amd64 等
 cd "${tmp_dir}"
 bin_src=$(ls opscore-linux-* 2>/dev/null | head -1)
