@@ -1,3 +1,5 @@
+// ── 系统资源模块: CPU/内存/磁盘/网络/负载 仪表盘 + 实时趋势 ──
+
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { getJSON } from '../api/client'
 import { useTheme } from '../theme'
@@ -26,6 +28,7 @@ interface DrillState {
   data?: DiskChildrenResp
 }
 
+// API /api/core/resources 返回的系统快照格式
 interface Snapshot {
   timestamp: number
   host: { hostname: string; os: string; platform: string; uptime: number }
@@ -45,7 +48,7 @@ interface Snapshot {
 }
 
 type TrendMetric = 'combined' | 'cpu' | 'mem' | 'swap' | 'net'
-type TrendWin = 5 | 15 | 60 // 分钟
+type TrendWin = 5 | 15 | 60 // 分钟: 5m / 15m / 1h
 
 const fmtBytes = (b: number) => {
   if (!b) return '0 B'
@@ -100,11 +103,11 @@ const WIN_POINTS: Record<TrendWin, number> = { 5: 150, 15: 450, 60: 1800 }
 export default function ResourcesModule() {
   const { dark } = useTheme()
   const [snap, setSnap] = useState<Snapshot | null>(null)
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)  // 当前展开的磁盘挂载点
   const [drill, setDrill] = useState<Record<string, DrillState>>({})
-  const [metric, setMetric] = useState<TrendMetric>('combined')
-  const [win, setWin] = useState<TrendWin>(5)
-  // 客户端环形缓冲:每条指标一个点,最多保留 1 小时(1800 点)
+  const [metric, setMetric] = useState<TrendMetric>('combined')  // 趋势图指标
+  const [win, setWin] = useState<TrendWin>(5)                    // 趋势时间窗
+  // 客户端环形缓冲: 每条指标一个点, 最多保留 1 小时(1800 点)
   const history = useRef<{ cpu: number[]; mem: number[]; swap: number[]; rx: number[]; tx: number[] }>({
     cpu: [], mem: [], swap: [], rx: [], tx: [],
   })
@@ -123,6 +126,7 @@ export default function ResourcesModule() {
     }
   }
 
+  // 每 2 秒轮询 /api/core/resources, 客户端保留 1800 个采样点(1h)
   useEffect(() => {
     let alive = true
     const load = () =>
@@ -157,14 +161,15 @@ export default function ResourcesModule() {
   const dim = dark ? '#94a8b8' : '#64748b'
   const axis = dark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.10)'
 
-  // 内存波浪图(liquidfill)
+  // ── 内存波浪图 (liquidfill): 颜色随百分比渐变 ──
   const memPct = snap.memory.usedPercent
   const memColor = interpolateColor(memPct)
   const memOption = {
     series: [
       {
         type: 'liquidFill',
-        radius: '92%',
+        radius: '88%',
+        center: ['50%', '50%'],
         data: [
           Math.max(0, memPct / 100),
           Math.max(0, memPct / 100 - 0.07),
@@ -185,13 +190,14 @@ export default function ResourcesModule() {
     ],
   }
 
-  // CPU 仪表盘(fix: formatter 用 {value}% 而非 {v}%)
+  // ── CPU 仪表盘 (gauge) ──
   const cpuOption = {
     series: [
       {
         type: 'gauge',
         startAngle: 210,
         endAngle: -30,
+        center: ['50%', '50%'],
         min: 0,
         max: 100,
         progress: { show: true, width: 16, itemStyle: { color: '#6366f1' } },
@@ -206,7 +212,7 @@ export default function ResourcesModule() {
     ],
   }
 
-  // 磁盘饼图(已用 vs 空闲,按挂载点叠加)
+  // ── 磁盘饼图 (已用 vs 空闲, 按挂载点叠加) ──
   const totalUsed = snap.disks.reduce((a, d) => a + d.used, 0)
   const totalFree = snap.disks.reduce((a, d) => a + (d.total - d.used), 0)
   const diskOption = {
@@ -215,7 +221,8 @@ export default function ResourcesModule() {
     series: [
       {
         type: 'pie',
-        radius: ['52%', '78%'],
+        radius: ['42%', '68%'],
+        center: ['50%', '40%'],
         avoidLabelOverlap: true,
         itemStyle: { borderColor: dark ? '#0b1020' : '#fff', borderWidth: 2 },
         label: { color: txt },
@@ -227,7 +234,7 @@ export default function ResourcesModule() {
     ],
   }
 
-  // 每核柱状
+  // ── 每核柱状图 (bar) ──
   const coreOption = {
     grid: { left: 30, right: 10, top: 10, bottom: 20 },
     xAxis: { type: 'category', data: snap.cpu.perCore.map((_, i) => `C${i}`), axisLabel: { color: dim }, axisLine: { lineStyle: { color: axis } } },
@@ -242,16 +249,16 @@ export default function ResourcesModule() {
     ],
   }
 
-  // 实时趋势:默认保留原来的 CPU + 网络上下行;新增指标切换(综合/CPU/内存/Swap/网络) × 时间窗(5m/15m/1h)
+  // ── 实时趋势折线图: 指标(综合/CPU/内存/Swap/网络) × 时间窗(5m/15m/1h) ──
   const h = history.current
   const winPts = WIN_POINTS[win]
   const tail = (arr: number[]) => arr.slice(Math.max(0, arr.length - winPts))
   const xData = tail(h.cpu).map((_, i) => i)
-
+  // 不同的线都需要单独调整  grid的值
   let liveOption: any
   if (metric === 'combined') {
     liveOption = {
-      grid: { left: 40, right: 70, top: 24, bottom: 24 },
+      grid: { left: 60, right: 70, top: 22, bottom: 22 },
       legend: { top: 0, textStyle: { color: dim }, data: ['CPU%', '下行', '上行'] },
       tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
@@ -267,7 +274,7 @@ export default function ResourcesModule() {
     }
   } else if (metric === 'net') {
     liveOption = {
-      grid: { left: 52, right: 12, top: 28, bottom: 24 },
+      grid: { left: 60, right: 12, top: 28, bottom: 22 }, 
       legend: { top: 0, textStyle: { color: dim }, data: ['下行', '上行'] },
       tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
@@ -284,7 +291,7 @@ export default function ResourcesModule() {
       swap: { name: 'Swap%', data: h.swap, color: '#f59e0b' },
     }[metric]
     liveOption = {
-      grid: { left: 40, right: 12, top: 28, bottom: 24 },
+      grid: { left: 60, right: 12, top: 28, bottom: 22 }, 
       legend: { top: 0, textStyle: { color: dim }, data: [m.name] },
       tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
@@ -381,7 +388,7 @@ export default function ResourcesModule() {
               <button className={`tab ${win === 60 ? 'tab-on' : ''}`} onClick={() => setWin(60)}>1 小时</button>
             </div>
           </div>
-          <EChart option={liveOption} height={260} />
+          <EChart option={liveOption} height={190} />
         </Card>
         <Card title="每核占用" subtitle="bar">
           <EChart option={coreOption} height={260} />
@@ -457,7 +464,7 @@ export default function ResourcesModule() {
                           {st?.data && (
                             <div className="drill">
                               <div className="drill-head dim small">
-                                顶层占用 · 按大小排序{st.data.partial ? ' · 部分目录因超时/权限未扫全' : ''}
+                                顶层占用 · 按大小排序{st.data.partial ? ' · 部分目录因超时/权限未扫全' : ''} · Docker 部署下子目录大小为逻辑遍历结果，可能与已用总量存在差异
                               </div>
                               <div className="drill-list">
                                 {st.data.children.map((c) => {

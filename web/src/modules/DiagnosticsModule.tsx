@@ -1,3 +1,5 @@
+// ── 系统诊断模块: 网络诊断 / 登录审计 / 系统更新 ──
+
 import { useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
@@ -60,6 +62,8 @@ export default function DiagnosticsModule() {
     </div>
   )
 }
+
+// ── 网络诊断子组件: ping / traceroute / mtr / 端口 / DNS / HTTP / 路由 / ARP ──
 
 function NetworkSection() {
   const [tool, setTool] = useState('ping')
@@ -128,6 +132,8 @@ function NetworkSection() {
   )
 }
 
+// ── 登录审计子组件: last / lastb / sshd 日志 ──
+
 function LoginSection() {
   const [data, setData] = useState<LoginAudit | null>(null)
   useEffect(() => { getJSON<LoginAudit>('/api/core/diagnostics/login-audit').then(setData).catch(() => {}) }, [])
@@ -151,6 +157,8 @@ function LoginSection() {
     </>
   )
 }
+
+// ── 系统更新子组件: 安全更新列表 + 重启状态 ──
 
 function UpdatesSection() {
   const [data, setData] = useState<Updates | null>(null)

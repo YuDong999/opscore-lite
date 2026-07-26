@@ -1,8 +1,11 @@
+// ── 登录页: Bearer Token 身份验证 ──
+// 用户输入 Token → 请求 /api/manifest → 成功则存 localStorage 并跳转
+
 import { useState } from 'react'
 import { postJSON } from '../api/client'
 
 interface Props {
-  onLogin: () => void
+  onLogin: () => void  // 登录成功回调
 }
 
 export default function LoginPage({ onLogin }: Props) {
@@ -10,13 +13,13 @@ export default function LoginPage({ onLogin }: Props) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // 提交 Token 验证
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!token.trim()) return
     setLoading(true)
     setError('')
     try {
-      // 验证 token 是否有效
       const res = await fetch('/api/manifest', {
         headers: { Authorization: `Bearer ${token.trim()}` },
       })

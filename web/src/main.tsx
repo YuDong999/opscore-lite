@@ -1,3 +1,5 @@
+// ── 应用入口: 挂载 React 根组件, 包裹 ThemeProvider + HashRouter ──
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'

@@ -1,3 +1,5 @@
+// ── 网络模块: 接口列表 / 监听端口 / 防火墙 / 网络配置 ──
+
 import { useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
@@ -26,7 +28,7 @@ type NetTab = 'network' | 'firewall' | 'config'
 export default function NetworkModule() {
   const [data, setData] = useState<NetData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<NetTab>('firewall')
+  const [tab, setTab] = useState<NetTab>('firewall')  // 默认打开防火墙页
 
   useEffect(() => {
     if (tab === 'firewall') return // 防火墙页自己拉数据
@@ -152,6 +154,8 @@ type ConfigResult = {
   output?: string
   permission: 'root' | 'user'
 }
+
+// ── 网络配置子组件: 查看/修改 IP, 路由, DNS ──
 
 function NetConfigSection() {
   const [data, setData] = useState<NetConfig | null>(null)

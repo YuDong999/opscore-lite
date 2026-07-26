@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ type Snapshot struct {
 	Load      *load.AvgStat `json:"load,omitempty"`
 	Disks     []DiskInfo `json:"disks"`
 	Net       NetIO      `json:"net"`
+	IsDocker  bool       `json:"isDocker"`
 }
 
 type HostInfo struct {
@@ -91,7 +93,7 @@ func loop() {
 }
 
 func tick() {
-	s := Snapshot{Timestamp: time.Now().Unix()}
+	s := Snapshot{Timestamp: time.Now().Unix(), IsDocker: isDocker()}
 
 	if h, err := host.Info(); err == nil {
 		s.Host = HostInfo{Hostname: h.Hostname, OS: h.OS, Platform: h.Platform, Uptime: h.Uptime}
@@ -196,6 +198,12 @@ func Get() Snapshot {
 	mu.RLock()
 	defer mu.RUnlock()
 	return current
+}
+
+// isDocker 检测当前是否运行在 Docker 容器内。
+func isDocker() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
 }
 
 // round2 将浮点数保留 2 位小数（四舍五入）。

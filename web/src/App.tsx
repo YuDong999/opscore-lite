@@ -1,3 +1,5 @@
+// ── 根组件: 侧栏导航 + 路由分发 + 认证检查 ──
+
 import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { getJSON } from './api/client'
@@ -11,12 +13,13 @@ import SettingsModule from './modules/SettingsModule'
 import DiagnosticsModule from './modules/DiagnosticsModule'
 import TasksModule from './modules/TasksModule'
 
+// API /api/manifest 返回的模块注册格式
 interface Manifest {
   id: string
   name: string
   icon: string
   routePath: string
-  group: string
+  group: string        // "core" | "plugin"
   description: string
 }
 
@@ -25,13 +28,13 @@ export default function App() {
   const [authRequired, setAuthRequired] = useState<boolean | null>(null)
   const [loggedIn, setLoggedIn] = useState(false)
 
+  // 启动时检查是否配置了 Token 认证
   useEffect(() => {
-    // 检查是否需要认证
     fetch('/api/auth/token')
       .then((r) => r.json())
       .then((d: any) => {
         if (d.configured === 'true' && !localStorage.getItem('opscore-token')) {
-          setAuthRequired(true)
+          setAuthRequired(true)     // 有 Token 但用户未登录 → 显示登录页
         } else {
           setAuthRequired(false)
           loadModules()
@@ -42,17 +45,20 @@ export default function App() {
         loadModules()
       })
   }, [])
-  
+
+  // 监听插件激活/移除事件, 重新加载侧栏
   useEffect(() => {
     const handler = () => loadModules()
     window.addEventListener('manifest-changed', handler)
     return () => window.removeEventListener('manifest-changed', handler)
   }, [])
 
+  // 从后端加载模块清单
   const loadModules = () => {
     getJSON<Manifest[]>('/api/manifest').then(setModules).catch(() => setModules([]))
   }
 
+  // 登录成功后加载模块
   const handleLogin = () => {
     setAuthRequired(false)
     setLoggedIn(true)
@@ -65,6 +71,7 @@ export default function App() {
   const core = modules.filter((m) => m.group === 'core')
   const plugins = modules.filter((m) => m.group === 'plugin')
 
+  // 布局: 侧栏 + 顶栏 + 路由内容
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -107,6 +114,7 @@ export default function App() {
         )}
         <div className="sidebar-foot">编译期内置 · 其余可插拔</div>
 
+        {/* 底部设置入口 */}
         <nav style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <NavLink to="/settings" className="nav-item" style={{ fontSize: 13, opacity: 0.7 }}>
             <span className="nav-icon">
@@ -126,6 +134,7 @@ export default function App() {
       <div className="main">
         <TopBar />
         <main className="content">
+          {/* 路由分发 */}
           <Routes>
             <Route path="/" element={<Navigate to="/resources" replace />} />
             <Route path="/resources" element={<ResourcesModule />} />
@@ -143,6 +152,7 @@ export default function App() {
   )
 }
 
+// 按名称返回对应 SVG 图标 (侧栏使用)
 function icon(name: string, size = 18) {
   const s = size
   const icons: Record<string, JSX.Element> = {

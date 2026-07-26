@@ -1,3 +1,5 @@
+// ── 服务发现模块: 服务列表 + 启停/重启 + 日志弹窗 ──
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
@@ -37,15 +39,16 @@ interface LogResponse {
 
 export default function ServicesModule() {
   const [data, setData] = useState<{ os: string; managed: boolean; services: ServiceInfo[]; note?: string } | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)    // 正在操作的服务ID
   const [msg, setMsg] = useState<string>('')
-  const [logTarget, setLogTarget] = useState<ServiceInfo | null>(null)
-  const [search, setSearch] = useState('')
+  const [logTarget, setLogTarget] = useState<ServiceInfo | null>(null)  // 日志弹窗目标服务
+  const [search, setSearch] = useState('')        // 搜索关键词
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed'>('all')
   const [sortKey, setSortKey] = useState<'cpu' | 'mem' | null>(null)
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [copied, setCopied] = useState(false)
 
+  // 复制命令到剪贴板(兜底方案)
   const copyCmd = async (cmd: string) => {
     try {
       await navigator.clipboard.writeText(cmd)
@@ -63,6 +66,7 @@ export default function ServicesModule() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  // 切换排序: 点击同一列头 → 切换升降序; 点击其他列 → 降序; 第三次 → 取消排序
   const toggleSort = (key: 'cpu' | 'mem') => {
     if (sortKey !== key) {
       setSortKey(key)
@@ -80,6 +84,7 @@ export default function ServicesModule() {
     return sortDir === 'desc' ? ' ▼' : ' ▲'
   }
 
+  // 筛选 + 排序后的可见列表
   const visible = useMemo(() => {
     if (!data) return []
     const q = search.trim().toLowerCase()
@@ -95,7 +100,7 @@ export default function ServicesModule() {
         default: return true
       }
     })
-    // 点击 CPU/内存 列头时按数值排序;否则按名称稳定排序(避免轮询时行跳动)
+    // 点击 CPU/内存列头 → 按数值排序; 否则按名称稳定排序(避免轮询时行跳动)
     if (sortKey) {
       const dir = sortDir === 'desc' ? -1 : 1
       list.sort((a, b) => {
@@ -109,6 +114,7 @@ export default function ServicesModule() {
     return list
   }, [data, search, statusFilter, sortKey, sortDir])
 
+  // 每 5 秒轮询服务列表
   const load = useCallback(() => {
     getJSON('/api/core/services').then(setData).catch(() => setMsg('加载失败'))
   }, [])
@@ -224,6 +230,8 @@ export default function ServicesModule() {
     </div>
   )
 }
+
+// ── 日志弹窗组件: 支持 journalctl / 文件日志, 过滤 + 自动刷新 ──
 
 function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => void }) {
   const [logLines, setLogLines] = useState<LogLine[]>([])

@@ -1,3 +1,5 @@
+// ── 插件中心模块: 插件列表 / 激活/接入 / 扫描 ──
+
 import { useEffect, useState } from 'react'
 import Card from '../components/Card'
 

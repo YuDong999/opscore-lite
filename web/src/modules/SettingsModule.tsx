@@ -1,3 +1,5 @@
+// ── 设置模块: 主题选择器 / 访问令牌管理 ──
+
 import { useState, useEffect } from 'react'
 import { useTheme, THEMES } from '../theme'
 import { getJSON, postJSON } from '../api/client'

@@ -59,7 +59,7 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 用上下文超时管控遍历,避免大目录(如 Windows 的 C:\Windows)卡死请求。
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second)
 	defer cancel()
 
 	entries, err := os.ReadDir(root)
@@ -74,8 +74,11 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 		"snap": true, "boot": true, "mnt": true, "media": true,
 	}
 
-	// 对每个子目录单独调用 du -s 获取大小（比 filepath.WalkDir 快）
-	// 文件大小直接用 os.Stat，无需 du
+	// Docker 环境下 du 遍历结果与 statvfs 口径不一致，标记为部分扫描
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		dc.Partial = true
+	}
+
 	var collected []DirEntry
 	for _, e := range entries {
 		if e.IsDir() && virtualDirs[e.Name()] {

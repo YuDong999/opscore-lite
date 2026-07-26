@@ -1,3 +1,5 @@
+// ── 顶部栏: 标题 + 主题色药丸切换按钮 ──
+
 import { useTheme, THEMES } from '../theme'
 
 export default function TopBar() {
@@ -5,6 +7,7 @@ export default function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-title">OpsCore · 轻量运维控制台</div>
+      {/* 5 个主题色药丸按钮: 点击切换 data-theme */}
       <div className="theme-picker">
         {THEMES.map((t) => (
           <button

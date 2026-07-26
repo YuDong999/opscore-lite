@@ -1,3 +1,5 @@
+// ── 防火墙模块: 状态 / 端口规则 / IP 黑白名单 / 确认弹窗 / 审计链 ──
+
 import { useCallback, useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
@@ -30,7 +32,7 @@ interface AuditEntry {
 
 type Tab = 'port' | 'ip' | 'rules'
 
-export default function FirewallModule({ embedded = false }: { embedded?: boolean }) {
+export default function FirewallModule({ embedded = false }: { embedded?: boolean }) {  // embedded: 嵌入 NetworkModule 时为 true
   const [status, setStatus] = useState<FWStatus | null>(null)
   const [rules, setRules] = useState<FWRule[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
@@ -44,7 +46,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
   const [cidr, setCidr] = useState('')
   const [ipAct, setIpAct] = useState<'allow' | 'deny'>('allow')
 
-  // 确认弹窗
+  // 确认弹窗(二次确认 + 防锁死警告)
   const [confirm, setConfirm] = useState<{ open: boolean; payload: any; command: string; lockoutRisk: boolean }>({
     open: false,
     payload: null,

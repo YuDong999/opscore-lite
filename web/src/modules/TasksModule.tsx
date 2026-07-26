@@ -1,3 +1,5 @@
+// ── 任务与存储模块: 定时任务编辑器 / 磁盘挂载 / SMART 健康 ──
+
 import { useCallback, useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
@@ -323,6 +325,8 @@ function SelectField({ label, value, onChange, options }: { label: string; value
 
 // ================= Disks / Smart =================
 
+// ── 磁盘挂载子组件: lsblk / mount / df ──
+
 function DisksSection() {
   const [data, setData] = useState<Disks | null>(null)
   const [mountDev, setMountDev] = useState('')
@@ -387,6 +391,8 @@ function DisksSection() {
     </>
   )
 }
+
+// ── SMART 健康子组件: smartctl -a 查看硬盘状态 ──
 
 function SmartSection() {
   const [device, setDevice] = useState('sda')
