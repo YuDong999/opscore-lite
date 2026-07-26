@@ -78,12 +78,18 @@ mkdir -p "${INSTALL_DIR}/web/dist"
 
 # 先停止运行中的实例
 systemctl stop opscore 2>/dev/null || true
+sleep 1
 
 # 二进制在根目录命名 opscore-linux-amd64 等
 cd "${tmp_dir}"
 bin_src=$(ls opscore-linux-* 2>/dev/null | head -1)
 [[ -z "$bin_src" ]] && err "找不到二进制文件"
-cp "$bin_src" "${INSTALL_DIR}/opscore"
+cp "$bin_src" "${INSTALL_DIR}/opscore" 2>/dev/null
+if [[ $? -ne 0 ]]; then
+  pkill -f opscore 2>/dev/null || true
+  sleep 1
+  cp "$bin_src" "${INSTALL_DIR}/opscore"
+fi
 chmod +x "${INSTALL_DIR}/opscore"
 
 cp -r web/dist/* "${INSTALL_DIR}/web/dist/"
