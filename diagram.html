@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { background: #1e1e2e; display: flex; justify-content: center; padding: 20px; font-family: 'Segoe UI', system-ui, sans-serif; }
+  .container { background: #fff; border-radius: 12px; padding: 24px; max-width: 1200px; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<div class="container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 820" width="1100" height="820">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#d00"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#16a34a"/>
+    </marker>
+    <marker id="arr-amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#d97706"/>
+    </marker>
+    <marker id="arr-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7c3aed"/>
+    </marker>
+    <filter id="shadow"><feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity=".12"/></filter>
+  </defs>
+
+  <!-- ==================== 标题 ==================== -->
+  <text x="550" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="#1e1e2e">OpsCore 系统资源卡布局 — 尺寸标注图</text>
+  <text x="550" y="50" text-anchor="middle" font-size="13" fill="#666">（grid-5 第一行：系统信息 / 内存 / CPU / 磁盘 / 负载）</text>
+
+  <!-- ========== 整体说明 ========== -->
+  <rect x="30" y="65" width="1040" height="38" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="40" y="86" font-size="12" fill="#475569">
+    <tspan font-weight="700">图例：</tspan>
+    <tspan fill="#d00">●</tspan><tspan> 测量线/标注</tspan>
+    <tspan fill="#2563eb" dx="10">●</tspan><tspan> 中心点坐标</tspan>
+    <tspan fill="#7c3aed" dx="10">●</tspan><tspan> 建议调整方向</tspan>
+    <tspan dx="10" font-size="15" fill="#e2e8f0">│</tspan>
+    <tspan fill="#16a34a" dx="10">●</tspan><tspan> 第 1 行(card-head)</tspan>
+    <tspan fill="#d97706" dx="10">●</tspan><tspan> 第 2 行(EChart)</tspan>
+    <tspan fill="#0f172a" dx="10">●</tspan><tspan> 第 3 行(legend/stat-row)</tspan>
+    <tspan fill="#ef4444" dx="10">●</tspan><tspan> 第 4 行(stat-row)</tspan>
+  </rect>
+
+  <!-- ==================== 内存卡 ==================== -->
+  <g transform="translate(30, 120)">
+    <!-- 卡片外框 -->
+    <rect x="0" y="0" width="310" height="400" rx="16" fill="#fff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow)"/>
+
+    <!-- 第 1 行: card-head -->
+    <rect x="0" y="0" width="310" height="36" rx="16" fill="#f1f5f9"/>
+    <rect x="0" y="26" width="310" height="10" fill="#f1f5f9"/>
+    <text x="18" y="22" font-size="14" font-weight="600" fill="#0f172a">内存占用</text>
+    <text x="258" y="22" font-size="11" fill="#94a3b8" text-anchor="end">波浪图</text>
+    <!-- 第 1 行 底边线 -->
+    <line x1="16" y1="36" x2="294" y2="36" stroke="#16a34a" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="16" y="50" font-size="10" fill="#16a34a" font-weight="600">① card-head: 标题行（margin-bottom: 10px → 从 card-head 底部到 EChart 顶部）</text>
+
+    <!-- 第 2 行: EChart -->
+    <rect x="10" y="50" width="290" height="240" rx="8" fill="#f8fafc" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6,3"/>
+    <text x="155" y="46" text-anchor="middle" font-size="10" fill="#d97706" font-weight="600">② EChart height=240px</text>
+
+    <!-- 波浪圆 -->
+    <circle cx="155" cy="170" r="98" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4,2"/>
+    <circle cx="155" cy="170" r="98" fill="rgba(99,102,241,0.06)" stroke="none"/>
+    <text x="155" y="170" text-anchor="middle" font-size="13" fill="#2563eb" font-weight="600">liquidFill</text>
+    <text x="155" y="185" text-anchor="middle" font-size="10" fill="#2563eb">radius='82%'</text>
+
+    <!-- 中心点十字线和标注 -->
+    <line x1="155" y1="150" x2="155" y2="190" stroke="#2563eb" stroke-width="1"/>
+    <line x1="135" y1="170" x2="175" y2="170" stroke="#2563eb" stroke-width="1"/>
+    <circle cx="155" cy="170" r="3" fill="#2563eb"/>
+
+    <!-- 中心点标注(偏移避免遮挡) -->
+    <rect x="158" y="172" width="100" height="34" rx="4" fill="#eff6ff" stroke="#2563eb" stroke-width="1"/>
+    <text x="164" y="188" font-size="10" fill="#2563eb">center: ['50%', '44%']</text>
+    <text x="164" y="201" font-size="9" fill="#64748b">y=44%×240=105.6px</text>
+    <line x1="158" y1="178" x2="155" y2="174" stroke="#2563eb" stroke-width="1" marker-end="url(#arr-blue)"/>
+
+    <!-- 饼底边到 legend 间距 -->
+    <line x1="155" y1="270" x2="155" y2="290" stroke="#d00" stroke-width="1" marker-end="url(#arrow)"/>
+    <line x1="130" y1="270" x2="180" y2="270" stroke="#d00" stroke-width="0.5"/>
+    <rect x="87" y="272" width="135" height="16" rx="3" fill="#fee2e2"/>
+    <text x="155" y="283" text-anchor="middle" font-size="9" fill="#d00">饼下沿 ~23px → stat-row</text>
+
+    <!-- 第 3 行: stat-row -->
+    <line x1="16" y1="290" x2="294" y2="290" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="18" y="304" font-size="10" fill="#ef4444" font-weight="600">③ stat-row: 已用 3.2 GB / 16 GB</text>
+
+    <!-- 第 4 行: card padding -->
+    <line x1="16" y1="310" x2="294" y2="310" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <text x="18" y="324" font-size="10" fill="#ef4444" font-weight="600">④ card padding-bottom: 10px</text>
+
+    <!-- 底部标注 -->
+    <line x1="310" y1="0" x2="330" y2="0" stroke="#475569" stroke-width="1"/>
+    <line x1="310" y1="36" x2="330" y2="36" stroke="#475569" stroke-width="1"/>
+    <line x1="320" y1="0" x2="320" y2="36" stroke="#475569" stroke-width="1"/>
+    <text x="322" y="20" font-size="9" fill="#475569">36px</text>
+
+    <line x1="310" y1="36" x2="330" y2="36" stroke="#475569" stroke-width="1"/>
+    <line x1="310" y1="290" x2="330" y2="290" stroke="#475569" stroke-width="1"/>
+    <line x1="320" y1="36" x2="320" y2="290" stroke="#475569" stroke-width="1"/>
+    <text x="322" y="168" font-size="9" fill="#475569">254px</text>
+
+    <line x1="310" y1="290" x2="330" y2="290" stroke="#475569" stroke-width="1"/>
+    <line x1="310" y1="400" x2="330" y2="400" stroke="#475569" stroke-width="1"/>
+    <line x1="320" y1="290" x2="320" y2="400" stroke="#475569" stroke-width="1"/>
+    <text x="322" y="350" font-size="9" fill="#475569">110px</text>
+
+    <!-- 卡片标题 -->
+    <text x="155" y="-6" text-anchor="middle" font-size="11" fill="#0f172a" font-weight="600">内存占用 卡</text>
+  </g>
+
+  <!-- ==================== CPU 卡 ==================== -->
+  <g transform="translate(365, 120)">
+    <rect x="0" y="0" width="310" height="400" rx="16" fill="#fff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow)"/>
+
+    <!-- 第 1 行 -->
+    <rect x="0" y="0" width="310" height="36" rx="16" fill="#f1f5f9"/>
+    <rect x="0" y="26" width="310" height="10" fill="#f1f5f9"/>
+    <text x="18" y="22" font-size="14" font-weight="600" fill="#0f172a">CPU 使用率</text>
+    <text x="258" y="22" font-size="11" fill="#94a3b8" text-anchor="end">仪表盘</text>
+    <line x1="16" y1="36" x2="294" y2="36" stroke="#16a34a" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="16" y="50" font-size="10" fill="#16a34a" font-weight="600">① card-head</text>
+
+    <!-- EChart -->
+    <rect x="10" y="50" width="290" height="240" rx="8" fill="#f8fafc" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6,3"/>
+    <text x="155" y="46" text-anchor="middle" font-size="10" fill="#d97706" font-weight="600">② EChart height=240px</text>
+
+    <!-- 仪表盘弧 -->
+    <path d="M 85,180 A 85,85 0 1,1 225,180" fill="none" stroke="#6366f1" stroke-width="12" opacity="0.3"/>
+    <path d="M 85,180 A 85,85 0 0,0 155,108" fill="none" stroke="#6366f1" stroke-width="12"/>
+    <circle cx="155" cy="175" r="78" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3,3"/>
+
+    <!-- 中心点 -->
+    <line x1="155" y1="155" x2="155" y2="195" stroke="#2563eb" stroke-width="1"/>
+    <line x1="135" y1="175" x2="175" y2="175" stroke="#2563eb" stroke-width="1"/>
+    <circle cx="155" cy="175" r="3" fill="#2563eb"/>
+    <rect x="158" y="178" width="100" height="34" rx="4" fill="#eff6ff" stroke="#2563eb" stroke-width="1"/>
+    <text x="164" y="194" font-size="10" fill="#2563eb">center: ['50%', '46%']</text>
+    <text x="164" y="207" font-size="9" fill="#64748b">y=46%×240=110.4px</text>
+    <line x1="158" y1="184" x2="155" y2="180" stroke="#2563eb" stroke-width="1" marker-end="url(#arr-blue)"/>
+
+    <!-- stat-row -->
+    <line x1="16" y1="290" x2="294" y2="290" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="18" y="304" font-size="10" fill="#ef4444" font-weight="600">③ stat-row: 6 核 · Intel(R) Core(TM) i7-12700</text>
+
+    <line x1="16" y1="310" x2="294" y2="310" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <text x="18" y="324" font-size="10" fill="#ef4444" font-weight="600">④ padding-bottom: 10px</text>
+
+    <text x="155" y="-6" text-anchor="middle" font-size="11" fill="#0f172a" font-weight="600">CPU 使用率 卡</text>
+  </g>
+
+  <!-- ==================== 磁盘卡 ==================== -->
+  <g transform="translate(700, 120)">
+    <rect x="0" y="0" width="310" height="400" rx="16" fill="#fff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow)"/>
+
+    <!-- 第 1 行 -->
+    <rect x="0" y="0" width="310" height="36" rx="16" fill="#f1f5f9"/>
+    <rect x="0" y="26" width="310" height="10" fill="#f1f5f9"/>
+    <text x="18" y="22" font-size="14" font-weight="600" fill="#0f172a">磁盘空间</text>
+    <text x="258" y="22" font-size="11" fill="#94a3b8" text-anchor="end">饼图</text>
+    <line x1="16" y1="36" x2="294" y2="36" stroke="#16a34a" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="16" y="50" font-size="10" fill="#16a34a" font-weight="600">① card-head</text>
+
+    <!-- EChart -->
+    <rect x="10" y="50" width="290" height="240" rx="8" fill="#f8fafc" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6,3"/>
+    <text x="155" y="46" text-anchor="middle" font-size="10" fill="#d97706" font-weight="600">② EChart height=240px</text>
+
+    <!-- 饼图 ring -->
+    <circle cx="155" cy="150" r="82" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4,2"/>
+    <circle cx="155" cy="150" r="82" fill="rgba(99,102,241,0.04)" stroke="none"/>
+    <circle cx="155" cy="150" r="50" fill="#fff" stroke="#cbd5e1" stroke-width="0.5"/>
+    <path d="M 155,150 L 175,78 A 82,82 0 0,1 228,192" fill="#6366f1" opacity="0.35" stroke="#6366f1" stroke-width="1"/>
+    <path d="M 155,150 L 228,192 A 82,82 0 0,1 82,192" fill="#22c55e" opacity="0.25" stroke="#22c55e" stroke-width="1"/>
+    <text x="155" y="150" text-anchor="middle" font-size="12" fill="#475569">donut</text>
+    <text x="155" y="163" text-anchor="middle" font-size="9" fill="#94a3b8">42%–68%</text>
+
+    <!-- 中心点 -->
+    <line x1="155" y1="130" x2="155" y2="170" stroke="#2563eb" stroke-width="1"/>
+    <line x1="135" y1="150" x2="175" y2="150" stroke="#2563eb" stroke-width="1"/>
+    <circle cx="155" cy="150" r="3" fill="#2563eb"/>
+    <rect x="157" y="152" width="100" height="34" rx="4" fill="#eff6ff" stroke="#2563eb" stroke-width="1"/>
+    <text x="163" y="168" font-size="10" fill="#2563eb">center: ['50%', '40%']</text>
+    <text x="163" y="181" font-size="9" fill="#64748b">y=40%×240=96px</text>
+    <line x1="157" y1="158" x2="155" y2="154" stroke="#2563eb" stroke-width="1" marker-end="url(#arr-blue)"/>
+
+    <!-- 饼下沿到 legend -->
+    <line x1="155" y1="232" x2="155" y2="280" stroke="#d00" stroke-width="1" marker-end="url(#arrow)"/>
+    <line x1="120" y1="232" x2="190" y2="232" stroke="#d00" stroke-width="0.5"/>
+    <rect x="35" y="234" width="240" height="14" rx="3" fill="#fee2e2"/>
+    <text x="155" y="244" text-anchor="middle" font-size="9" fill="#d00">饼外径下沿 96+82=178px → 距容器底部 62px</text>
+
+    <!-- legend 在 EChart 内部 -->
+    <rect x="50" y="283" width="210" height="20" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.5"/>
+    <rect x="56" y="287" width="10" height="10" rx="2" fill="#6366f1"/>
+    <text x="70" y="296" font-size="10" fill="#475569">已用</text>
+    <rect x="116" y="287" width="10" height="10" rx="2" fill="#22c55e"/>
+    <text x="130" y="296" font-size="10" fill="#475569">空闲</text>
+    <text x="92" y="296" font-size="8" fill="#d00" text-anchor="middle">← legend(bottom:0) →</text>
+
+    <!-- stat-row 外部 -->
+    <line x1="16" y1="310" x2="294" y2="310" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,3"/>
+    <text x="18" y="324" font-size="10" fill="#ef4444" font-weight="600">③ stat-row（ECharts 外部，卡片内容区底部）</text>
+    <line x1="16" y1="335" x2="294" y2="335" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <text x="18" y="349" font-size="10" fill="#ef4444" font-weight="600">④ padding-bottom: 10px</text>
+
+    <text x="155" y="-6" text-anchor="middle" font-size="11" fill="#0f172a" font-weight="600">磁盘空间 卡</text>
+  </g>
+
+  <!-- ==================== 底部总结表 ==================== -->
+  <g transform="translate(30, 560)">
+    <rect x="0" y="0" width="1040" height="240" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="520" y="28" text-anchor="middle" font-size="16" font-weight="700" fill="#0f172a">三卡 center 方案对比 &amp; 执行清单</text>
+
+    <!-- 表头 -->
+    <rect x="20" y="42" width="200" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="120" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">卡片</text>
+
+    <rect x="230" y="42" width="160" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="310" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">当前 center</text>
+
+    <rect x="400" y="42" width="160" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="480" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">建议 center</text>
+
+    <rect x="570" y="42" width="120" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="630" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">radius</text>
+
+    <rect x="700" y="42" width="150" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="775" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">文件/行</text>
+
+    <rect x="860" y="42" width="160" height="28" rx="4" fill="#e2e8f0"/>
+    <text x="940" y="61" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">说明</text>
+
+    <!-- 分隔线 -->
+    <line x1="20" y1="72" x2="1020" y2="72" stroke="#cbd5e1" stroke-width="1"/>
+
+    <!-- 第 1 行: 内存 -->
+    <text x="120" y="98" text-anchor="middle" font-size="13" fill="#0f172a" font-weight="600">内存(波浪)</text>
+    <text x="310" y="98" text-anchor="middle" font-size="12" fill="#64748b">默认 ['50%','50%']</text>
+    <text x="480" y="98" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">['50%','44%']</text>
+    <text x="630" y="98" text-anchor="middle" font-size="12" fill="#d97706">92% → 82%</text>
+    <text x="775" y="98" text-anchor="middle" font-size="11" fill="#64748b">ResourcesModule.tsx:167</text>
+    <text x="940" y="98" text-anchor="middle" font-size="11" fill="#16a34a">上移: 波浪底部不再压 stat-row</text>
+
+    <!-- 第 2 行: CPU -->
+    <text x="120" y="128" text-anchor="middle" font-size="13" fill="#0f172a" font-weight="600">CPU(仪表盘)</text>
+    <text x="310" y="128" text-anchor="middle" font-size="12" fill="#64748b">默认 ['50%','50%']</text>
+    <text x="480" y="128" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">['50%','46%']</text>
+    <text x="630" y="128" text-anchor="middle" font-size="12" fill="#64748b">—</text>
+    <text x="775" y="128" text-anchor="middle" font-size="11" fill="#64748b">ResourcesModule.tsx:193</text>
+    <text x="940" y="128" text-anchor="middle" font-size="11" fill="#16a34a">上移: 弧形仪表盘居中</text>
+
+    <!-- 第 3 行: 磁盘 -->
+    <text x="120" y="158" text-anchor="middle" font-size="13" fill="#0f172a" font-weight="600">磁盘(饼图)</text>
+    <text x="310" y="158" text-anchor="middle" font-size="12" fill="#64748b">默认 ['50%','50%']</text>
+    <text x="480" y="158" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">['50%','40%']</text>
+    <text x="630" y="158" text-anchor="middle" font-size="12" fill="#d97706">已改为 42%-68%</text>
+    <text x="775" y="158" text-anchor="middle" font-size="11" fill="#64748b">ResourcesModule.tsx:216</text>
+    <text x="940" y="158" text-anchor="middle" font-size="11" fill="#16a34a">上移最多: 给 legend 和 stat-row 留空间</text>
+
+    <!-- 分隔线 -->
+    <line x1="20" y1="175" x2="1020" y2="175" stroke="#cbd5e1" stroke-width="1"/>
+
+    <!-- 关键说明 -->
+    <text x="40" y="198" font-size="12" fill="#475569">
+      <tspan font-weight="700" fill="#7c3aed">调整原理：</tspan>
+      center.y 从 50% 上移 → 饼/波浪/仪表盘向上平移 → 底部 legend/stat-row 获得更多空间
+    </text>
+    <text x="40" y="215" font-size="12" fill="#475569">
+      <tspan font-weight="700" fill="#7c3aed">调整原则：</tspan>
+      图形在 "① card-head 底部 ↔ ③ stat-row 顶部" 之间视觉居中
+    </text>
+    <text x="40" y="232" font-size="12" fill="#475569">
+      <tspan font-weight="700" fill="#7c3aed">三卡用的同一行网格 grid-5：</tspan>
+      受限于 .card { padding: 10px 18px }, .grid { gap: 16px }
+    </text>
+  </g>
+</svg>
+</div>
+</body>
+</html>

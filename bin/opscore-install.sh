@@ -122,62 +122,28 @@ SERVICE
 systemctl daemon-reload
 ok "systemd unit 已安装"
 
-# ========== 打印终端摘要 ==========
-echo ""
-echo -e "${GREEN}==========================================${NC}"
-echo -e "  部署完成"
-echo -e "${GREEN}==========================================${NC}"
-echo ""
-echo -e "  安装目录:   ${INSTALL_DIR}"
-echo -e "  数据目录:   ${INSTALL_DIR}/data"
-echo -e "  日志文件:   ${INSTALL_DIR}/data/opscore.log"
-echo -e "  服务名称:   opscore"
-echo ""
-echo -e "  访问地址:"
-echo -e "    直连:     http://<服务器IP>:8088"
-echo -e "    nginx:    http://<服务器IP>:8081"
-echo -e "    本地:     http://127.0.0.1:8088"
-echo ""
-echo -e "  服务管理:"
-echo -e "    状态:     systemctl status opscore"
-echo -e "    启动:     systemctl start opscore"
-echo -e "    停止:     systemctl stop opscore"
-echo -e "    重启:     systemctl restart opscore"
-echo -e "    日志:     journalctl -u opscore -f"
-echo -e "    文件日志: tail -100f ${INSTALL_DIR}/data/opscope.log"
-echo -e "    自启:     systemctl enable/disable opscore"
-echo ""
-echo -e "  PATH:       /etc/profile.d/opscore.sh (重登录生效)"
-echo -e "  手动执行:   ${INSTALL_DIR}/opscore -h"
-echo ""
-
-# ========== 先写安装摘要文件，再启动（opscore 启动时读取并打印到日志） ==========
+# ========== 先写安装摘要，再启动（opscore 启动时读取并打印） ==========
 cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
-==========================================
-  部署完成
-==========================================
+安装目录: ${INSTALL_DIR}
+数据目录: ${INSTALL_DIR}/data
+日志文件: ${INSTALL_DIR}/data/opscore.log
+服务名称: opscore
 
-  安装目录:   ${INSTALL_DIR}
-  数据目录:   ${INSTALL_DIR}/data
-  日志文件:   ${INSTALL_DIR}/data/opscore.log
-  服务名称:   opscore
+访问地址:
+  直连:     http://<服务器IP>:8088
+  nginx:    http://<服务器IP>:8081
+  本地:     http://127.0.0.1:8088
 
-  访问地址:
-    直连:     http://<服务器IP>:8088
-    nginx:    http://<服务器IP>:8081
-    本地:     http://127.0.0.1:8088
+服务管理:
+  状态:     systemctl status opscore
+  启动:     systemctl start opscore
+  停止:     systemctl stop opscore
+  重启:     systemctl restart opscore
+  日志:     journalctl -u opscore -f
+  文件日志: tail -f ${INSTALL_DIR}/data/opscope.log
 
-  服务管理:
-    状态:     systemctl status opscore
-    启动:     systemctl start opscore
-    停止:     systemctl stop opscore
-    重启:     systemctl restart opscore
-    日志:     journalctl -u opscore -f
-    文件日志: tail -100f ${INSTALL_DIR}/data/opscope.log
-    自启:     systemctl enable/disable opscore
-
-  PATH:       /etc/profile.d/opscore.sh (重登录生效)
-  手动执行:   ${INSTALL_DIR}/opscore -h
+PATH:      /etc/profile.d/opscore.sh (重登录生效)
+手动执行:  ${INSTALL_DIR}/opscore -h
 NOTE
 
 # ========== 询问启动 ==========
@@ -190,7 +156,7 @@ start_service() {
     echo -e "${CYAN}━━━ 实时日志（Ctrl+C 退出） ━━━${NC}"
     echo -e "${YELLOW}日志文件: ${INSTALL_DIR}/data/opscore.log${NC}"
     echo ""
-    tail -100f "${INSTALL_DIR}/data/opscore.log"
+    tail -f "${INSTALL_DIR}/data/opscore.log"
   else
     echo -e "${YELLOW}! 服务启动失败，请查看日志: journalctl -u opscore -e${NC}"
   fi
