@@ -76,14 +76,14 @@ fi
 info "部署到 ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}/web/dist"
 
-# 二进制在 release/ 目录里命名 opscore-linux-amd64 等
+# 二进制在根目录命名 opscore-linux-amd64 等
 cd "${tmp_dir}"
-bin_src=$(ls release/opscore* 2>/dev/null | head -1)
+bin_src=$(ls opscore-linux-* 2>/dev/null | head -1)
 [[ -z "$bin_src" ]] && err "找不到二进制文件"
 cp "$bin_src" "${INSTALL_DIR}/opscore"
 chmod +x "${INSTALL_DIR}/opscore"
 
-cp -r release/web/dist/* "${INSTALL_DIR}/web/dist/"
+cp -r web/dist/* "${INSTALL_DIR}/web/dist/"
 ok "部署完成"
 
 # ========== PATH ==========
