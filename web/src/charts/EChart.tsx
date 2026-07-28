@@ -16,14 +16,14 @@ export default function EChart({
   const ref = useRef<HTMLDivElement>(null)    // 图表容器 DOM
   const chart = useRef<echarts.ECharts | null>(null)  // ECharts 实例
 
-  // 挂载时初始化, 绑定 resize 事件; 卸载时 dispose
+  // 挂载时初始化, 绑定 ResizeObserver; 卸载时 dispose
   useEffect(() => {
     if (!ref.current) return
     chart.current = echarts.init(ref.current)
-    const onResize = () => chart.current?.resize()
-    window.addEventListener('resize', onResize)
+    const ro = new ResizeObserver(() => chart.current?.resize())
+    ro.observe(ref.current)
     return () => {
-      window.removeEventListener('resize', onResize)
+      ro.disconnect()
       chart.current?.dispose()
       chart.current = null
     }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -122,15 +123,49 @@ func CrontabHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type DeviceInfo struct {
+	Name       string `json:"name"`
+	Size       string `json:"size"`
+	Type       string `json:"type"`
+	Fstype     string `json:"fstype"`
+	Mountpoint string `json:"mountpoint"`
+}
+
+func parseDevices(output string) []DeviceInfo {
+	lines := strings.Split(output, "\n")
+	var devices []DeviceInfo
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		d := DeviceInfo{Name: fields[0], Size: fields[1], Type: fields[2]}
+		if len(fields) >= 4 && fields[3] != "" {
+			d.Fstype = fields[3]
+		}
+		if len(fields) >= 5 && fields[4] != "" {
+			d.Mountpoint = fields[4]
+		}
+		devices = append(devices, d)
+	}
+	return devices
+}
+
 // DisksHandler 处理磁盘信息请求
 func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	lsblk := runCapture("lsblk", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL")
 	mounts := runCapture("mount")
 	df := runCapture("df", "-h")
+	devices := parseDevices(runCapture("lsblk", "-ln", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT"))
 	WriteJSON(w, map[string]any{
 		"lsblk":      lsblk,
 		"mounts":     mounts,
 		"df":         df,
+		"devices":    devices,
 		"permission": permLabel(),
 	})
 }
@@ -148,9 +183,12 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action     string `json:"action"`
 		Device     string `json:"device"`
+		Partition  string `json:"partition"`
 		Mountpoint string `json:"mountpoint"`
 		Fstype     string `json:"fstype"`
 		Options    string `json:"options"`
+		Start      string `json:"start"`
+		End        string `json:"end"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteJSON(w, map[string]any{"error": "请求格式错误", "permission": "root"})
@@ -160,6 +198,15 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	var cmd *exec.Cmd
 	switch body.Action {
 	case "mount":
+		if body.Device == "" || body.Mountpoint == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device 或 mountpoint", "permission": "root"})
+			return
+		}
+		existing := strings.TrimSpace(runCapture("findmnt", "-n", "-o", "TARGET", body.Device))
+		if existing != "" {
+			WriteJSON(w, map[string]any{"error": fmt.Sprintf("设备 %s 已挂载到 %s，请先卸载", body.Device, existing), "permission": "root"})
+			return
+		}
 		args := []string{body.Device, body.Mountpoint}
 		if body.Fstype != "" {
 			args = append([]string{"-t", body.Fstype}, args...)
@@ -174,6 +221,100 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 			target = body.Device
 		}
 		cmd = exec.Command("umount", target)
+	case "info":
+		dev := body.Device
+		if dev == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "root"})
+			return
+		}
+		if !strings.HasPrefix(dev, "/dev/") {
+			dev = "/dev/" + dev
+		}
+		out := runCapture("parted", "-s", dev, "print", "free")
+		WriteJSON(w, map[string]any{"output": out, "permission": "root"})
+		return
+	case "delete":
+		if body.Device == "" || body.Partition == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device 或 partition", "permission": "root"})
+			return
+		}
+		dev := body.Device
+		if !strings.HasPrefix(dev, "/dev/") {
+			dev = "/dev/" + dev
+		}
+		out, err := exec.Command("parted", "-s", dev, "rm", body.Partition).CombinedOutput()
+		if err == nil {
+			exec.Command("partprobe", dev).Run()
+		}
+		WriteJSON(w, map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)})
+		return
+	case "partition":
+		if body.Device == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "root"})
+			return
+		}
+		dev := body.Device
+		if !strings.HasPrefix(dev, "/dev/") {
+			dev = "/dev/" + dev
+		}
+		start, end := body.Start, body.End
+		if start == "" || end == "" {
+			freeInfo := parseFreeSpace(runCapture("parted", "-s", dev, "print", "free"))
+			if freeInfo.start == "" || freeInfo.end == "" {
+				WriteJSON(w, map[string]any{"error": "未找到可用空闲空间", "permission": "root"})
+				return
+			}
+			start, end = freeInfo.start, freeInfo.end
+		}
+		beforeDevices := getDeviceNames(runCapture("lsblk", "-l", "-n", "-o", "NAME"))
+		out, err := exec.Command("parted", "-s", dev, "mkpart", "primary", "xfs", start, end).CombinedOutput()
+		if err == nil {
+			exec.Command("partprobe", dev).Run()
+		}
+		newPartition := ""
+		afterDevices := getDeviceNames(runCapture("lsblk", "-l", "-n", "-o", "NAME"))
+		for _, d := range afterDevices {
+			if !contains(beforeDevices, d) && strings.HasPrefix(d, filepath.Base(dev)) {
+				newPartition = "/dev/" + d
+				break
+			}
+		}
+		resp := map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)}
+		if newPartition != "" {
+			resp["newPartition"] = newPartition
+		}
+		WriteJSON(w, resp)
+		return
+	case "format":
+		if body.Device == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "root"})
+			return
+		}
+		dev := body.Device
+		if !strings.HasPrefix(dev, "/dev/") {
+			dev = "/dev/" + dev
+		}
+		partDev := dev
+		if body.Partition != "" && !strings.HasSuffix(partDev, body.Partition) {
+			partDev = fmt.Sprintf("%sp%s", dev, body.Partition)
+		}
+		ft := body.Fstype
+		if ft == "" {
+			ft = "xfs"
+		}
+		var fc *exec.Cmd
+		switch ft {
+		case "xfs":
+			fc = exec.Command("mkfs.xfs", "-f", partDev)
+		case "ext4":
+			fc = exec.Command("mkfs.ext4", "-F", partDev)
+		default:
+			WriteJSON(w, map[string]any{"error": "不支持的格式: " + ft, "permission": "root"})
+			return
+		}
+		out, err := fc.CombinedOutput()
+		WriteJSON(w, map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)})
+		return
 	case "smart":
 		dev := body.Device
 		if dev == "" {
@@ -216,4 +357,108 @@ func runCapture(name string, args ...string) string {
 	cmd := exec.Command(path, args...)
 	out, _ := cmd.CombinedOutput()
 	return string(out)
+}
+
+type freeSpace struct {
+	start string
+	end   string
+}
+
+func parseSize(s string) uint64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	s = strings.ToUpper(s)
+	mult := uint64(1)
+	if strings.HasSuffix(s, "GB") {
+		mult = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GB")
+	} else if strings.HasSuffix(s, "MB") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "MB")
+	} else if strings.HasSuffix(s, "KB") {
+		mult = 1024
+		s = strings.TrimSuffix(s, "KB")
+	} else if strings.HasSuffix(s, "TB") {
+		mult = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "TB")
+	} else if strings.HasSuffix(s, "G") {
+		mult = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "G")
+	} else if strings.HasSuffix(s, "M") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "M")
+	} else if strings.HasSuffix(s, "K") {
+		mult = 1024
+		s = strings.TrimSuffix(s, "K")
+	} else if strings.HasSuffix(s, "T") {
+		mult = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "T")
+	} else if strings.HasSuffix(s, "B") {
+		s = strings.TrimSuffix(s, "B")
+	}
+	var size uint64
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			size = size*10 + uint64(c-'0')
+		}
+	}
+	return size * mult
+}
+
+func parseFreeSpace(output string) freeSpace {
+	lines := strings.Split(output, "\n")
+	var best freeSpace
+	maxSize := uint64(0)
+	for _, line := range lines {
+		if !strings.Contains(line, "Free Space") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, f := range fields {
+			if f == "Free" && i+1 < len(fields) && fields[i+1] == "Space" {
+				if i >= 3 {
+					start := fields[i-3]
+					end := fields[i-2]
+					sizeStr := fields[i-1]
+					size := parseSize(sizeStr)
+					if size > maxSize {
+						maxSize = size
+						best = freeSpace{start: start, end: end}
+					}
+				}
+				break
+			}
+		}
+	}
+	return best
+}
+
+func getDeviceNames(output string) []string {
+	lines := strings.Split(output, "\n")
+	var devices []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			devices = append(devices, line)
+		}
+	}
+	return devices
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func errMsg(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

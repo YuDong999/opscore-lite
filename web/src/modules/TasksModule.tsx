@@ -6,8 +6,32 @@ import Card from '../components/Card'
 
 type Permission = 'root' | 'user'
 type Crontab = { content: string; error?: string; permission: Permission }
-type Disks = { lsblk: string; mounts: string; df: string; permission: Permission }
-type DiskActionResult = { ok?: boolean; error?: string; output?: string; permission: Permission }
+type Disks = { lsblk: string; mounts: string; df: string; devices: DeviceInfo[]; permission: Permission }
+type DeviceInfo = { name: string; size: string; type: string; fstype: string; mountpoint: string }
+type FreeSpace = { start: string; end: string; size: string }
+
+const units: Record<string, number> = { k: 1024, m: 1024**2, g: 1024**3, t: 1024**4 }
+function parseSize(s: string): number {
+  const m = s.match(/^([\d.]+)([kmgt]b?)?$/i)
+  if (!m) return 0
+  const num = parseFloat(m[1])
+  const unit = (m[2] || 'b')[0].toLowerCase()
+  return num * (units[unit] || 1)
+}
+
+function parseFreeSpaces(output: string): FreeSpace[] {
+  if (!output) return []
+  const spaces: FreeSpace[] = []
+  for (const line of output.split('\n')) {
+    if (!line.includes('Free Space')) continue
+    const fields = line.trim().split(/\s+/)
+    if (fields.length < 3) continue
+    if (/^\d+$/.test(fields[0])) continue
+    spaces.push({ start: fields[0], end: fields[1], size: fields[2] })
+  }
+  return spaces
+}
+type DiskActionResult = { ok?: boolean; error?: string; output?: string; newPartition?: string; permission: Permission }
 
 export default function TasksModule() {
   const [tab, setTab] = useState('crontab')
@@ -333,12 +357,27 @@ function DisksSection() {
   const [mountPoint, setMountPoint] = useState('')
   const [mountFstype, setMountFstype] = useState('')
   const [mountMsg, setMountMsg] = useState('')
+  const [copied, setCopied] = useState('')
+
+  const [allocDev, setAllocDev] = useState('nvme0n1')
+  const [allocInfo, setAllocInfo] = useState('')
+  const [allocResult, setAllocResult] = useState('')
+  const [allocErr, setAllocErr] = useState('')
+  const [allocLoading, setAllocLoading] = useState(false)
+  const [selectedFreeIdx, setSelectedFreeIdx] = useState(0)
 
   const load = useCallback(() => {
     getJSON<Disks>('/api/core/tasks/disks').then(setData).catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (!allocDev.trim()) return
+    postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'info', device: allocDev.trim() })
+      .then(r => setAllocInfo(r.output || ''))
+      .catch(() => {})
+  }, [allocDev])
 
   const mountAction = async (action: 'mount' | 'umount', device: string, mountpoint?: string) => {
     try {
@@ -347,6 +386,51 @@ function DisksSection() {
       else setMountMsg(`✗ ${res.error || '操作失败'}`)
     } catch { setMountMsg('✗ 请求失败') }
     setTimeout(() => setMountMsg(''), 3000)
+  }
+
+  const doPartition = async () => {
+    if (!allocDev.trim()) return
+    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    try {
+      const spaces = parseFreeSpaces(allocInfo)
+      const sel = spaces[selectedFreeIdx]
+      const body: Record<string, string> = { action: 'partition', device: allocDev.trim() }
+      if (sel) { body.start = sel.start; body.end = sel.end }
+      const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
+      if (res.error) setAllocErr(res.error)
+      else {
+        setAllocResult(res.output || '分区创建成功')
+        if (res.newPartition) {
+          setAllocDev(res.newPartition)
+          setAllocResult((res.output || '') + '\n✓ 已自动切换到新分区: ' + res.newPartition)
+        }
+      }
+      load()
+    } catch { setAllocErr('请求失败') }
+    setAllocLoading(false)
+  }
+
+  const doDelete = async (partition: string) => {
+    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    try {
+      const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'delete', device: allocDev.trim(), partition })
+      if (res.error) setAllocErr(res.error)
+      else setAllocResult(res.output || '分区已删除')
+      load()
+    } catch { setAllocErr('请求失败') }
+    setAllocLoading(false)
+  }
+
+  const doFormat = async () => {
+    if (!allocDev.trim()) return
+    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    try {
+      const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'format', device: allocDev.trim(), fstype: mountFstype || 'xfs' })
+      if (res.error) setAllocErr(res.error)
+      else setAllocResult(res.output || '格式化成功')
+      load()
+    } catch { setAllocErr('请求失败') }
+    setAllocLoading(false)
   }
 
   if (!data) return <div className="loading">加载中…</div>
@@ -360,6 +444,96 @@ function DisksSection() {
       <Card title="块设备" subtitle="lsblk">
         <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.lsblk}</div>
       </Card>
+
+      {data.devices && data.devices.length > 0 && (
+        <Card title="设备列表" subtitle="双击设备名复制路径">
+          <div className="device-list">
+            {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
+              const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
+              const copyPath = async () => {
+                try { await navigator.clipboard.writeText(devPath) } catch {
+                  const ta = document.createElement('textarea')
+                  ta.value = devPath; ta.style.position = 'fixed'; ta.style.opacity = '0'
+                  document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta)
+                }
+                setCopied(d.name); setTimeout(() => setCopied(''), 2000)
+              }
+              return (
+                <div key={d.name} className="device-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={copyPath}>{devPath}</code>
+                  <span className="mono" style={{ fontSize: 11.5, color: '#888' }}>{d.size}</span>
+                  <span className="mono" style={{ fontSize: 11, color: '#666' }}>{d.fstype || '—'}</span>
+                  {d.mountpoint && <span className="mono" style={{ fontSize: 11.5, color: '#666' }}>↦ {d.mountpoint}</span>}
+                  {copied === d.name && <span style={{ fontSize: 11, color: '#22c55e', marginLeft: 'auto' }}>✓ 已复制</span>}
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+
+      <Card title="挂载点" subtitle="mount">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
+      </Card>
+
+      <Card title="磁盘使用" subtitle="df -h">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
+      </Card>
+
+      {isRoot && (
+        <Card title="磁盘分配" subtitle="分区 / 格式化">
+          <div className="form-inline" style={{ marginBottom: 12 }}>
+            <span className="field-label" style={{ margin: 0 }}>设备</span>
+            <select className="sel" value={allocDev} onChange={e => setAllocDev(e.target.value)}>
+              <option value="nvme0n1">nvme0n1 (40GB NVMe)</option>
+              <option value="sda">sda</option>
+              <option value="sdb">sdb</option>
+              <option value="sdc">sdc</option>
+              <option value="sdd">sdd</option>
+            </select>
+          </div>
+          {allocInfo && <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginBottom: 12 }}>{allocInfo}</div>}
+          {allocInfo && (() => {
+            const spaces = parseFreeSpaces(allocInfo)
+            if (spaces.length === 0) return null
+            const largestIdx = spaces.reduce((best, s, i, a) => parseSize(s.size) > parseSize(a[best].size) ? i : best, 0)
+            if (selectedFreeIdx >= spaces.length) setSelectedFreeIdx(largestIdx)
+            return (
+              <div style={{ marginTop: 12 }}>
+                <span className="field-label">可用空闲空间</span>
+                {spaces.map((s, i) => (
+                  <div key={i} className="form-inline" style={{ marginTop: 4, cursor: 'pointer', opacity: selectedFreeIdx === i ? 1 : 0.5 }}
+                    onClick={() => setSelectedFreeIdx(i)}>
+                    <input type="radio" checked={selectedFreeIdx === i} onChange={() => setSelectedFreeIdx(i)}
+                      style={{ margin: 0, accentColor: 'var(--accent)' }} />
+                    <span className="mono">{s.start} → {s.end}</span>
+                    <span className="pill" style={{ fontSize: 10.5 }}>{s.size}</span>
+                    {i === largestIdx && <span className="badge badge-info" style={{ fontSize: 10 }}>最大</span>}
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+          {allocErr && <div className="banner banner-err">{allocErr}</div>}
+          {allocResult && <div className="banner banner-ok">{allocResult}</div>}
+          <div className="form-inline" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-accent" disabled={allocLoading || !allocDev} onClick={doPartition}>创建分区</button>
+            <span className="field-label" style={{ margin: 0 }}>格式</span>
+            <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
+              <option value="xfs">xfs</option>
+              <option value="ext4">ext4</option>
+            </select>
+            <button className="btn btn-warn" disabled={allocLoading || !allocDev} onClick={doFormat}>格式化</button>
+            {allocDev && !allocDev.match(/^\/dev\/[a-z]+$/i) && (
+              <button className="btn btn-danger" disabled={allocLoading}
+                onClick={() => doDelete(allocDev.replace(/^\/dev\/[a-z]+\/?/, '').replace(/p/, ''))}>删除分区</button>
+            )}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+            提示: 创建分区后自动选中新分区。删除分区需先选中该分区（在设备下拉选单中手动输入分区名）。
+          </div>
+        </Card>
+      )}
 
       {isRoot && (
         <Card title="挂载操作" subtitle="root">
@@ -380,14 +554,6 @@ function DisksSection() {
           </div>
         </Card>
       )}
-
-      <Card title="挂载点" subtitle="mount">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
-      </Card>
-
-      <Card title="磁盘使用" subtitle="df -h">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
-      </Card>
     </>
   )
 }
