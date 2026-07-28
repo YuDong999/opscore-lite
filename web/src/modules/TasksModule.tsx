@@ -6,31 +6,9 @@ import Card from '../components/Card'
 
 type Permission = 'root' | 'user'
 type Crontab = { content: string; error?: string; permission: Permission }
-type Disks = { lsblk: string; mounts: string; df: string; devices: DeviceInfo[]; permission: Permission }
 type DeviceInfo = { name: string; size: string; type: string; fstype: string; mountpoint: string }
 type FreeSpace = { start: string; end: string; size: string }
-
-const units: Record<string, number> = { k: 1024, m: 1024**2, g: 1024**3, t: 1024**4 }
-function parseSize(s: string): number {
-  const m = s.match(/^([\d.]+)([kmgt]b?)?$/i)
-  if (!m) return 0
-  const num = parseFloat(m[1])
-  const unit = (m[2] || 'b')[0].toLowerCase()
-  return num * (units[unit] || 1)
-}
-
-function parseFreeSpaces(output: string): FreeSpace[] {
-  if (!output) return []
-  const spaces: FreeSpace[] = []
-  for (const line of output.split('\n')) {
-    if (!line.includes('Free Space')) continue
-    const fields = line.trim().split(/\s+/)
-    if (fields.length < 3) continue
-    if (/^\d+$/.test(fields[0])) continue
-    spaces.push({ start: fields[0], end: fields[1], size: fields[2] })
-  }
-  return spaces
-}
+type Disks = { lsblk: string; mounts: string; df: string; devices: DeviceInfo[]; permission: Permission }
 type DiskActionResult = { ok?: boolean; error?: string; output?: string; newPartition?: string; permission: Permission }
 
 export default function TasksModule() {
@@ -358,26 +336,55 @@ function DisksSection() {
   const [mountFstype, setMountFstype] = useState('')
   const [mountMsg, setMountMsg] = useState('')
   const [copied, setCopied] = useState('')
-
-  const [allocDev, setAllocDev] = useState('nvme0n1')
+  const [allocDev, setAllocDev] = useState('')
   const [allocInfo, setAllocInfo] = useState('')
-  const [allocResult, setAllocResult] = useState('')
-  const [allocErr, setAllocErr] = useState('')
   const [allocLoading, setAllocLoading] = useState(false)
+  const [allocErr, setAllocErr] = useState('')
+  const [allocResult, setAllocResult] = useState('')
   const [selectedFreeIdx, setSelectedFreeIdx] = useState(0)
+
+  const units: Record<string, number> = { k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }
+  function parseSize(s: string): number {
+    const m = s.match(/^([\d.]+)([kmgt]b?)?$/i)
+    if (!m) return 0
+    const num = parseFloat(m[1])
+    const unit = (m[2] || 'b')[0].toLowerCase()
+    return num * (units[unit] || 1)
+  }
+
+  function parseFreeSpaces(output: string): FreeSpace[] {
+    if (!output) return []
+    const spaces: FreeSpace[] = []
+    for (const line of output.split('\n')) {
+      if (!line.includes('Free Space')) continue
+      const fields = line.trim().split(/\s+/)
+      if (fields.length < 3) continue
+      if (/^\d+$/.test(fields[0])) continue
+      spaces.push({ start: fields[0], end: fields[1], size: fields[2] })
+    }
+    return spaces
+  }
+
+  const copyPath = async (devPath: string) => {
+    try {
+      await navigator.clipboard.writeText(devPath)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = devPath
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+  }
 
   const load = useCallback(() => {
     getJSON<Disks>('/api/core/tasks/disks').then(setData).catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
-
-  useEffect(() => {
-    if (!allocDev.trim()) return
-    postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'info', device: allocDev.trim() })
-      .then(r => setAllocInfo(r.output || ''))
-      .catch(() => {})
-  }, [allocDev])
 
   const mountAction = async (action: 'mount' | 'umount', device: string, mountpoint?: string) => {
     try {
@@ -390,12 +397,17 @@ function DisksSection() {
 
   const doPartition = async () => {
     if (!allocDev.trim()) return
-    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    setAllocLoading(true)
+    setAllocErr('')
+    setAllocResult('')
     try {
       const spaces = parseFreeSpaces(allocInfo)
       const sel = spaces[selectedFreeIdx]
       const body: Record<string, string> = { action: 'partition', device: allocDev.trim() }
-      if (sel) { body.start = sel.start; body.end = sel.end }
+      if (sel) {
+        body.start = sel.start
+        body.end = sel.end
+      }
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
       if (res.error) setAllocErr(res.error)
       else {
@@ -411,7 +423,9 @@ function DisksSection() {
   }
 
   const doDelete = async (partition: string) => {
-    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    setAllocLoading(true)
+    setAllocErr('')
+    setAllocResult('')
     try {
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'delete', device: allocDev.trim(), partition })
       if (res.error) setAllocErr(res.error)
@@ -423,7 +437,9 @@ function DisksSection() {
 
   const doFormat = async () => {
     if (!allocDev.trim()) return
-    setAllocLoading(true); setAllocErr(''); setAllocResult('')
+    setAllocLoading(true)
+    setAllocErr('')
+    setAllocResult('')
     try {
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', { action: 'format', device: allocDev.trim(), fstype: mountFstype || 'xfs' })
       if (res.error) setAllocErr(res.error)
@@ -432,6 +448,20 @@ function DisksSection() {
     } catch { setAllocErr('请求失败') }
     setAllocLoading(false)
   }
+
+  const loadAllocInfo = async () => {
+    if (!allocDev.trim()) return
+    setAllocLoading(true)
+    setAllocErr('')
+    try {
+      const res = await postJSON<{ output?: string; error?: string }>('/api/core/tasks/disks/action', { action: 'info', device: allocDev.trim() })
+      if (res.error) setAllocErr(res.error)
+      else setAllocInfo(res.output || '')
+    } catch { setAllocErr('请求失败') }
+    setAllocLoading(false)
+  }
+
+  useEffect(() => { loadAllocInfo() }, [allocDev])
 
   if (!data) return <div className="loading">加载中…</div>
 
@@ -450,17 +480,9 @@ function DisksSection() {
           <div className="device-list">
             {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
               const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
-              const copyPath = async () => {
-                try { await navigator.clipboard.writeText(devPath) } catch {
-                  const ta = document.createElement('textarea')
-                  ta.value = devPath; ta.style.position = 'fixed'; ta.style.opacity = '0'
-                  document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta)
-                }
-                setCopied(d.name); setTimeout(() => setCopied(''), 2000)
-              }
               return (
-                <div key={d.name} className="device-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #eee' }}>
-                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={copyPath}>{devPath}</code>
+                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(devPath)}>{devPath}</code>
                   <span className="mono" style={{ fontSize: 11.5, color: '#888' }}>{d.size}</span>
                   <span className="mono" style={{ fontSize: 11, color: '#666' }}>{d.fstype || '—'}</span>
                   {d.mountpoint && <span className="mono" style={{ fontSize: 11.5, color: '#666' }}>↦ {d.mountpoint}</span>}
@@ -472,24 +494,36 @@ function DisksSection() {
         </Card>
       )}
 
-      <Card title="挂载点" subtitle="mount">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
-      </Card>
-
-      <Card title="磁盘使用" subtitle="df -h">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
-      </Card>
+      {isRoot && (
+        <Card title="挂载操作" subtitle="root">
+          <div className="form-inline">
+            <input className="input" placeholder="设备 (如 /dev/sdb1)" value={mountDev} onChange={e => setMountDev(e.target.value)} />
+            <input className="input" placeholder="挂载点 (如 /mnt/data)" value={mountPoint} onChange={e => setMountPoint(e.target.value)} />
+            <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
+              <option value="">自动</option>
+              <option value="ext4">ext4</option>
+              <option value="xfs">xfs</option>
+              <option value="ntfs">ntfs</option>
+              <option value="vfat">vfat</option>
+            </select>
+            <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
+              onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
+            <button className="btn btn-danger" disabled={!mountDev || !mountPoint}
+              onClick={() => mountAction('umount', mountDev, mountPoint)}>卸载</button>
+          </div>
+        </Card>
+      )}
 
       {isRoot && (
         <Card title="磁盘分配" subtitle="分区 / 格式化">
           <div className="form-inline" style={{ marginBottom: 12 }}>
             <span className="field-label" style={{ margin: 0 }}>设备</span>
             <select className="sel" value={allocDev} onChange={e => setAllocDev(e.target.value)}>
-              <option value="nvme0n1">nvme0n1 (40GB NVMe)</option>
-              <option value="sda">sda</option>
-              <option value="sdb">sdb</option>
-              <option value="sdc">sdc</option>
-              <option value="sdd">sdd</option>
+              <option value="">选择设备</option>
+              {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
+                const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
+                return <option key={d.name} value={devPath}>{devPath} ({d.size})</option>
+              })}
             </select>
           </div>
           {allocInfo && <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginBottom: 12 }}>{allocInfo}</div>}
@@ -516,7 +550,7 @@ function DisksSection() {
           })()}
           {allocErr && <div className="banner banner-err">{allocErr}</div>}
           {allocResult && <div className="banner banner-ok">{allocResult}</div>}
-          <div className="form-inline" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div className="form-inline" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
             <button className="btn btn-accent" disabled={allocLoading || !allocDev} onClick={doPartition}>创建分区</button>
             <span className="field-label" style={{ margin: 0 }}>格式</span>
             <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
@@ -535,25 +569,13 @@ function DisksSection() {
         </Card>
       )}
 
-      {isRoot && (
-        <Card title="挂载操作" subtitle="root">
-          <div className="form-inline">
-            <input className="input" placeholder="设备 (如 /dev/sdb1)" value={mountDev} onChange={e => setMountDev(e.target.value)} />
-            <input className="input" placeholder="挂载点 (如 /mnt/data)" value={mountPoint} onChange={e => setMountPoint(e.target.value)} />
-            <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
-              <option value="">自动</option>
-              <option value="ext4">ext4</option>
-              <option value="xfs">xfs</option>
-              <option value="ntfs">ntfs</option>
-              <option value="vfat">vfat</option>
-            </select>
-            <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
-              onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
-            <button className="btn btn-danger" disabled={!mountDev || !mountPoint}
-              onClick={() => mountAction('umount', mountDev, mountPoint)}>卸载</button>
-          </div>
-        </Card>
-      )}
+      <Card title="挂载点" subtitle="mount">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
+      </Card>
+
+      <Card title="磁盘使用" subtitle="df -h">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
+      </Card>
     </>
   )
 }
