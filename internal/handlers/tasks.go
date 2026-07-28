@@ -13,11 +13,35 @@ import (
 
 // CrontabEntry 表示 cron 条目
 type CronEntry struct {
-	ID      string `json:"id"`
+	ID       string `json:"id"`
 	Schedule string `json:"schedule"`
 	Command  string `json:"command"`
 	Comment  string `json:"comment"`
 	Enabled  bool   `json:"enabled"`
+}
+
+// DeviceInfo 描述单个块设备信息
+type DeviceInfo struct {
+	Name       string `json:"name"`
+	Size       string `json:"size"`
+	Type       string `json:"type"`
+	Fstype     string `json:"fstype"`
+	Mountpoint string `json:"mountpoint"`
+}
+
+// DiskActionResult 磁盘操作返回结构
+type DiskActionResult struct {
+	Ok           bool   `json:"ok"`
+	Error        string `json:"error"`
+	Output       string `json:"output"`
+	Permission   string `json:"permission"`
+	NewPartition string `json:"newPartition,omitempty"`
+}
+
+// freeSpace 记录 parted 输出的空闲区间
+type freeSpace struct {
+	start string
+	end   string
 }
 
 // stableID 生成基于输入字符串的确定性ID
@@ -123,38 +147,6 @@ func CrontabHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type DeviceInfo struct {
-	Name       string `json:"name"`
-	Size       string `json:"size"`
-	Type       string `json:"type"`
-	Fstype     string `json:"fstype"`
-	Mountpoint string `json:"mountpoint"`
-}
-
-func parseDevices(output string) []DeviceInfo {
-	lines := strings.Split(output, "\n")
-	var devices []DeviceInfo
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		d := DeviceInfo{Name: fields[0], Size: fields[1], Type: fields[2]}
-		if len(fields) >= 4 && fields[3] != "" {
-			d.Fstype = fields[3]
-		}
-		if len(fields) >= 5 && fields[4] != "" {
-			d.Mountpoint = fields[4]
-		}
-		devices = append(devices, d)
-	}
-	return devices
-}
-
 // DisksHandler 处理磁盘信息请求
 func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	lsblk := runCapture("lsblk", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL")
@@ -170,7 +162,7 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DiskActionHandler 处理磁盘操作请求（挂载/卸载/SMART）
+// DiskActionHandler 处理磁盘操作请求（挂载/卸载/分区/格式化/SMART）
 func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", 405)
@@ -224,7 +216,7 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 	case "info":
 		dev := body.Device
 		if dev == "" {
-			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "root"})
+			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "user"})
 			return
 		}
 		if !strings.HasPrefix(dev, "/dev/") {
@@ -294,10 +286,6 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(dev, "/dev/") {
 			dev = "/dev/" + dev
 		}
-		partDev := dev
-		if body.Partition != "" && !strings.HasSuffix(partDev, body.Partition) {
-			partDev = fmt.Sprintf("%sp%s", dev, body.Partition)
-		}
 		ft := body.Fstype
 		if ft == "" {
 			ft = "xfs"
@@ -305,9 +293,9 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		var fc *exec.Cmd
 		switch ft {
 		case "xfs":
-			fc = exec.Command("mkfs.xfs", "-f", partDev)
+			fc = exec.Command("mkfs.xfs", "-f", dev)
 		case "ext4":
-			fc = exec.Command("mkfs.ext4", "-F", partDev)
+			fc = exec.Command("mkfs.ext4", "-F", dev)
 		default:
 			WriteJSON(w, map[string]any{"error": "不支持的格式: " + ft, "permission": "root"})
 			return
@@ -359,11 +347,32 @@ func runCapture(name string, args ...string) string {
 	return string(out)
 }
 
-type freeSpace struct {
-	start string
-	end   string
+// parseDevices 解析 lsblk -ln 输出为设备列表
+func parseDevices(output string) []DeviceInfo {
+	lines := strings.Split(output, "\n")
+	var devices []DeviceInfo
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		d := DeviceInfo{Name: fields[0], Size: fields[1], Type: fields[2]}
+		if len(fields) >= 4 && fields[3] != "" {
+			d.Fstype = fields[3]
+		}
+		if len(fields) >= 5 && fields[4] != "" {
+			d.Mountpoint = fields[4]
+		}
+		devices = append(devices, d)
+	}
+	return devices
 }
 
+// parseSize 解析大小字符串（支持 K/M/G/T/KB/MB/GB/TB）
 func parseSize(s string) uint64 {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -395,8 +404,6 @@ func parseSize(s string) uint64 {
 	} else if strings.HasSuffix(s, "T") {
 		mult = 1024 * 1024 * 1024 * 1024
 		s = strings.TrimSuffix(s, "T")
-	} else if strings.HasSuffix(s, "B") {
-		s = strings.TrimSuffix(s, "B")
 	}
 	var size uint64
 	for _, c := range s {
@@ -407,6 +414,7 @@ func parseSize(s string) uint64 {
 	return size * mult
 }
 
+// parseFreeSpace 解析 parted -s dev print free 的空闲区间
 func parseFreeSpace(output string) freeSpace {
 	lines := strings.Split(output, "\n")
 	var best freeSpace
@@ -435,6 +443,7 @@ func parseFreeSpace(output string) freeSpace {
 	return best
 }
 
+// getDeviceNames 从 lsblk 输出提取设备名列表
 func getDeviceNames(output string) []string {
 	lines := strings.Split(output, "\n")
 	var devices []string
@@ -447,18 +456,20 @@ func getDeviceNames(output string) []string {
 	return devices
 }
 
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
+// errMsg 将 error 转为字符串
 func errMsg(err error) string {
 	if err == nil {
 		return ""
 	}
 	return err.Error()
+}
+
+// contains 检查字符串切片是否包含某元素
+func contains(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
 }
