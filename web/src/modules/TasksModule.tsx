@@ -365,7 +365,7 @@ function DisksSection() {
     return spaces
   }
 
-  const copyPath = async (devPath: string) => {
+  const copyPath = async (devName: string, devPath: string) => {
     try {
       await navigator.clipboard.writeText(devPath)
     } catch {
@@ -378,6 +378,8 @@ function DisksSection() {
       document.execCommand('copy')
       document.body.removeChild(ta)
     }
+    setCopied(devName)
+    setTimeout(() => setCopied(''), 2000)
   }
 
   const load = useCallback(() => {
@@ -482,7 +484,7 @@ function DisksSection() {
               const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
               return (
                 <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #eee' }}>
-                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(devPath)}>{devPath}</code>
+                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(d.name, devPath)}>{devPath}</code>
                   <span className="mono" style={{ fontSize: 11.5, color: '#888' }}>{d.size}</span>
                   <span className="mono" style={{ fontSize: 11, color: '#666' }}>{d.fstype || '—'}</span>
                   {d.mountpoint && <span className="mono" style={{ fontSize: 11.5, color: '#666' }}>↦ {d.mountpoint}</span>}
@@ -569,12 +571,12 @@ function DisksSection() {
         </Card>
       )}
 
-      <Card title="挂载点" subtitle="mount">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
-      </Card>
-
       <Card title="磁盘使用" subtitle="df -h">
         <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
+      </Card>
+
+      <Card title="挂载点" subtitle="mount">
+        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
       </Card>
     </>
   )
