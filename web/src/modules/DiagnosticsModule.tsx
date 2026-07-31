@@ -1,8 +1,5 @@
-// ── 系统诊断模块: 网络诊断 / 登录审计 / 系统更新 ──
-
 import { useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
-import Card from '../components/Card'
 
 type Permission = 'root' | 'user'
 
@@ -63,8 +60,6 @@ export default function DiagnosticsModule() {
   )
 }
 
-// ── 网络诊断子组件: ping / traceroute / mtr / 端口 / DNS / HTTP / 路由 / ARP ──
-
 function NetworkSection() {
   const [tool, setTool] = useState('ping')
   const [target, setTarget] = useState('')
@@ -74,6 +69,7 @@ function NetworkSection() {
   const [result, setResult] = useState<DiagResult | null>(null)
 
   const cur = NET_TOOLS.find(t => t.id === tool) || NET_TOOLS[0]
+  const isRoot = true // server is root, but permission label shown in result
 
   const run = async () => {
     if (cur.needsTarget && !target.trim()) return
@@ -132,8 +128,6 @@ function NetworkSection() {
   )
 }
 
-// ── 登录审计子组件: last / lastb / sshd 日志 ──
-
 function LoginSection() {
   const [data, setData] = useState<LoginAudit | null>(null)
   useEffect(() => { getJSON<LoginAudit>('/api/core/diagnostics/login-audit').then(setData).catch(() => {}) }, [])
@@ -158,8 +152,6 @@ function LoginSection() {
   )
 }
 
-// ── 系统更新子组件: 安全更新列表 + 重启状态 ──
-
 function UpdatesSection() {
   const [data, setData] = useState<Updates | null>(null)
   useEffect(() => { getJSON<Updates>('/api/core/diagnostics/updates').then(setData).catch(() => {}) }, [])
@@ -178,5 +170,17 @@ function UpdatesSection() {
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, marginTop: 8 }}>{data.restart_detail}</div>
       </Card>
     </>
+  )
+}
+
+function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div className="card glass" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h3>{title}</h3>
+        {subtitle && <span className="card-sub">{subtitle}</span>}
+      </div>
+      {children}
+    </div>
   )
 }

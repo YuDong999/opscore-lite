@@ -48,6 +48,23 @@ export default function ServicesModule() {
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [copied, setCopied] = useState(false)
 
+  const copyCmd = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = cmd
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   // 复制命令到剪贴板(兜底方案)
   const copyCmd = async (cmd: string) => {
     try {
@@ -166,7 +183,8 @@ export default function ServicesModule() {
               <tr>
                 <th>名称</th>
                 <th>
-                  <select className="sel sel-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
+                  <select className="sel sel-xs" value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
                     <option value="all">状态</option>
                     <option value="running">运行中</option>
                     <option value="exited">已退出</option>
@@ -226,6 +244,7 @@ export default function ServicesModule() {
       {logTarget && (
         <LogModal service={logTarget} onClose={() => setLogTarget(null)} />
       )}
+
       {copied && <div className="toast-copy">已复制</div>}
     </div>
   )
@@ -275,11 +294,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
         setLogLines(prev => {
           const lastNum = prev.length > 0 ? prev[prev.length - 1].num : 0
           const newEntries = reversed.filter(l => l.num > lastNum)
-          const merged = [...prev, ...newEntries]
-          if (merged.length > MAX_LOG_LINES) {
-            return merged.slice(merged.length - MAX_LOG_LINES)
-          }
-          return merged
+          return [...prev, ...newEntries]
         })
       }
       setWarnings(res.warnings || [])

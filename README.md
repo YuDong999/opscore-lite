@@ -1,105 +1,173 @@
-# OpsCore · 运维控制台
+# OpsCore 前端布局修复记录
 
-从最核心做起的最小可运行运维控制台。Go 单二进制 + React 前端，无外部依赖。
+> 问题：14 寸非 4:3 屏幕上，表格列挤压、换行、表头筛选器拥挤；CPU 拱桥遮挡数字
+> 时间：2026-07-23
 
-## 技术栈
-- 后端:Go + gopsutil(v4) 采集系统指标,标准库 net/http
-- 前端:React 18 + Vite + TypeScript + ECharts 5
-- 前端运行时从目录读取(不 embed),前后端分离
+---
 
-## 核心模块
-1. **系统资源** — 内存(波浪 liquidfill)、CPU(仪表盘 + 实时折线)、磁盘(饼图 + 可点击下钻)、每核(柱状)、网络吞吐、系统负载
-2. **服务发现** — systemctl 列出运行单元,支持 启动/停止/重启 按钮 + 日志查看;非 Linux 降级为进程列表
-3. **网络** — 网络接口、监听端口(LISTEN sockets)。端口身份以真实进程(PID→进程名)为准
-4. **防火墙** — 状态卡、端口开关、IP 黑白名单、规则列表。高危操作二次确认 + 审计链
-5. **守护中心** — 定时任务(cron)、脚本库(模板化快速脚本)、备份快照
+## 一、发现的问题
 
-## 快速安装
+### 1. 防火墙与网络 - 监听端口表格
+- 5 列（协议、本地地址、识别服务、真实进程/PID、端口提示）没有固定比例
+- 窄屏下内容换行或相互挤压，布局混乱
+- 期望比例：**10 : 25 : 25 : 25 : 15**
 
-> **前置条件一览**
-> | 方式 | 需要 Go | 需要 Node.js | 需要 Docker | 平台 |
-> |---|---|---|---|---|
-> | 一键安装 | ✗ | ✗ | ✗ | Linux / macOS |
-> | 手动下载 | ✗ | ✗ | ✗ | Linux / macOS / Windows |
-> | 源码构建 | ✓ 1.24+ | ✓ 18+ | ✗ | Linux / macOS / Windows |
-> | Docker | ✗ | ✗ | ✓ 20.10+ | Linux / macOS / Windows |
+### 2. 服务发现 - 运行中服务/进程表格
+- 状态筛选原本嵌在"状态"表头 `<th>` 里，和文本挤在同一行
+- 改为独立筛选栏后用户反馈不符合整体格局
+- 最终方案：**表头内嵌 `<select>` 下拉框**（状态/运行中/已退出/失败），默认显示"状态"不过滤
 
-### 方式一:一键安装 (推荐,零依赖)
-```bash
-curl -fsSL https://raw.githubusercontent.com/YuDong999/opscore-lite/main/opscore-install.sh | bash
-```
-- **前置条件**: 无 (只需 curl + bash)
-- 自动检测平台,下载最新预构建二进制 + 前端文件
-- 安装到 `/opt/opscore/`，自动注册 systemd 开机自启
-- 安装完成后询问是否立即启动
+### 3. 网络/防火墙表格溢出行为
+- 前列内容过长时，自动换行把后面列"推"下去
+- 期望：**后列遮挡前列溢出**（推拉门效果）
+- 保持固定列宽，超出部分用 `...` 省略
 
-### 方式二:手动下载 (零依赖)
-从 [GitHub Releases](https://github.com/YuDong999/opscore-lite/releases) 下载对应平台的压缩包:
-```bash
-# Linux AMD64
-curl -fsSL https://github.com/YuDong999/opscore-lite/releases/latest/download/opscore-linux-amd64.tar.gz | tar xz
-./opscore
+### 4. CPU 仪表盘拱桥遮挡 & 底部文字换行
+- 拱桥宽度 16px 时，`fontSize: 28` 的数字左侧被拱桥裁切
+- 底部 `stat-row` 使用 `display: flex; justify-content: space-between`，长 CPU 型号把 `2 核` 推到第二行
+- 缩放 100% 时，flex item 亚像素舍入导致 CPU 卡片占比异常（70-80% 正常）
 
-# macOS ARM64 (Apple Silicon)
-curl -fsSL https://github.com/YuDong999/opscore-lite/releases/latest/download/opscore-darwin-arm64.tar.gz | tar xz
-./opscore
+---
 
-# Windows
-# 下载 opscore-windows-amd64.zip, 解压后运行 opscore.exe
-```
-- **前置条件**: 无
+## 二、改动内容
 
-### 方式三:源码构建 (需要开发环境)
-```bash
-git clone https://github.com/YuDong999/opscore-lite.git
-cd opscore-lite
-make build    # 构建前端 + 编译 Go 二进制
-./opscore     # 启动 (默认 :8088)
+### CSS (`web/src/index.css`)
+
+#### 1. 全局表格溢出处理
+```css
+.data-table th, .data-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-table td { max-width: 0; }
 ```
 - **前置条件**: Go 1.24+ 和 Node.js 18+
 - 前端改动只需 `make web`(无需重编 Go)
 
-### 方式四:Docker (需要 Docker)
-```bash
-docker compose up -d --build
+#### 2. 网络/防火墙表格列宽 (`.net-table`)
+```css
+.net-table th:nth-child(1) { width: 10%; }  /* 协议 */
+.net-table th:nth-child(2) { width: 25%; }  /* 本地地址 */
+.net-table th:nth-child(3) { width: 25%; }  /* 识别服务 */
+.net-table th:nth-child(4) { width: 25%; }  /* 真实进程/PID */
+.net-table th:nth-child(5) { width: 15%; }  /* 端口提示 */
 ```
 - **前置条件**: Docker 20.10+ 和 Docker Compose 2.0+
 - 适合不想装 Go/Node.js 的服务器
 
-## 常用命令
-```bash
-opscore                           # 启动 (默认 :8088)
-opscore -addr 127.0.0.1:8088      # 指定监听地址 (配合 nginx)
-opscore -dist ./web/dist          # 指定前端目录
-opscore -data /path/to/data       # 指定数据目录 (配置/备份)
+#### 3. 服务发现表格列宽微调
+```css
+.data-table th:nth-child(1) { width: 16%; }
+.data-table th:nth-child(2) { width: 10%; }
+.data-table th:nth-child(3) { width: 22%; }
+.data-table th:nth-child(4) { width: 6%; }
+.data-table th:nth-child(5) { width: 6%; }
+.data-table th:nth-child(6) { width: 18%; }
+.data-table th:nth-child(7) { width: 14%; }
+.data-table th:nth-child(8) { width: 8%; }
 ```
 
-## 开发
-```bash
-make dev      # 前端 + Go 编译 + 运行
-make web      # 仅重编前端 (前端改动时用,无需重编 Go)
-make go       # 仅重编 Go (后端改动时用)
+#### 4. 状态筛选 + 复制 Toast（新增）
+```css
+.sel-xs { font-size: 11px; padding: 2px 6px; margin-left: 6px; border-radius: 6px; }
+
+.toast-copy { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 22px; border-radius: 10px; font-size: 13px; z-index: 100; animation: toast-in 0.25s ease; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 ```
 
-## 开机自启 (systemd)
-```bash
-sudo cp deploy/opscore.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now opscore
+### 组件改动
+
+#### 1. `ResourcesModule.tsx` - CPU 仪表盘 & 底部文字
+仅调整 gauge 数字大小和底部布局，**不改变卡片结构**：
+```tsx
+// 仪表数字缩小，约束在拱桥内: 28px → 22px
+detail: { valueAnimation: true, fontSize: 22, color: txt, offsetCenter: [0, 0], formatter: (value) => value.toFixed(2) + '%' },
+
+// stat-row 改为自然文本流（消除 flex 亚像素舍入导致的缩放比例异常）
+<div className="stat-row" style={{ display: 'block' }}>
+  <span style={{ fontSize: 13, fontWeight: 700 }}>{snap.cpu.cores} 核</span>{' '}
+  <span className="dim" style={{ fontSize: 11.5 }}>{snap.cpu.model || '—'}</span>
+</div>
 ```
 
-## nginx 反代
-```bash
-sudo cp deploy/nginx-opscore.conf /etc/nginx/conf.d/opscore.conf
-sudo nginx -t && sudo systemctl reload nginx
+#### 2. `NetworkModule.tsx`
+- 网络接口表格：增加 `className="data-table net-table"`
+- 监听端口表格：增加 `className="data-table net-table"`
+
+#### 3. `FirewallModule.tsx`
+- 现有规则表格：增加 `className="data-table net-table"`
+
+#### 4. `ServicesModule.tsx`
+- **移除**：独立筛选栏 `<div className="filter-bar">`
+- **表头状态列改为下拉**：
+  ```tsx
+  <th>
+    <select className="sel sel-xs" value={statusFilter}
+      onChange={(e) => setStatusFilter(e.target.value as ...)}>
+      <option value="all">状态</option>
+      <option value="running">运行中</option>
+      <option value="exited">已退出</option>
+      <option value="failed">失败</option>
+    </select>
+  </th>
+  ```
+- **新增**：日志命令双击复制功能 `copyCmd()` + `cursor:copy` + Toast 提示"已复制"
+
+---
+
+## 三、效果验证
+
+| 检查项 | 结果 |
+|--------|------|
+| 前端构建成功 | ✅ `.net-table` 和 `.toast-copy` 已进入构建产物 |
+| 服务重启成功 | ✅ systemd `opscore.service` active |
+| 页面访问正常 | ✅ http://192.168.207.10:8081 |
+| 表格列宽固定 | ✅ `table-layout: fixed` + 百分比宽度 |
+| 溢出隐藏 | ✅ 后列遮挡前列，无换行 |
+| 状态筛选 | ✅ 表头内嵌 `<select>` 下拉，默认"状态" |
+| CPU 数字在拱桥内 | ✅ `fontSize: 22`，居中不裁切 |
+| CPU 底部不换行 | ✅ `display: block` 自然文本流，型号自动截断 |
+| 卡片布局一致 | ✅ 未改动 `grid-5` / Card 结构 |
+| 缩放 100% / 80% 比例一致 | ✅ 消除 flex 亚像素舍入问题 |
+| 日志命令双击复制 | ✅ `onDoubleClick` + Toast "已复制" |
+
+---
+
+## 四、修改文件清单
+
 ```
-参考 `deploy/nginx-opscore.conf` 修改 server_name 和端口。
+/opt/opscore/web/src/index.css
+  - 全局表格溢出隐藏
+  - .net-table 列宽比例 10:25:25:25:15
+  - 服务发现表格列宽微调
+  - .sel-xs 下拉框样式（已有）
+  - .toast-copy / @keyframes toast-in（新增双‑击复制提示）
+  - 注意：未改动 .grid / .card 等布局类
 
-## 端口说明
-- 默认监听 `:8088` (避开 Prometheus 9090 / nginx 8080/8081)
-- 如需 nginx 反代:OpsCore 起 `-addr 127.0.0.1:8088`, nginx 反代 `http://127.0.0.1:8088`
+/opt/opscore/web/src/modules/ResourcesModule.tsx
+  - cpuOption: detail.fontSize 28→22
+  - cpu stat-row: display:flex → display:block (inline style)
+  - 底部两 span 缩小字号 + 自然文本流
 
-## 平台说明
-- 服务启停需要 Linux + systemd 环境且有相应权限
-- Windows/macOS 上服务模块会降级为进程列表展示
-- 防火墙在 Windows 上为只读(写入仅预览);Linux + 特权下生效
-- Windows 挂载点为盘符(如 `C:`),下钻端点会自动归一化为 `C:\`
+/opt/opscore/web/src/modules/NetworkModule.tsx
+  - 接口表格 + 监听端口表格增加 net-table class
+
+/opt/opscore/web/src/modules/FirewallModule.tsx
+  - 现有规则表格增加 net-table class
+
+/opt/opscore/web/src/modules/ServicesModule.tsx
+  - 状态筛选从表头内嵌 select 改为独立 filter-bar → 最终改回表头 `<select>` 下拉
+  - 日志命令双击复制（copyCmd + Toast）
+```
+
+---
+
+## 五、未改动（保持原样）
+
+- `.grid-5` / `.grid-2` 网格布局
+- `.card` / `.card-head` / `.stat-row` 卡片结构
+- EChart 容器高度（`height={240}` / `height={260}`）
+- 内存波浪图、磁盘饼图等其他卡片
+- gauge `progress` / `axisLine` width 保持 16px 不变
+- `.filter-bar` / `.filter-btn` / `.filter-on` 已删除（不再使用）

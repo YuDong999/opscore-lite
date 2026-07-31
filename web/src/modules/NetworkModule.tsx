@@ -77,7 +77,7 @@ export default function NetworkModule() {
             )}
             <Card title="网络接口" subtitle="interface / MTU / 地址">
               <div className="table-wrap">
-                <table className="data-table">
+                <table className="data-table net-table">
                   <thead>
                     <tr><th>接口</th><th>MTU</th><th>地址</th></tr>
                   </thead>
@@ -99,7 +99,7 @@ export default function NetworkModule() {
                 端口常见服务仅作提示；真实身份 = 占用该端口的进程(PID→进程名)。二者一致才标「已确认」。
               </div>
               <div className="table-wrap">
-                <table className="data-table net-port-table">
+                <table className="data-table net-table">
                   <thead>
                     <tr><th>协议</th><th>本地地址</th><th>识别服务</th><th>真实进程 / PID</th><th>端口提示</th></tr>
                   </thead>
@@ -155,18 +155,19 @@ type ConfigResult = {
   permission: 'root' | 'user'
 }
 
-// ── 网络配置子组件: 查看/修改 IP, 路由, DNS ──
-
 function NetConfigSection() {
   const [data, setData] = useState<NetConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionMsg, setActionMsg] = useState('')
+
   const load = async () => {
     setLoading(true)
     try { const d = await getJSON<NetConfig>('/api/core/network/config'); setData(d) } catch { /* ignore */ }
     setLoading(false)
   }
+
   useEffect(() => { load() }, [])
+
   const runAction = async (action: string, device: string, extra?: Record<string, any>) => {
     try {
       const body: any = { action, device, ...extra }
@@ -178,30 +179,39 @@ function NetConfigSection() {
     } catch { setActionMsg('✗ 请求失败') }
     setTimeout(() => setActionMsg(''), 5000)
   }
+
   const [editIP, setEditIP] = useState('')
   const [editMask, setEditMask] = useState(24)
   const [editDev, setEditDev] = useState('')
   const [editDNS, setEditDNS] = useState('')
+
   if (loading && !data) return <div className="loading">加载网络配置中…</div>
   if (!data) return <div className="banner banner-err">加载失败</div>
+
   const isRoot = data.permission === 'root'
+
   return (
     <>
       {actionMsg && <div className={`banner ${actionMsg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{actionMsg}</div>}
+
       <div className="grid grid-2">
         <Card title="网络接口" subtitle="ip addr show">
           <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 340, overflowY: 'auto' }}>{data.interfaces}</div>
         </Card>
+
         <Card title="路由表" subtitle="ip route show">
           <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 340, overflowY: 'auto' }}>{data.routes}</div>
         </Card>
+
         <Card title="DNS 配置" subtitle={data.permission === 'root' ? '' : '只读'}>
           <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{data.dns}</div>
         </Card>
+
         <Card title="NetworkManager" subtitle="nmcli dev status">
           <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{data.nm}</div>
         </Card>
       </div>
+
       {isRoot && (
         <Card title="操作" subtitle="root 权限">
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -213,6 +223,7 @@ function NetConfigSection() {
                 <button className="btn btn-accent" disabled={!editDev} onClick={() => runAction('dhcp', editDev)}>DHCP 续租</button>
               </div>
             </div>
+
             <div>
               <div className="field-label">修改 IP</div>
               <div className="form-inline">
@@ -223,6 +234,7 @@ function NetConfigSection() {
                 <button className="btn btn-accent" disabled={!editDev || !editIP} onClick={() => runAction('set-ip', editDev, { ip: editIP, mask: editMask })}>设置</button>
               </div>
             </div>
+
             <div style={{ gridColumn: '1 / -1' }}>
               <div className="field-label">修改 DNS</div>
               <div className="form-inline">
