@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"opscore/internal/remote"
 )
@@ -23,6 +26,62 @@ func remoteNmcliGet(rmHost remote.Host, cmds map[string]string) map[string]strin
 		}
 	}
 	return out
+}
+
+// gbkToUTF8 将 GBK 编码文本转为 UTF-8(中文 Windows 命令输出为 GBK/CP936)
+func gbkToUTF8(s string) string {
+	if s == "" || !hasHighByte(s) {
+		return s
+	}
+	out, err := simplifiedchinese.GBK.NewDecoder().String(s)
+	if err != nil {
+		return s
+	}
+	return out
+}
+
+func hasHighByte(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+
+// windowsDnsLines 从 ipconfig /all 输出中提取 DNS 服务器行。
+// 注意: 中文系统输出为 GBK 编码, 不能匹配中文字面量, 只依赖 ASCII 的 "DNS" 前缀与冒号
+func windowsDnsLines(ipconfigOut string) string {
+	var b strings.Builder
+	lines := strings.Split(ipconfigOut, "\n")
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "DNS") && strings.Contains(t, ":") {
+			b.WriteString(t + "\n")
+			for j := i + 1; j < len(lines); j++ {
+				n := strings.TrimSpace(lines[j])
+				if n == "" || !isIPv4(n) {
+					break
+				}
+				b.WriteString(n + "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func isIPv4(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		v, err := strconv.Atoi(p)
+		if err != nil || v < 0 || v > 255 {
+			return false
+		}
+	}
+	return true
 }
 
 // NetConnections 处理 GET /api/core/netconfig/connections — nmcli 连接列表 + WiFi
@@ -166,6 +225,20 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 				"dns":        dns,
 				"nm":         out["nm"],
 				"permission": "root",
+			})
+			return
+		}
+
+		// Windows 本机: ipconfig / route print 只读展示, 无 nmcli
+		if runtime.GOOS == "windows" {
+			ifaces := gbkToUTF8(runCapture("ipconfig", "/all"))
+			routes := gbkToUTF8(runCapture("route", "print"))
+			WriteJSON(w, map[string]any{
+				"interfaces": ifaces,
+				"routes":     routes,
+				"dns":        windowsDnsLines(ifaces),
+				"nm":         "Windows: 网络由 netsh / 系统网络设置管理, 本页只读",
+				"permission": "user",
 			})
 			return
 		}
