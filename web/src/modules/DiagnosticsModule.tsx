@@ -1,5 +1,8 @@
+// ── 系统诊断模块: 网络诊断 / 登录审计 / 系统更新 ──
+
 import { useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
+import Card from '../components/Card'
 
 type Permission = 'root' | 'user'
 
@@ -60,6 +63,8 @@ export default function DiagnosticsModule() {
   )
 }
 
+// ── 网络诊断子组件: ping / traceroute / mtr / 端口 / DNS / HTTP / 路由 / ARP ──
+
 function NetworkSection() {
   const [tool, setTool] = useState('ping')
   const [target, setTarget] = useState('')
@@ -67,14 +72,16 @@ function NetworkSection() {
   const [count, setCount] = useState(4)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<DiagResult | null>(null)
+  const [history, setHistory] = useState<{tool:string;target:string;time:string;result:DiagResult}[]>([])
+  const [elapsed, setElapsed] = useState(0)
 
   const cur = NET_TOOLS.find(t => t.id === tool) || NET_TOOLS[0]
-  const isRoot = true // server is root, but permission label shown in result
 
   const run = async () => {
     if (cur.needsTarget && !target.trim()) return
-    setLoading(true)
-    setResult(null)
+    setLoading(true); setResult(null); setElapsed(0)
+    const start = Date.now()
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500)
     try {
       const body: any = { tool }
       if (cur.needsTarget) body.target = target.trim()
@@ -82,9 +89,13 @@ function NetworkSection() {
       if (tool === 'port') body.port = port
       const res = await postJSON<DiagResult>('/api/core/diagnostics/network', body)
       setResult(res)
-    } catch { setResult({ error: '请求失败' } as DiagResult) }
+      setHistory(p => [{tool, target: target.trim(), time: new Date().toLocaleTimeString(), result: res}, ...p].slice(0, 20))
+    } catch { const res = { error: '请求失败' } as DiagResult; setResult(res); setHistory(p => [{tool, target: target.trim(), time: new Date().toLocaleTimeString(), result: res}, ...p].slice(0, 20)) }
+    clearInterval(timer)
     setLoading(false)
   }
+
+  const copyResult = (text: string) => navigator.clipboard?.writeText(text)
 
   return (
     <Card title="网络诊断" subtitle="多工具诊断">
@@ -115,18 +126,40 @@ function NetworkSection() {
             <option value={10}>10 次</option>
           </select>
         )}
-        <button className="btn btn-accent" onClick={run} disabled={loading || (cur.needsTarget && !target.trim())}>{loading ? '诊断中…' : '执行'}</button>
+        <button className="btn btn-accent" onClick={run} disabled={loading || (cur.needsTarget && !target.trim())}>
+          {loading ? `诊断中… ${elapsed}s` : '执行'}
+        </button>
       </div>
 
       {result && (
-        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: 12.5 }}>
+        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: 12.5, position:'relative' }}>
+          <button className="btn btn-sm" style={{position:'absolute',top:4,right:4,fontSize:11,padding:'2px 8px'}} onClick={() => copyResult(result.output || result.error || '')}>复制</button>
           {result.error && <div className="banner banner-err">{result.error}</div>}
           {result.output}
+        </div>
+      )}
+
+      {history.length > 1 && (
+        <div style={{marginTop:16}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:6}}>诊断历史 ({history.length})</div>
+          <div style={{maxHeight:200,overflow:'auto'}}>
+            {history.slice(1).map((h, i) => (
+              <div key={i} style={{display:'flex',gap:8,padding:'3px 0',fontSize:12,borderBottom:'1px solid var(--border)',cursor:'pointer'}}
+                onClick={() => { setTool(h.tool); setResult(h.result); setTarget(h.target) }}>
+                <span className="dim">{h.time}</span>
+                <span className="badge badge-info" style={{fontSize:10}}>{h.tool}</span>
+                <span className="mono dim">{h.target}</span>
+                <span className={`badge ${h.result.error ? 'badge-danger' : 'badge-ok'}`} style={{fontSize:10}}>{h.result.error ? '失败' : '成功'}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </Card>
   )
 }
+
+// ── 登录审计子组件: last / lastb / sshd 日志 ──
 
 function LoginSection() {
   const [data, setData] = useState<LoginAudit | null>(null)
@@ -152,16 +185,42 @@ function LoginSection() {
   )
 }
 
+// ── 系统更新子组件: 安全更新列表 + 重启状态 ──
+
 function UpdatesSection() {
   const [data, setData] = useState<Updates | null>(null)
-  useEffect(() => { getJSON<Updates>('/api/core/diagnostics/updates').then(setData).catch(() => {}) }, [])
+  const [installing, setInstalling] = useState(false)
+  const [installResult, setInstallResult] = useState<string | null>(null)
+
+  const load = () => getJSON<Updates>('/api/core/diagnostics/updates').then(setData).catch(() => {})
+  useEffect(() => { load() }, [])
+
+  const installUpdates = async () => {
+    if (!confirm('确定安装所有安全更新？此操作可能耗时较长。')) return
+    setInstalling(true); setInstallResult(null)
+    try {
+      const d = await postJSON<any>('/api/core/diagnostics/updates/install', {})
+      if (d.ok) setInstallResult('✓ 更新安装完成')
+      else setInstallResult(`✗ ${d.error || '安装失败'}`)
+      if (d.output) setInstallResult((p: string | null) => (p || '') + '\n\n' + d.output)
+    } catch (e: any) {
+      setInstallResult(`✗ ${e?.message || '请求失败'}`)
+    }
+    setInstalling(false); load()
+  }
+
   if (!data) return <div className="loading">加载中…</div>
   if (data.error) return <div className="banner banner-err">{data.error}</div>
 
   return (
     <>
       <Card title="安全更新" subtitle="dnf check-update --security">
-        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>{data.updates || '（无待安装安全更新）'}</div>
+        <div className="flex-between" style={{marginBottom:8}}>
+          <span>{data.updates ? '以下更新可用' : '无待安装安全更新'}</span>
+          {data.updates && <button className="btn btn-accent" onClick={installUpdates} disabled={installing}>{installing ? '安装中…' : '安装安全更新'}</button>}
+        </div>
+        {installResult && <div className={`banner ${installResult.startsWith('✓') ? 'banner-ok' : 'banner-err'}`} style={{whiteSpace:'pre-wrap'}}>{installResult}</div>}
+        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>{data.updates || '（无）'}</div>
       </Card>
       <Card title="重启状态" subtitle="needs-restarting">
         <div className="banner" style={{ background: data.needs_restart ? '#ef44441f' : '#22c55e1f', borderColor: data.needs_restart ? '#ef44444d' : '#22c55e4d' }}>
@@ -170,17 +229,5 @@ function UpdatesSection() {
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, marginTop: 8 }}>{data.restart_detail}</div>
       </Card>
     </>
-  )
-}
-
-function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  return (
-    <div className="card glass" style={{ marginBottom: 16 }}>
-      <div className="card-head">
-        <h3>{title}</h3>
-        {subtitle && <span className="card-sub">{subtitle}</span>}
-      </div>
-      {children}
-    </div>
   )
 }

@@ -1,8 +1,18 @@
-// ── 设置模块: 主题选择器 / 访问令牌管理 ──
-
 import { useState, useEffect } from 'react'
 import { useTheme, THEMES } from '../theme'
 import { getJSON, postJSON } from '../api/client'
+
+interface MigrationStatus {
+  currentDB: string
+  dsn: string
+  keyCount: number
+}
+
+interface MigrationResult {
+  ok: boolean
+  message: string
+  keys?: string[]
+}
 
 export default function SettingsModule() {
   const { theme, setTheme, meta } = useTheme()
@@ -10,11 +20,17 @@ export default function SettingsModule() {
   const [configured, setConfigured] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  const [dbStatus, setDbStatus] = useState<MigrationStatus | null>(null)
+  const [pgDSN, setPgDSN] = useState('')
+  const [migrating, setMigrating] = useState(false)
+  const [migrateResult, setMigrateResult] = useState<MigrationResult | null>(null)
+
   useEffect(() => {
     getJSON<any>('/api/auth/token').then((d) => {
       setConfigured(d.configured === 'true')
       if (d.token) setToken(d.token)
     }).catch(() => {})
+    getJSON<MigrationStatus>('/api/system/migration-status').then(setDbStatus).catch(() => {})
   }, [])
 
   const saveToken = async () => {
@@ -29,6 +45,22 @@ export default function SettingsModule() {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch {}
+  }
+
+  const doMigrate = async () => {
+    setMigrating(true)
+    setMigrateResult(null)
+    try {
+      const r = await postJSON<MigrationResult>('/api/system/migrate', { dsn: pgDSN })
+      setMigrateResult(r)
+      if (r.ok) {
+        setDbStatus({ currentDB: 'postgres', dsn: pgDSN, keyCount: r.keys?.length || 0 })
+      }
+    } catch {
+      setMigrateResult({ ok: false, message: '迁移请求失败' })
+    } finally {
+      setMigrating(false)
+    }
   }
 
   return (
@@ -74,7 +106,7 @@ export default function SettingsModule() {
         </div>
       </div>
 
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20, marginBottom: 24 }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>访问令牌</h2>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 4 }}>
           设置静态 Token 进行登录认证（留空则不启用认证）
@@ -97,6 +129,49 @@ export default function SettingsModule() {
             {saved ? '✓ 已保存' : '保存'}
           </button>
         </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>数据库迁移</h2>
+        {dbStatus && (
+          <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>
+            当前数据库：<strong>{dbStatus.currentDB === 'sqlite' ? 'SQLite' : 'PostgreSQL'}</strong>
+            {' · '}配置项：<strong>{dbStatus.keyCount}</strong> 条
+          </p>
+        )}
+        {dbStatus?.currentDB === 'sqlite' ? (
+          <>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+              将 SQLite 中的数据迁移到 PostgreSQL。输入 PostgreSQL 连接串，迁移后需手动重启服务并指定 --database 参数。
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="ipt"
+                value={pgDSN}
+                onChange={(e) => setPgDSN(e.target.value)}
+                placeholder="postgres://user:pass@host:5432/opscore"
+                style={{ flex: 1, maxWidth: 500, fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <button className="btn btn-accent" onClick={doMigrate} disabled={migrating || !pgDSN}>
+                {migrating ? '迁移中...' : '开始迁移'}
+              </button>
+            </div>
+            {migrateResult && (
+              <div style={{
+                marginTop: 12, padding: 12, borderRadius: 8,
+                background: migrateResult.ok ? 'var(--ok-bg, #0a2e1a)' : 'var(--err-bg, #2e0a0a)',
+                color: migrateResult.ok ? 'var(--ok, #4ade80)' : 'var(--err, #f87171)',
+                fontSize: 13,
+              }}>
+                {migrateResult.message}
+              </div>
+            )}
+          </>
+        ) : dbStatus?.currentDB === 'postgres' ? (
+          <p style={{ fontSize: 13, color: 'var(--ok)' }}>✓ 已在使用 PostgreSQL，无需迁移</p>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中...</p>
+        )}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-# 前端构建产物(由 go:embed 打包进二进制, 无需入库)
+# 前端构建产物(已 go:embed 打包进二进制, 无需入库)
 /web/dist/
 /web/node_modules/
 
@@ -13,3 +13,19 @@ opscore.exe~
 .DS_Store
 *.swp
 Thumbs.db
+
+# 敏感数据: 主机凭据 / SSH 密钥 / 本地 DB(绝不入库)
+/data/
+/bin/data/
+
+# 运行时日志
+*.log
+
+# 本地构建产物与备份
+/bin/opscore-server
+/agent-linux-amd64
+/bin/agent-linux-amd64
+/bin/opscore-server*.exe~
+/bin/opscore-server.exe~
+/bin/dist-单机版勿用/
+/bin/web/

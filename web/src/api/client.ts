@@ -6,15 +6,23 @@ function authHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {}
 }
 
+async function parseError(r: Response): Promise<string> {
+  try {
+    const body = await r.json()
+    if (body && body.error) return body.error
+  } catch {}
+  return `HTTP ${r.status}`
+}
+
 // GET 请求, 返回 JSON
 export async function getJSON<T = any>(url: string): Promise<T> {
   const r = await fetch(url, { headers: authHeaders() })
-  if (r.status === 401) {                          // Token 过期/无效 → 清除并重载(显示登录页)
+  if (r.status === 401) {
     localStorage.removeItem('opscore-token')
     window.location.reload()
     throw new Error('未授权')
   }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  if (!r.ok) throw new Error(await parseError(r))
   return r.json()
 }
 
@@ -30,5 +38,6 @@ export async function postJSON<T = any>(url: string, body: any): Promise<T> {
     window.location.reload()
     throw new Error('未授权')
   }
+  if (!r.ok) throw new Error(await parseError(r))
   return r.json()
 }

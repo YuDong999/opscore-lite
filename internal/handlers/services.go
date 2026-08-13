@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"opscore/internal/ansible"
 
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -38,6 +41,44 @@ type ServiceInfo struct {
 
 // ServicesList 返回服务列表与运行平台信息。
 func ServicesList(w http.ResponseWriter, r *http.Request) {
+	if hostID := r.URL.Query().Get("host"); hostID != "" {
+		if agentHub != nil {
+			if snap, ok := agentHub.GetSnapshot(hostID); ok && len(snap.Services) > 0 {
+				// agent 只回传原始数据,识别/日志命令等展示字段在 server 端对齐(深拷贝,不改动缓存快照)
+				svcs := make([]ServiceInfo, 0, len(snap.Services))
+				for _, s := range snap.Services {
+					si := ServiceInfo{
+						ID: s.ID, Name: s.Name, Status: s.Status, SubStatus: s.SubStatus,
+						Description: s.Description, UnitFile: s.UnitFile,
+						PID: s.PID, CPUPercent: s.CPUPercent, MemPercent: s.MemPercent,
+						LogHint: "journalctl -u " + s.Name, LogCommand: "journalctl -u " + s.Name, LogSource: "journalctl",
+					}
+					if meta, ok := recognizeProc(s.Name); ok {
+						si.Recognized = meta.Label
+						si.Category = meta.Category
+						si.Icon = meta.Icon
+					}
+					svcs = append(svcs, si)
+				}
+				WriteJSON(w, map[string]any{"os": snap.Host.Platform, "managed": true, "services": svcs})
+				return
+			}
+		}
+		// Agent 无数据 → 异步推送新 Agent（替换旧版）
+		TryUpdateAgent(hostID)
+		// SSH 回退
+		svcs, err := remoteServicesList(hostID)
+		if err != nil {
+			if agentHub != nil {
+				agentHub.SetAlert(hostID, "SSH 无法连接: "+err.Error())
+			}
+			WriteJSON(w, map[string]any{"os": "linux", "managed": true, "services": []ServiceInfo{}, "error": err.Error()})
+			return
+		}
+		WriteJSON(w, map[string]any{"os": "linux", "managed": true, "services": svcs})
+		return
+	}
+
 	managed := hasSystemctl()
 	if runtime.GOOS == "linux" && managed {
 		WriteJSON(w, map[string]any{"os": "linux", "managed": true, "services": listSystemd()})
@@ -49,6 +90,126 @@ func ServicesList(w http.ResponseWriter, r *http.Request) {
 		"services": listProcesses(),
 		"note":     "Docker 环境：仅显示进程列表（PID/CPU/内存），无法管理系统服务",
 	})
+}
+func remoteServicesList(hostID string) ([]ServiceInfo, error) {
+	hosts := ansibleMgr.ListHosts()
+	var h *ansible.Host
+	for i := range hosts {
+		if hosts[i].ID == hostID || hosts[i].Alias == hostID {
+			h = &hosts[i]
+			break
+		}
+	}
+	if h == nil {
+		return nil, fmt.Errorf("主机 %s 未找到", hostID)
+	}
+
+	rmHost := resolveRemoteHost(*h)
+
+	cmds := map[string]string{"systemctl": `systemctl list-units --type=service --no-legend --no-pager 2>/dev/null`}
+	res := remotePool.Exec(rmHost, cmds)
+	if res["systemctl"].Error != "" {
+		return nil, fmt.Errorf("%s", res["systemctl"].Error)
+	}
+
+	cpuMap, memMap := map[int32]float64{}, map[int32]float32{}
+	psRes := remotePool.Exec(rmHost, map[string]string{"ps": `ps -eo pid,%cpu,%mem --no-headers 2>/dev/null`})
+	if psRes["ps"].Error == "" {
+		for _, line := range strings.Split(strings.TrimSpace(psRes["ps"].Output), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 3 {
+				continue
+			}
+			pid, perr := strconv.ParseInt(fields[0], 10, 32)
+			cpu, cerr := strconv.ParseFloat(fields[1], 64)
+			mem, merr := strconv.ParseFloat(fields[2], 64)
+			if perr == nil && cerr == nil {
+				cpuMap[int32(pid)] = round2(cpu)
+			}
+			if perr == nil && merr == nil {
+				memMap[int32(pid)] = float32(round2(mem))
+			}
+		}
+	}
+
+	var svcs []ServiceInfo
+	units := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(res["systemctl"].Output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		units = append(units, fields[0])
+	}
+
+	// 一次批量 show 取所有 unit 的 Id/FragmentPath/MainPID。
+	// 兼容旧 systemd(如 CentOS 7 的 219): 批量输出按 unit 分组但无 unit 名头, 故用 -p Id 分组归属
+	props := map[string]struct{ fp, pid string }{}
+	if len(units) > 0 {
+		showRes := remotePool.Exec(rmHost, map[string]string{"show": `systemctl show -p Id -p FragmentPath -p MainPID ` + strings.Join(units, " ") + ` 2>/dev/null`})
+		if showRes["show"].Error == "" {
+			for _, block := range strings.Split(showRes["show"].Output, "\n\n") {
+				var id, fp, pid string
+				for _, l2 := range strings.Split(block, "\n") {
+					if v, ok := strings.CutPrefix(l2, "Id="); ok {
+						id = strings.TrimSpace(v)
+					} else if v, ok := strings.CutPrefix(l2, "FragmentPath="); ok {
+						fp = strings.TrimSpace(v)
+					} else if v, ok := strings.CutPrefix(l2, "MainPID="); ok {
+						pid = strings.TrimSpace(v)
+					}
+				}
+				if id != "" {
+					props[id] = struct{ fp, pid string }{fp: fp, pid: pid}
+				}
+			}
+		}
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(res["systemctl"].Output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		unit := fields[0]
+		si := ServiceInfo{ID: unit, Name: unit, Status: fields[2], SubStatus: fields[3], Description: strings.Join(fields[4:], " ")}
+
+		if p, ok := props[unit]; ok {
+			si.UnitFile = p.fp
+			if n, perr := strconv.ParseInt(strings.TrimSpace(p.pid), 10, 32); perr == nil {
+				si.PID = int32(n)
+			}
+		}
+
+		if si.SubStatus == "running" && si.PID > 0 {
+			if cpu, ok := cpuMap[si.PID]; ok {
+				si.CPUPercent = cpu
+			}
+			if mem, ok := memMap[si.PID]; ok {
+				si.MemPercent = mem
+			}
+		}
+		si.LogHint = "journalctl -u " + unit
+		if meta, ok := recognizeProc(unit); ok {
+			si.Recognized = meta.Label
+			si.Category = meta.Category
+			si.Icon = meta.Icon
+		}
+		si.LogCommand = "journalctl -u " + unit
+		si.LogSource = "journalctl"
+		svcs = append(svcs, si)
+	}
+	return svcs, nil
 }
 
 func hasSystemctl() bool {

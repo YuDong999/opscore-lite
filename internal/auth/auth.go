@@ -4,35 +4,35 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"opscore/internal/store"
+	"opscore/internal/central"
 	"strings"
 	"sync"
 )
 
 var (
-	cfgStore  *store.JSONFile
-	cfg       Config
-	cfgMu     sync.RWMutex
+	store central.CentralStore
+	cfg   Config
+	cfgMu sync.RWMutex
 )
 
 type Config struct {
 	Token string `json:"token,omitempty"`
 }
 
-func Init(dir string) {
-	var err error
-	cfgStore, err = store.New(dir, "config.json")
+func Init(cs central.CentralStore) {
+	store = cs
+	tok, err := cs.GetToken()
 	if err != nil {
-		log.Printf("[auth] store init failed: %v", err)
+		log.Printf("[auth] load token: %v", err)
 		return
 	}
-	cfgStore.Read(&cfg)
+	cfgMu.Lock()
+	cfg.Token = tok
+	cfgMu.Unlock()
 }
 
-// Middleware 校验 Bearer token；未设置 token 时放行。
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /api/auth/* 不受认证保护
 		if strings.HasPrefix(r.URL.Path, "/api/auth/") {
 			next.ServeHTTP(w, r)
 			return
@@ -53,7 +53,6 @@ func Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// 也支持 URL query ?token=xxx（用于 SSE / 日志流）
 		if r.URL.Query().Get("token") == t {
 			next.ServeHTTP(w, r)
 			return
@@ -65,24 +64,23 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// GetToken 返回当前 token。
 func GetToken() string {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 	return cfg.Token
 }
 
-// SetToken 更新 token。
 func SetToken(t string) {
 	cfgMu.Lock()
 	cfg.Token = t
 	cfgMu.Unlock()
-	if cfgStore != nil {
-		cfgStore.Write(&cfg)
+	if store != nil {
+		if err := store.SetToken(t); err != nil {
+			log.Printf("[auth] persist token: %v", err)
+		}
 	}
 }
 
-// HandleToken 处理 GET/POST /api/auth/token
 func HandleToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {

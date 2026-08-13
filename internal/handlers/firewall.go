@@ -103,6 +103,62 @@ func firewalldRunning() bool {
 	return err == nil && strings.Contains(string(out), "running")
 }
 
+// ── 新增: 区域 / Rich-Rule / 端口转发 ──
+
+func runCmd(cmd string) (string, error) {
+	out, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// FirewallZones 处理 GET /api/core/firewall/zones
+func FirewallZones(w http.ResponseWriter, r *http.Request) {
+	zones, _ := runCmd("firewall-cmd --get-zones")
+	zone, _ := runCmd("firewall-cmd --get-default-zone")
+	active, _ := runCmd("firewall-cmd --get-active-zones")
+	WriteJSON(w, map[string]any{
+		"all":     strings.Fields(zones),
+		"default": zone,
+		"active":  active,
+	})
+}
+
+// FirewallRichRules 处理 GET /api/core/firewall/rich-rules
+func FirewallRichRules(w http.ResponseWriter, r *http.Request) {
+	out, err := runCmd("firewall-cmd --list-rich-rules")
+	if err != nil {
+		WriteJSON(w, map[string]any{"rules": []string{}, "note": "firewalld 不可用"})
+		return
+	}
+	lines := strings.Split(out, "\n")
+	rules := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l = strings.TrimSpace(l); l != "" {
+			rules = append(rules, l)
+		}
+	}
+	WriteJSON(w, map[string]any{"rules": rules})
+}
+
+// FirewallForwardPorts 处理 GET /api/core/firewall/forward-ports
+func FirewallForwardPorts(w http.ResponseWriter, r *http.Request) {
+	out, err := runCmd("firewall-cmd --list-forward-ports")
+	if err != nil {
+		WriteJSON(w, map[string]any{"ports": []string{}, "note": "firewalld 不可用"})
+		return
+	}
+	lines := strings.Split(out, "\n")
+	ports := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l = strings.TrimSpace(l); l != "" {
+			ports = append(ports, l)
+		}
+	}
+	WriteJSON(w, map[string]any{"ports": ports})
+}
+
 // ── 只读端点 ──
 
 // FirewallStatusHandler 处理 GET /api/core/firewall
@@ -221,13 +277,17 @@ func parseLinuxRules() []FirewallRule {
 // ── 写入端点(安全骨架) ──
 
 type fwCmdParams struct {
-	Action  string
-	Port    string
-	Proto   string
-	CIDR    string
-	Source  string
-	Reason  string
-	DryRun  bool // 仅预览命令,绝不真正执行(前端二次确认前的预览用)
+	Action     string
+	Port       string
+	Proto      string
+	CIDR       string
+	Source     string
+	Zone       string // 目标区域名
+	RichRule   string // rich-rule 原文
+	FwdSrcPort string // 端口转发-源端口
+	FwdDest    string // 端口转发-目标地址(含端口,如 10.0.0.2:80)
+	Reason     string
+	DryRun     bool // 仅预览命令,绝不真正执行(前端二次确认前的预览用)
 }
 
 // FirewallAction 处理 POST /api/core/firewall/action
@@ -304,6 +364,15 @@ func buildFirewallCommand(backend string, p fwCmdParams) (string, bool) {
 		proto = "tcp"
 	}
 	switch p.Action {
+	case "delete-rule":
+		switch backend {
+		case "netsh":
+			return `netsh advfirewall firewall delete rule name="` + p.Source + `"`, false
+		case "ufw":
+			return `ufw delete ` + p.Source, false
+		case "firewalld":
+			return `firewall-cmd --remove-port=` + p.Source + ` --permanent`, false
+		}
 	case "start":
 		switch backend {
 		case "ufw":
@@ -369,6 +438,47 @@ func buildFirewallCommand(backend string, p fwCmdParams) (string, bool) {
 		case "netsh":
 			return `netsh advfirewall firewall add rule name="opscore-deny-` + p.CIDR + `" dir=in action=block remoteip=` + p.CIDR, lock
 		}
+	case "set-default-zone":
+		if backend != "firewalld" {
+			return "echo only firewalld supports zone", false
+		}
+		return "firewall-cmd --set-default-zone=" + p.Zone, false
+	case "add-rich-rule", "remove-rich-rule":
+		if backend != "firewalld" {
+			return "echo only firewalld supports rich-rule", false
+		}
+		op := "add-rich-rule"
+		if p.Action == "remove-rich-rule" {
+			op = "remove-rich-rule"
+		}
+		zoneOpt := ""
+		if p.Zone != "" {
+			zoneOpt = " --zone=" + p.Zone
+		}
+		return "firewall-cmd --" + op + "='" + p.RichRule + "' " + zoneOpt + "--permanent", false
+	case "add-forward-port":
+		if backend != "firewalld" {
+			return "echo only firewalld supports forward-port", false
+		}
+		// FwdDest 格式 "10.0.0.2:80"
+		dp := strings.SplitN(p.FwdDest, ":", 2)
+		toAddr, toPort := dp[0], dp[1]
+		zoneOpt := ""
+		if p.Zone != "" {
+			zoneOpt = " --zone=" + p.Zone
+		}
+		return "firewall-cmd --add-forward-port=port=" + p.FwdSrcPort + ":proto=" + p.Proto + ":toaddr=" + toAddr + ":toport=" + toPort + zoneOpt + " --permanent", false
+	case "remove-forward-port":
+		if backend != "firewalld" {
+			return "echo only firewalld supports forward-port", false
+		}
+		dp := strings.SplitN(p.FwdDest, ":", 2)
+		toAddr, toPort := dp[0], dp[1]
+		zoneOpt := ""
+		if p.Zone != "" {
+			zoneOpt = " --zone=" + p.Zone
+		}
+		return "firewall-cmd --remove-forward-port=port=" + p.FwdSrcPort + ":proto=" + p.Proto + ":toaddr=" + toAddr + ":toport=" + toPort + zoneOpt + " --permanent", false
 	}
 	return "", false
 }

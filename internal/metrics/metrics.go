@@ -15,17 +15,32 @@ import (
 	"github.com/shirou/gopsutil/v4/net"
 )
 
+// AgentVersion 是 agent 协议/采集逻辑的版本号,服务端据此识别旧 agent 并自动推送更新。
+const AgentVersion = "v3"
+
 // Snapshot 是一个时间点的全量系统指标快照。
 // 后端用一个后台 goroutine 每 2 秒刷新一次,前端轮询读取,避免每次请求都阻塞采集。
 type Snapshot struct {
-	Timestamp int64      `json:"timestamp"`
-	Host      HostInfo   `json:"host"`
-	CPU       CPUInfo    `json:"cpu"`
-	Memory    MemoryInfo `json:"memory"`
-	Load      *load.AvgStat `json:"load,omitempty"`
-	Disks     []DiskInfo `json:"disks"`
-	Net       NetIO      `json:"net"`
-	IsDocker  bool       `json:"isDocker"`
+	Timestamp   int64         `json:"timestamp"`
+	AgentVersion string       `json:"agentVersion,omitempty"`
+	Host        HostInfo      `json:"host"`
+	CPU         CPUInfo       `json:"cpu"`
+	Memory      MemoryInfo    `json:"memory"`
+	Load        *load.AvgStat `json:"load,omitempty"`
+	Disks       []DiskInfo    `json:"disks"`
+	Net         NetIO         `json:"net"`
+	IsDocker    bool          `json:"isDocker"`
+	Services    []ServiceInfo `json:"services,omitempty"`
+	Processes   []ProcessInfo `json:"processes,omitempty"`
+	Network   NetworkDetail `json:"network,omitempty"`
+	Crontab   *CrontabInfo  `json:"crontab,omitempty"`
+}
+
+// CrontabInfo 表示一台主机上采集到的 crontab 内容 (agent 慢周期采集)
+type CrontabInfo struct {
+	Content     string `json:"content"`
+	User        string `json:"user,omitempty"`
+	CollectedAt int64  `json:"collectedAt,omitempty"`
 }
 
 type HostInfo struct {
@@ -70,6 +85,57 @@ type NicIO struct {
 	TxRate  uint64 `json:"txRate"`
 	RxTotal uint64 `json:"rxTotal"`
 	TxTotal uint64 `json:"txTotal"`
+}
+
+// ServiceInfo 表示一个 systemd 服务单元。
+type ServiceInfo struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Status      string  `json:"status"`
+	SubStatus   string  `json:"subStatus"`
+	Description string  `json:"description"`
+	PID         int32   `json:"pid,omitempty"`
+	CPUPercent  float64 `json:"cpuPercent,omitempty"`
+	MemPercent  float32 `json:"memPercent,omitempty"`
+	UnitFile    string  `json:"unitFile,omitempty"`
+	LogCommand  string  `json:"logCommand,omitempty"`
+	LogHint     string  `json:"logHint,omitempty"`
+	LogSource   string  `json:"logSource,omitempty"`
+	Recognized  string  `json:"recognized,omitempty"`
+	Category    string  `json:"category,omitempty"`
+	Icon        string  `json:"icon,omitempty"`
+}
+
+// ProcessInfo 表示一个进程。
+type ProcessInfo struct {
+	PID     int32   `json:"pid"`
+	Name    string  `json:"name"`
+	CPU     float64 `json:"cpuPercent,omitempty"`
+	Memory  float32 `json:"memPercent,omitempty"`
+	Status  string  `json:"status,omitempty"`
+}
+
+// NetworkDetail 包含接口和监听端口信息。
+type NetworkDetail struct {
+	Interfaces []NetInterface `json:"interfaces,omitempty"`
+	Listeners  []ListenInfo   `json:"listeners,omitempty"`
+}
+
+// NetInterface 表示一个网络接口。
+type NetInterface struct {
+	Name    string   `json:"name"`
+	Addrs   []string `json:"addrs,omitempty"`
+	RxBytes uint64   `json:"rxBytes"`
+	TxBytes uint64   `json:"txBytes"`
+}
+
+// ListenInfo 表示一个监听端口。
+type ListenInfo struct {
+	Protocol string `json:"protocol"`
+	Local    string `json:"local"`
+	Port     int    `json:"port"`
+	Process  string `json:"process"`
+	PID      int32  `json:"pid,omitempty"`
 }
 
 var (
@@ -184,6 +250,7 @@ func shouldSkipDisk(p disk.PartitionStat) bool {
 	virtualRoots := []string{
 		"/proc", "/sys", "/dev", "/run", "/boot/efi",
 		"/var/lib/docker/", "/var/lib/containers/",
+		"/var/lib/kubelet/", "/var/lib/containerd/", "/run/containerd/",
 	}
 	for _, root := range virtualRoots {
 		if mp == root || strings.HasPrefix(mp, root+"/") {

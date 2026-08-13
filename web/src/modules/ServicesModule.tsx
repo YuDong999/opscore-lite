@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
+import { useHost } from '../components/HostContext'
+import HostSelector from '../components/HostSelector'
 import Card from '../components/Card'
+import AppsSection from './AppsSection'
 
 interface ServiceInfo {
   id: string
@@ -38,6 +41,7 @@ interface LogResponse {
 }
 
 export default function ServicesModule() {
+  const { selected } = useHost()
   const [data, setData] = useState<{ os: string; managed: boolean; services: ServiceInfo[]; note?: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)    // 正在操作的服务ID
   const [msg, setMsg] = useState<string>('')
@@ -47,23 +51,7 @@ export default function ServicesModule() {
   const [sortKey, setSortKey] = useState<'cpu' | 'mem' | null>(null)
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [copied, setCopied] = useState(false)
-
-  const copyCmd = async (cmd: string) => {
-    try {
-      await navigator.clipboard.writeText(cmd)
-    } catch {
-      const ta = document.createElement('textarea')
-      ta.value = cmd
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-    }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const [view, setView] = useState<'services' | 'apps'>('services')
 
   // 复制命令到剪贴板(兜底方案)
   const copyCmd = async (cmd: string) => {
@@ -131,10 +119,10 @@ export default function ServicesModule() {
     return list
   }, [data, search, statusFilter, sortKey, sortDir])
 
-  // 每 5 秒轮询服务列表
   const load = useCallback(() => {
-    getJSON('/api/core/services').then(setData).catch(() => setMsg('加载失败'))
-  }, [])
+    const url = selected?.id ? `/api/core/services?host=${selected.id}` : '/api/core/services'
+    getJSON(url).then(setData).catch(() => setMsg('加载失败'))
+  }, [selected])
 
   useEffect(() => {
     load()
@@ -155,22 +143,36 @@ export default function ServicesModule() {
     }
   }
 
-  if (!data) return <div className="loading">加载服务中…</div>
+  if (view === 'services' && !data) return <div className="loading">加载服务中…</div>
 
-  const activeCount = data.services.filter((s) => /active|running/i.test(s.status)).length
+  const activeCount = data ? data.services.filter((s) => /active|running/i.test(s.status)).length : 0
 
   return (
     <div className="module">
       <div className="module-head">
-        <h2>服务发现 <span className="pill pill-sub">{activeCount}/{data.services.length} 活跃 · {data.os}</span></h2>
-        <div className="head-tools">
-          <div className="search-box">
-            <span className="search-ico">🔍</span>
-            <input className="ipt search-ipt" placeholder="搜索服务，如 nginx" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="module-head-row"><h2>服务发现 <span className="pill pill-sub">{view === 'services' && data ? `${activeCount}/${data.services.length} 活跃 · ${data.os}` : '容器 · 站点 · 健康'}</span></h2></div>
+        <div className="module-head-row">
+          <HostSelector />
+          <div className="head-tools" style={{ marginLeft: 'auto' }}>
+            {view === 'services' && (
+              <div className="search-box">
+                <span className="search-ico">🔍</span>
+                <input className="ipt search-ipt" placeholder="搜索服务，如 nginx" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+            )}
           </div>
         </div>
       </div>
 
+      <div className="tabs" style={{ flexWrap: 'wrap' }}>
+        <button className={`tab ${view === 'services' ? 'tab-on' : ''}`} onClick={() => setView('services')}>系统服务</button>
+        <button className={`tab ${view === 'apps' ? 'tab-on' : ''}`} onClick={() => setView('apps')}>应用与容器</button>
+      </div>
+
+      {view === 'apps' ? (
+        <AppsSection />
+      ) : (
+        <>
       {!data.managed && (
         <div className="banner">⚠ {data.note}（按钮为可视化占位，真实启停需在 Linux/systemd 环境运行）</div>
       )}
@@ -183,8 +185,7 @@ export default function ServicesModule() {
               <tr>
                 <th>名称</th>
                 <th>
-                  <select className="sel sel-xs" value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
+                  <select className="sel sel-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'running' | 'exited' | 'failed')}>
                     <option value="all">状态</option>
                     <option value="running">运行中</option>
                     <option value="exited">已退出</option>
@@ -244,8 +245,9 @@ export default function ServicesModule() {
       {logTarget && (
         <LogModal service={logTarget} onClose={() => setLogTarget(null)} />
       )}
-
       {copied && <div className="toast-copy">已复制</div>}
+        </>
+      )}
     </div>
   )
 }
@@ -294,7 +296,11 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
         setLogLines(prev => {
           const lastNum = prev.length > 0 ? prev[prev.length - 1].num : 0
           const newEntries = reversed.filter(l => l.num > lastNum)
-          return [...prev, ...newEntries]
+          const merged = [...prev, ...newEntries]
+          if (merged.length > MAX_LOG_LINES) {
+            return merged.slice(merged.length - MAX_LOG_LINES)
+          }
+          return merged
         })
       }
       setWarnings(res.warnings || [])

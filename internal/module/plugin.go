@@ -2,34 +2,28 @@ package module
 
 import (
 	"log"
-	"opscore/internal/store"
+	"opscore/internal/central"
 	"sync"
 )
 
 var (
-	pluginStore *store.JSONFile
+	cs       central.CentralStore
 	activeMap   = map[string]bool{}
 	activeMu    sync.RWMutex
 )
 
-type pluginConfig struct {
-	Active map[string]bool `json:"active"`
-}
-
-func InitPluginStore(dir string) {
-	var err error
-	pluginStore, err = store.New(dir, "plugins.json")
+func InitPluginStore(c central.CentralStore) {
+	cs = c
+	states, err := c.GetAllModuleStates()
 	if err != nil {
-		log.Printf("[plugin] store init failed: %v", err)
+		log.Printf("[module] load states: %v", err)
 		return
 	}
-	var cfg pluginConfig
-	pluginStore.Read(&cfg)
-	if cfg.Active == nil {
-		cfg.Active = map[string]bool{}
-	}
 	activeMu.Lock()
-	activeMap = cfg.Active
+	activeMap = states
+	if activeMap == nil {
+		activeMap = map[string]bool{}
+	}
 	activeMu.Unlock()
 }
 
@@ -43,8 +37,10 @@ func SetPluginActive(id string, active bool) {
 	activeMu.Lock()
 	activeMap[id] = active
 	activeMu.Unlock()
-	if pluginStore != nil {
-		pluginStore.Write(&pluginConfig{Active: activeMap})
+	if cs != nil {
+		if err := cs.SetModuleState(id, active); err != nil {
+			log.Printf("[module] persist state: %v", err)
+		}
 	}
 }
 

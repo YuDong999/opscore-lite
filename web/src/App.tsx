@@ -1,42 +1,69 @@
-// ── 根组件: 侧栏导航 + 路由分发 + 认证检查 ──
-
-import { useEffect, useState } from 'react'
+import { Component, useEffect, useState, useMemo, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { getJSON } from './api/client'
 import TopBar from './components/TopBar'
 import LoginPage from './components/LoginPage'
+import { HostProvider } from './components/HostContext'
 import ResourcesModule from './modules/ResourcesModule'
 import ServicesModule from './modules/ServicesModule'
 import NetworkModule from './modules/NetworkModule'
-import DiagnosticsModule from './modules/DiagnosticsModule'
-import TasksModule from './modules/TasksModule'
 import PluginsModule from './modules/PluginsModule'
 import SettingsModule from './modules/SettingsModule'
 import DiagnosticsModule from './modules/DiagnosticsModule'
 import TasksModule from './modules/TasksModule'
+import AnsibleModule from './modules/AnsibleModule'
 
-// API /api/manifest 返回的模块注册格式
 interface Manifest {
   id: string
   name: string
   icon: string
   routePath: string
-  group: string        // "core" | "plugin"
+  group: string
   description: string
+}
+
+const MODULE_MAP: Record<string, () => JSX.Element> = {
+  resources: ResourcesModule,
+  services: ServicesModule,
+  network: NetworkModule,
+  diagnostics: DiagnosticsModule,
+  tasks: TasksModule,
+  plugins: PluginsModule,
+  ansible: AnsibleModule,
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="banner banner-err" style={{ margin: 16 }}>
+          模块渲染出错: {this.state.error.message}
+          <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => this.setState({ error: null })}>
+            重试
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 export default function App() {
   const [modules, setModules] = useState<Manifest[]>([])
   const [authRequired, setAuthRequired] = useState<boolean | null>(null)
-  const [loggedIn, setLoggedIn] = useState(false)
 
-  // 启动时检查是否配置了 Token 认证
   useEffect(() => {
     fetch('/api/auth/token')
       .then((r) => r.json())
       .then((d: any) => {
         if (d.configured === 'true' && !localStorage.getItem('opscore-token')) {
-          setAuthRequired(true)     // 有 Token 但用户未登录 → 显示登录页
+          setAuthRequired(true)
         } else {
           setAuthRequired(false)
           loadModules()
@@ -48,32 +75,27 @@ export default function App() {
       })
   }, [])
 
-  // 监听插件激活/移除事件, 重新加载侧栏
   useEffect(() => {
     const handler = () => loadModules()
     window.addEventListener('manifest-changed', handler)
     return () => window.removeEventListener('manifest-changed', handler)
   }, [])
 
-  // 从后端加载模块清单
   const loadModules = () => {
     getJSON<Manifest[]>('/api/manifest').then(setModules).catch(() => setModules([]))
   }
 
-  // 登录成功后加载模块
   const handleLogin = () => {
     setAuthRequired(false)
-    setLoggedIn(true)
     loadModules()
   }
+
+  const core = useMemo(() => modules.filter((m) => m.group === 'core'), [modules])
+  const plugins = useMemo(() => modules.filter((m) => m.group === 'plugin'), [modules])
 
   if (authRequired === null) return <div className="log-loading">加载中...</div>
   if (authRequired) return <LoginPage onLogin={handleLogin} />
 
-  const core = modules.filter((m) => m.group === 'core')
-  const plugins = modules.filter((m) => m.group === 'plugin')
-
-  // 布局: 侧栏 + 顶栏 + 路由内容
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -89,7 +111,7 @@ export default function App() {
         <nav>
           {core.map((m) => (
             <NavLink key={m.id} to={m.routePath} className="nav-item">
-                  <span className="nav-icon">{icon(m.icon, 20)}</span>
+              <span className="nav-icon">{icon(m.icon, 20)}</span>
               <span className="nav-text">
                 <span className="nav-title">{m.name}</span>
                 <span className="nav-desc">{m.description}</span>
@@ -104,7 +126,7 @@ export default function App() {
             <nav>
               {plugins.map((m) => (
                 <NavLink key={m.id} to={m.routePath} className="nav-item nav-item-plugin">
-              <span className="nav-icon">{icon(m.icon, 16)}</span>
+                  <span className="nav-icon">{icon(m.icon, 16)}</span>
                   <span className="nav-text">
                     <span className="nav-title">{m.name}</span>
                     <span className="nav-desc">{m.description}</span>
@@ -116,7 +138,6 @@ export default function App() {
         )}
         <div className="sidebar-foot">编译期内置 · 其余可插拔</div>
 
-        {/* 底部设置入口 */}
         <nav style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <NavLink to="/settings" className="nav-item" style={{ fontSize: 13, opacity: 0.7 }}>
             <span className="nav-icon">
@@ -136,25 +157,25 @@ export default function App() {
       <div className="main">
         <TopBar />
         <main className="content">
-          {/* 路由分发 */}
+          <HostProvider>
+          <ErrorBoundary>
           <Routes>
-            <Route path="/" element={<Navigate to="/resources" replace />} />
-            <Route path="/resources" element={<ResourcesModule />} />
-            <Route path="/services" element={<ServicesModule />} />
-            <Route path="/network" element={<NetworkModule />} />
-            <Route path="/diagnostics" element={<DiagnosticsModule />} />
-            <Route path="/tasks" element={<TasksModule />} />
-            <Route path="/plugins" element={<PluginsModule />} />
+            <Route path="/" element={core[0] ? <Navigate to={core[0].routePath} replace /> : <div className="log-loading">加载中...</div>} />
+            {modules.map((m) => {
+              const Comp = MODULE_MAP[m.id]
+              return Comp ? <Route key={m.id} path={m.routePath} element={<Comp />} /> : null
+            })}
             <Route path="/settings" element={<SettingsModule />} />
-            <Route path="*" element={<Navigate to="/resources" replace />} />
+            <Route path="*" element={modules.length === 0 ? <div className="log-loading">加载中...</div> : <Navigate to="/resources" replace />} />
           </Routes>
+          </ErrorBoundary>
+          </HostProvider>
         </main>
       </div>
     </div>
   )
 }
 
-// 按名称返回对应 SVG 图标 (侧栏使用)
 function icon(name: string, size = 18) {
   const s = size
   const icons: Record<string, JSX.Element> = {
@@ -171,18 +192,6 @@ function icon(name: string, size = 18) {
         <rect x="2" y="14" width="20" height="8" rx="2" />
         <circle cx="6" cy="6" r="1" fill="currentColor" />
         <circle cx="6" cy="18" r="1" fill="currentColor" />
-      </svg>
-    ),
-    activity: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-      </svg>
-    ),
-    database: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <ellipse cx="12" cy="5" rx="9" ry="3" />
-        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
       </svg>
     ),
     network: (
@@ -211,6 +220,12 @@ function icon(name: string, size = 18) {
     puzzle: (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 0 1 .837-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.404 2.404 0 0 1 1.705-.706c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z" />
+      </svg>
+    ),
+    terminal: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="4 17 10 11 4 5" />
+        <line x1="12" y1="19" x2="20" y2="19" />
       </svg>
     ),
   }
