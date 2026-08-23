@@ -271,7 +271,7 @@ export default function TopologyPanel() {
       {view === 'graph' ? (
         <Cardless height={460}><EChart option={option} height={460} /></Cardless>
       ) : (
-        <div className="card topo-dirtree" style={{ maxHeight: 460, overflow: 'auto', padding: '10px 14px' }}>
+        <div className="card topo-dirtree" style={{ maxHeight:'28.75rem', overflow: 'auto', padding: '0.625rem 0.875rem' }}>
           {dirLines.length === 0 && <div className="dim" style={{ padding: 8 }}>无可用树结构</div>}
           {dirLines.map((l) => {
             const hasKids = l.node.children.length > 0
@@ -327,7 +327,7 @@ export default function TopologyPanel() {
                     <tr key={i}>
                       <td className="mono">{d.type === 'entity' ? '—' : d.ip || `lldp:${d.hostname}`}</td>
                       <td className="mono small">{d.mac || '—'}</td>
-                      <td>{d.hostname || d.alias || '—'}{d.inInventory && <span className="badge badge-info" style={{ fontSize: 10, marginLeft: 6 }}>清单</span>}</td>
+                      <td>{d.hostname || d.alias || '—'}{d.inInventory && <span className="badge badge-info" style={{ fontSize:'0.625rem', marginLeft: 6 }}>清单</span>}</td>
                       <td>{d.type === 'gateway' ? '网关' : d.type === 'switch' ? '交换机' : d.type === 'entity' ? '主机实体' : '主机'}</td>
                       <td>{d.source}</td>
                       <td><span className={`status-dot ${d.online ? 'online' : 'offline'}`} /></td>

@@ -231,7 +231,7 @@ function CrontabSection() {
 
   return (
     <Card title="定时任务" subtitle={showRaw ? '原始文本模式' : '可视化编辑'}>
-      <div className="form-inline" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+      <div className="form-inline" style={{ marginBottom:'0.75rem', flexWrap: 'wrap', gap: 8 }}>
         <span className="field-label" style={{ margin: 0 }}>用户</span>
         <select className="sel" value={user} onChange={e => { setUser(e.target.value); setShowRaw(false) }}>
           <option value="root">root</option>
@@ -245,8 +245,8 @@ function CrontabSection() {
       {msg && <div className={`banner ${msg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{msg}</div>}
 
       {showRaw ? (
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>
-<textarea className="input" style={{ width: '100%', minHeight: 240, fontFamily: 'ui-monospace,monospace', fontSize: 12.5, resize: 'vertical' }}
+        <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap' }}>
+<textarea className="input" style={{ width: '100%', minHeight:'15rem', fontFamily: 'ui-monospace,monospace', fontSize:'0.7812rem', resize: 'vertical' }}
               value={rawContent} onChange={e => setRawContent(e.target.value)} />
         </div>
       ) : (
@@ -296,7 +296,7 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
             <SelectField label="月" value={form!.month} onChange={v => onChange('month', v)} options={MONTH_OPTS} />
             <SelectField label="周" value={form!.dayOfWeek} onChange={v => onChange('dayOfWeek', v)} options={DOW_OPTS} />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap:'0.25rem', flex: 1 }}>
             <label className="field-label" style={{ fontSize: 11 }}>命令</label>
             <input className="input" value={form!.command} onChange={e => onChange('command', e.target.value)} placeholder="如 /usr/local/bin/backup.sh" style={{ fontSize: 12.5 }} />
           </div>
@@ -313,10 +313,10 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
         <div style={{ padding: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <div>
-              <span className="pill" style={{ marginRight: 8, fontSize: 12 }}>{cronToHuman(task)}</span>
-              <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-dim)' }}>{task.command}</span>
+              <span className="pill" style={{ marginRight:'0.5rem', fontSize: 12 }}>{cronToHuman(task)}</span>
+              <span style={{ fontSize:'0.8125rem', fontFamily: 'monospace', color: 'var(--text-dim)' }}>{task.command}</span>
               {task.comment.trim() !== '' && (
-                <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-dim)' }}>{`# ${task.comment}`}</span>
+                <span style={{ marginLeft:'0.5rem', fontSize:'0.75rem', color: 'var(--text-dim)' }}>{`# ${task.comment}`}</span>
               )}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -501,7 +501,7 @@ function DisksSection() {
       {mountMsg && <div className={`banner ${mountMsg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{mountMsg}</div>}
 
       <Card title="块设备" subtitle="lsblk">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.lsblk}</div>
+        <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap' }}>{data.lsblk}</div>
       </Card>
 
       {data.devices && data.devices.length > 0 && (
@@ -510,12 +510,12 @@ function DisksSection() {
             {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
               const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
               return (
-                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap:'0.5rem', padding: '0.25rem 0', borderBottom: '1px solid #eee' }}>
                   <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(d.name, devPath)}>{devPath}</code>
-                  <span className="mono" style={{ fontSize: 11.5, color: '#888' }}>{d.size}</span>
-                  <span className="mono" style={{ fontSize: 11, color: '#666' }}>{d.fstype || '—'}</span>
-                  {d.mountpoint && <span className="mono" style={{ fontSize: 11.5, color: '#666' }}>↦ {d.mountpoint}</span>}
-                  {copied === d.name && <span style={{ fontSize: 11, color: '#22c55e', marginLeft: 'auto' }}>✓ 已复制</span>}
+                  <span className="mono" style={{ fontSize:'0.7188rem', color: '#888' }}>{d.size}</span>
+                  <span className="mono" style={{ fontSize:'0.6875rem', color: '#666' }}>{d.fstype || '—'}</span>
+                  {d.mountpoint && <span className="mono" style={{ fontSize:'0.7188rem', color: '#666' }}>↦ {d.mountpoint}</span>}
+                  {copied === d.name && <span style={{ fontSize:'0.6875rem', color: '#22c55e', marginLeft: 'auto' }}>✓ 已复制</span>}
                 </div>
               )
             })}
@@ -555,7 +555,7 @@ function DisksSection() {
               })}
             </select>
           </div>
-          {allocInfo && <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginBottom: 12 }}>{allocInfo}</div>}
+          {allocInfo && <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', marginBottom: 12 }}>{allocInfo}</div>}
           {allocInfo && (() => {
             const spaces = parseFreeSpaces(allocInfo)
             if (spaces.length === 0) return null
@@ -565,7 +565,7 @@ function DisksSection() {
               <div style={{ marginTop: 12 }}>
                 <span className="field-label">可用空闲空间</span>
                 {spaces.map((s, i) => (
-                  <div key={i} className="form-inline" style={{ marginTop: 4, cursor: 'pointer', opacity: selectedFreeIdx === i ? 1 : 0.5 }}
+                  <div key={i} className="form-inline" style={{ marginTop:'0.25rem', cursor: 'pointer', opacity: selectedFreeIdx === i ? 1 : 0.5 }}
                     onClick={() => setSelectedFreeIdx(i)}>
                     <input type="radio" checked={selectedFreeIdx === i} onChange={() => setSelectedFreeIdx(i)}
                       style={{ margin: 0, accentColor: 'var(--accent)' }} />
@@ -579,7 +579,7 @@ function DisksSection() {
           })()}
           {allocErr && <div className="banner banner-err">{allocErr}</div>}
           {allocResult && <div className="banner banner-ok">{allocResult}</div>}
-          <div className="form-inline" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+          <div className="form-inline" style={{ gap:'0.5rem', flexWrap: 'wrap', marginTop: 8 }}>
             <button className="btn btn-accent" disabled={allocLoading || !allocDev} onClick={doPartition}>创建分区</button>
             <span className="field-label" style={{ margin: 0 }}>格式</span>
             <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
@@ -592,18 +592,18 @@ function DisksSection() {
                 onClick={() => doDelete(allocDev.replace(/^\/dev\/[a-z]+\/?/, '').replace(/p/, ''))}>删除分区</button>
             )}
           </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+          <div style={{ marginTop:'0.5rem', fontSize:'0.75rem', color: '#888' }}>
             提示: 创建分区后自动选中新分区。删除分区需先选中该分区（在设备下拉选单中手动输入分区名）。
           </div>
         </Card>
       )}
 
       <Card title="磁盘使用" subtitle="df -h">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.df}</div>
+        <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap' }}>{data.df}</div>
       </Card>
 
       <Card title="挂载点" subtitle="mount">
-        <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
+        <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap' }}>{data.mounts}</div>
       </Card>
     </>
   )
@@ -794,7 +794,7 @@ function SmartSection() {
         <button className="btn btn-accent" disabled={loading || perm === 'user'} onClick={load}>{loading ? '读取中…' : '读取 SMART'}</button>
       </div>
       {err && <div className="banner banner-err">{err}</div>}
-      {output && <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 500, overflowY: 'auto' }}>{output}</div>}
+      {output && <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'31.25rem', overflowY: 'auto' }}>{output}</div>}
     </Card>
   )
 }

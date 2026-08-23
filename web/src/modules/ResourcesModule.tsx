@@ -208,7 +208,7 @@ export default function ResourcesModule() {
         splitLine: { show: false },
         axisLabel: { show: false },
         pointer: { show: false },
-        detail: { valueAnimation: true, fontSize: 28, color: txt, offsetCenter: [0, 0], formatter: (value: number) => value.toFixed(2) + '%' },
+        detail: { valueAnimation: true, fontSize: 22, color: txt, offsetCenter: [0, 0], formatter: (value: number) => value.toFixed(2) + '%' },
         data: [{ value: snap.cpu.percent }],
       },
     ],
@@ -357,9 +357,9 @@ return (
 
             <Card title="CPU 使用率" subtitle="仪表盘">
               <EChart option={cpuOption} height={240} />
-              <div className="stat-row">
-                <span>{snap.cpu.cores} 核</span>
-                <span className="dim">{snap.cpu.model || '—'}</span>
+              <div className="stat-row" style={{ display: 'block' }}>
+                <span style={{ fontSize:'0.8125rem', fontWeight: 700 }}>{snap.cpu.cores} 核</span>{' '}
+                <span className="dim" style={{ fontSize: 11.5 }}>{snap.cpu.model || '—'}</span>
               </div>
             </Card>
 

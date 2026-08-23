@@ -34,5 +34,8 @@ export default function EChart({
     chart.current?.setOption(option, true)
   }, [option])
 
-  return <div ref={ref} style={{ width: '100%', height }} />
+  // 数字高度按 1rem=16px 换算为 rem, 跟随根字号响应式缩放
+  const h = typeof height === 'number' ? `${(height / 16).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}rem` : height
+
+  return <div ref={ref} style={{ width: '100%', height: h }} />
 }

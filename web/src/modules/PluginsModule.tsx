@@ -81,7 +81,7 @@ export default function PluginsModule() {
           <button className="btn btn-accent" onClick={handleScan} disabled={scanning}>
             {scanning ? '扫描中...' : '扫描插件'}
           </button>
-          <span className="dim" style={{ fontSize: 12, alignSelf: 'center' }}>
+          <span className="dim" style={{ fontSize:'0.75rem', alignSelf: 'center' }}>
             {activeCount}/{plugins.length} 已激活
           </span>
         </div>
@@ -104,7 +104,7 @@ export default function PluginsModule() {
               <tbody>
                 {plugins.map((p) => (
                   <tr key={p.id}>
-                    <td><span className="nav-icon" style={{ width: 24, height: 24, fontSize: 12 }}>
+                    <td><span className="nav-icon" style={{ width:'1.5rem', height:'1.5rem', fontSize: 12 }}>
                       {p.icon === 'cpu' && '⚙'}
                       {p.icon === 'server' && '🖥'}
                       {p.icon === 'network' && '🌐'}
@@ -113,7 +113,7 @@ export default function PluginsModule() {
                       {p.icon === 'puzzle' && '🧩'}
                     </span></td>
                     <td>{p.name}</td>
-                    <td className="dim" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td className="dim" style={{ maxWidth:'12.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {p.description}
                     </td>
                     <td>
@@ -129,7 +129,7 @@ export default function PluginsModule() {
                     <td>
                       {p.group !== 'core' && p.id !== 'plugins' && (
                         <button className="btn btn-sm" onClick={() => handleToggle(p.id, !p.active)}
-                          style={{ fontSize: 11, padding: '3px 8px' }}>
+                          style={{ fontSize:'0.6875rem', padding: '0.1875rem 0.5rem' }}>
                           {p.active ? '移除' : '接入'}
                         </button>
                       )}

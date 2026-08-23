@@ -57,6 +57,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 export default function App() {
   const [modules, setModules] = useState<Manifest[]>([])
   const [authRequired, setAuthRequired] = useState<boolean | null>(null)
+  const [authError, setAuthError] = useState<string>('')
 
   useEffect(() => {
     fetch('/api/auth/token')
@@ -70,8 +71,8 @@ export default function App() {
         }
       })
       .catch(() => {
-        setAuthRequired(false)
-        loadModules()
+        setAuthRequired(null)
+        setAuthError('无法连接到服务端，请确认 opscore 正在运行')
       })
   }, [])
 
@@ -139,7 +140,7 @@ export default function App() {
         <div className="sidebar-foot">编译期内置 · 其余可插拔</div>
 
         <nav style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-          <NavLink to="/settings" className="nav-item" style={{ fontSize: 13, opacity: 0.7 }}>
+          <NavLink to="/settings" className="nav-item" style={{ fontSize:'0.8125rem', opacity: 0.7 }}>
             <span className="nav-icon">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3" />

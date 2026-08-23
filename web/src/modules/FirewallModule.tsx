@@ -214,7 +214,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                     <td className="dim">{r.protocol || '—'}</td>
                     <td className="mono small">{r.localPort || '—'}</td>
                     <td className="mono small">{r.remoteIP || '—'}</td>
-                    <td><button className="btn btn-sm btn-danger" style={{fontSize:11,padding:'2px 6px'}} onClick={() => openConfirm({ action: 'delete-rule', source: r.name })}>删除</button></td>
+                    <td><button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.375rem'}} onClick={() => openConfirm({ action: 'delete-rule', source: r.name })}>删除</button></td>
                   </tr>
                 ))}
                 {rules.length === 0 && <tr><td colSpan={7} className="dim">无规则或当前环境不支持读取</td></tr>}
@@ -325,7 +325,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                   <td className="small">{a.actor || '—'}</td>
                   <td className="small">{a.role || '—'}</td>
                   <td><span className={`badge ${a.dryRun ? 'badge-off' : 'badge-ok'}`}>{a.action}{a.dryRun ? ' · 预览' : ''}</span></td>
-                  <td className="mono small" style={{maxWidth:300,overflow:'hidden',textOverflow:'ellipsis'}}>{a.params}</td>
+                  <td className="mono small" style={{maxWidth:'18.75rem',overflow:'hidden',textOverflow:'ellipsis'}}>{a.params}</td>
                   <td className="small">{a.result}</td>
                 </tr>
               ))}

@@ -111,7 +111,7 @@ function NetworkSection() {
         )}
         {tool === 'port' && (
           <>
-            <span className="field-label" style={{ margin: '0 0 0 8px' }}>端口</span>
+            <span className="field-label" style={{ margin: '0 0 0 0.5rem' }}>端口</span>
             <input className="input" type="number" min={1} max={65535} style={{ width: 90 }} value={port} onChange={e => setPort(Number(e.target.value))} onKeyDown={e => e.key === 'Enter' && run()} />
           </>
         )}
@@ -132,8 +132,8 @@ function NetworkSection() {
       </div>
 
       {result && (
-        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: 12.5, position:'relative' }}>
-          <button className="btn btn-sm" style={{position:'absolute',top:4,right:4,fontSize:11,padding:'2px 8px'}} onClick={() => copyResult(result.output || result.error || '')}>复制</button>
+        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize:'0.7812rem', position:'relative' }}>
+          <button className="btn btn-sm" style={{position:'absolute',top:'0.25rem',right:'0.25rem',fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => copyResult(result.output || result.error || '')}>复制</button>
           {result.error && <div className="banner banner-err">{result.error}</div>}
           {result.output}
         </div>
@@ -141,10 +141,10 @@ function NetworkSection() {
 
       {history.length > 1 && (
         <div style={{marginTop:16}}>
-          <div style={{fontSize:13,fontWeight:600,marginBottom:6}}>诊断历史 ({history.length})</div>
-          <div style={{maxHeight:200,overflow:'auto'}}>
+          <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:6}}>诊断历史 ({history.length})</div>
+          <div style={{maxHeight:'12.5rem',overflow:'auto'}}>
             {history.slice(1).map((h, i) => (
-              <div key={i} style={{display:'flex',gap:8,padding:'3px 0',fontSize:12,borderBottom:'1px solid var(--border)',cursor:'pointer'}}
+              <div key={i} style={{display:'flex',gap:'0.5rem',padding:'0.1875rem 0',fontSize:'0.75rem',borderBottom:'1px solid var(--border)',cursor:'pointer'}}
                 onClick={() => { setTool(h.tool); setResult(h.result); setTarget(h.target) }}>
                 <span className="dim">{h.time}</span>
                 <span className="badge badge-info" style={{fontSize:10}}>{h.tool}</span>
@@ -226,7 +226,7 @@ function UpdatesSection() {
         <div className="banner" style={{ background: data.needs_restart ? '#ef44441f' : '#22c55e1f', borderColor: data.needs_restart ? '#ef44444d' : '#22c55e4d' }}>
           {data.needs_restart ? '⚠ 系统需要重启以应用更新' : '✓ 系统不需要重启'}
         </div>
-        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, marginTop: 8 }}>{data.restart_detail}</div>
+        <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize:'0.7812rem', marginTop: 8 }}>{data.restart_detail}</div>
       </Card>
     </>
   )

@@ -106,13 +106,13 @@ export default function MultiOverview() {
                 <td className="mono">{h.online ? fmtRate(h.netRx) : '—'}</td>
                 <td className="mono">{h.online ? fmtRate(h.netTx) : '—'}</td>
                 <td className="mono">{fmtUptime(h.uptime)}</td>
-                <td className="dim" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.os}</td>
+                <td className="dim" style={{ maxWidth:'10rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.os}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <div className="dim small" style={{ marginTop: 8, textAlign: 'right' }}>
+      <div className="dim small" style={{ marginTop:'0.5rem', textAlign: 'right' }}>
         {new Date(data.updated * 1000).toLocaleTimeString()} 更新 · 每 5 秒自动刷新
       </div>
     </div>

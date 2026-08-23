@@ -45,11 +45,11 @@ export default function LoginPage({ onLogin }: Props) {
       background: 'linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2))',
       zIndex: 100,
     }}>
-      <div className="card" style={{ width: 380, padding: 32 }}>
+      <div className="card" style={{ width:'23.75rem', padding: 32 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div className="brand-dot" style={{ width: 40, height: 40, margin: '0 auto 12px' }} />
-          <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>OpsCore</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: '4px 0 0' }}>运维控制台 · 请验证身份</p>
+          <div className="brand-dot" style={{ width:'2.5rem', height:'2.5rem', margin: '0 auto 0.75rem' }} />
+          <h1 style={{ fontSize:'1.375rem', fontWeight: 800, margin: 0 }}>OpsCore</h1>
+          <p style={{ fontSize:'0.8125rem', color: 'var(--text-dim)', margin: '0.25rem 0 0' }}>运维控制台 · 请验证身份</p>
         </div>
         <form onSubmit={handleSubmit}>
           <input

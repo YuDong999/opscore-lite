@@ -93,7 +93,7 @@ export default function NetworkModule() {
             )}
             <Card title="网络接口" subtitle="interface / MTU / 流量 / 地址">
               <input className="input" placeholder="搜索接口..." value={ifaceFilter}
-                onChange={e => setIfaceFilter(e.target.value)} style={{marginBottom:8,fontSize:13}} />
+                onChange={e => setIfaceFilter(e.target.value)} style={{marginBottom:'0.5rem',fontSize:13}} />
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
@@ -267,7 +267,7 @@ function NmcliSection() {
           <button className="btn btn-sm" disabled={!actName} onClick={() => act('down')}>停用</button>
           <button className="btn btn-sm btn-danger" disabled={!actName} onClick={() => { if (confirm('确认删除连接 '+actName+'？')) act('delete') }}>删除</button>
         </div>
-        <div className="code-block" style={{fontSize:12.5,whiteSpace:'pre-wrap',maxHeight:400,overflowY:'auto',marginTop:8}}>{data?.connections || '(无 nmcli 或加载中)'}</div>
+        <div className="code-block" style={{fontSize:'0.7812rem',whiteSpace:'pre-wrap',maxHeight:'25rem',overflowY:'auto',marginTop:8}}>{data?.connections || '(无 nmcli 或加载中)'}</div>
       </Card>
       <Card title="WiFi" subtitle="nmcli dev wifi">
         <div className="form-inline">
@@ -277,7 +277,7 @@ function NmcliSection() {
           <button className="btn btn-accent" disabled={!ssid} onClick={() => act('wifi-connect')}>连接</button>
           <button className="btn btn-sm" onClick={() => setShowWifi(!showWifi)}>{showWifi ? '隐藏' : '扫描 WiFi'}</button>
         </div>
-        {showWifi && <div className="code-block" style={{fontSize:12.5,whiteSpace:'pre-wrap',maxHeight:300,overflowY:'auto',marginTop:8}}>{data?.wifi || '扫描中…'}</div>}
+        {showWifi && <div className="code-block" style={{fontSize:'0.7812rem',whiteSpace:'pre-wrap',maxHeight:'18.75rem',overflowY:'auto',marginTop:8}}>{data?.wifi || '扫描中…'}</div>}
       </Card>
     </>
   )
@@ -323,16 +323,16 @@ function NetConfigSection() {
       {actionMsg && <div className={`banner ${actionMsg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{actionMsg}</div>}
       <div className="grid grid-2">
         <Card title="网络接口" subtitle="ip addr show">
-          <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 340, overflowY: 'auto' }}>{data.interfaces}</div>
+          <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'21.25rem', overflowY: 'auto' }}>{data.interfaces}</div>
         </Card>
         <Card title="路由表" subtitle="ip route show">
-          <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 340, overflowY: 'auto' }}>{data.routes}</div>
+          <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'21.25rem', overflowY: 'auto' }}>{data.routes}</div>
         </Card>
         <Card title="DNS 配置" subtitle={data.permission === 'root' ? '' : '只读'}>
-          <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{data.dns}</div>
+          <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'15rem', overflowY: 'auto' }}>{data.dns}</div>
         </Card>
         <Card title="NetworkManager" subtitle="nmcli dev status">
-          <div className="code-block" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{data.nm}</div>
+          <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'15rem', overflowY: 'auto' }}>{data.nm}</div>
         </Card>
       </div>
       {isRoot && (

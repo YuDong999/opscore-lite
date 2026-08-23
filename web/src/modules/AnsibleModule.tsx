@@ -132,10 +132,10 @@ function Dashboard() {
   return (
     <div>
       <div className="grid grid-4">
-        <div className="card"><div className="card-sub">主机</div><div style={{fontSize:32,fontWeight:300,marginTop:4}}>{hosts.length}</div></div>
-        <div className="card"><div className="card-sub">库存清单</div><div style={{fontSize:32,fontWeight:300,marginTop:4}}>{inv.length}</div></div>
-        <div className="card"><div className="card-sub">Playbook</div><div style={{fontSize:32,fontWeight:300,marginTop:4}}>{pb.length}</div></div>
-        <div className="card"><div className="card-sub">历史执行</div><div style={{fontSize:32,fontWeight:300,marginTop:4}}>{hist.length}</div></div>
+        <div className="card"><div className="card-sub">主机</div><div style={{fontSize:'2rem',fontWeight:300,marginTop:4}}>{hosts.length}</div></div>
+        <div className="card"><div className="card-sub">库存清单</div><div style={{fontSize:'2rem',fontWeight:300,marginTop:4}}>{inv.length}</div></div>
+        <div className="card"><div className="card-sub">Playbook</div><div style={{fontSize:'2rem',fontWeight:300,marginTop:4}}>{pb.length}</div></div>
+        <div className="card"><div className="card-sub">历史执行</div><div style={{fontSize:'2rem',fontWeight:300,marginTop:4}}>{hist.length}</div></div>
       </div>
       <div className="section">
         <h3>快速操作</h3>
@@ -300,7 +300,7 @@ function HostsPanel() {
       <div className="section">
         <h3>批量添加主机</h3>
         <div className="card" style={{marginBottom:12}}>
-          <div style={{fontSize:12,color:'var(--text-dim)',marginBottom:8}}>
+          <div style={{fontSize:'0.75rem',color:'var(--text-dim)',marginBottom:8}}>
             支持格式: IP 范围 (192.168.94.22-30) / CIDR 网段 (192.168.94.0/24) / 后缀列表 (192.168.94.22/23/24) / 逗号分隔 (10.2.22.1,10.2.22.2)
           </div>
           <div className="form-row">
@@ -342,7 +342,7 @@ function HostsPanel() {
                 const isLocal = h.isLocal || h.id === ''
                 return (
                 <tr key={h.id} className={selected.has(h.id) ? 'row-selected' : ''} style={{cursor:'pointer', background: isLocal ? 'rgba(100,120,255,0.06)' : undefined}} onClick={() => { if (!isLocal) toggleSelect(h.id) }}>
-                  <td>{isLocal ? <span style={{fontSize:11,color:'var(--text-dim)'}}>—</span> : <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSelect(h.id)} onClick={e => e.stopPropagation()} />}</td>
+                  <td>{isLocal ? <span style={{fontSize:'0.6875rem',color:'var(--text-dim)'}}>—</span> : <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSelect(h.id)} onClick={e => e.stopPropagation()} />}</td>
                   <td className="mono">{isLocal ? <span className="badge badge-info" style={{fontSize:10}}>本机</span> : h.id}</td>
                   <td>{isLocal ? (h.alias || '本机') : h.alias}</td>
                   <td className="mono">{h.addr}</td>
@@ -355,18 +355,18 @@ function HostsPanel() {
                   </td>
                   <td>{isLocal ? <span className="badge" style={{fontSize:10}}>{h.platform === 'win' ? 'Windows' : 'Linux'}</span> : <span className="badge badge-ghost" style={{fontSize:10}}>{h.platform === 'win' ? 'Windows' : 'Linux'}</span>}</td>
                   <td>
-                    {gs.length === 0 ? <span style={{fontSize:12,color:'var(--text-dim)'}}>-</span> : (
+                    {gs.length === 0 ? <span style={{fontSize:'0.75rem',color:'var(--text-dim)'}}>-</span> : (
                       <span>
                         {gs.map((g, i) => (
-                          <span key={i} className="badge badge-info" style={{fontSize:10,marginRight:4}}>{g}</span>
+                          <span key={i} className="badge badge-info" style={{fontSize:'0.625rem',marginRight:4}}>{g}</span>
                         ))}
                       </span>
                     )}
                   </td>
                   <td>{isLocal ? '-' : h.port}</td>
                   <td title={h.user || '本机无需用户'}>{h.hostname || h.user || '-'}</td>
-                  <td style={{fontSize:12,color:'var(--text-dim)'}}>{h.sshKey || h.password ? '*' : '-'}</td>
-                  <td>{!isLocal && <span className="btn btn-sm btn-ghost" style={{fontSize:11,padding:'2px 8px'}} onClick={e => { e.stopPropagation(); setEditHost({...h}) }}>编辑</span>}</td>
+                  <td style={{fontSize:'0.75rem',color:'var(--text-dim)'}}>{h.sshKey || h.password ? '*' : '-'}</td>
+                  <td>{!isLocal && <span className="btn btn-sm btn-ghost" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); setEditHost({...h}) }}>编辑</span>}</td>
                 </tr>
                 )
               })}
@@ -567,7 +567,7 @@ function InventoriesPanel() {
           {msg && <div className="alert-ok">{msg}</div>}
 
           <div className="card" style={{marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>添加分组</div>
+            <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>添加分组</div>
             <div className="form-row">
               <input placeholder="组名" value={newGroup} onChange={e => setNewGroup(e.target.value)} />
               <input placeholder="父组(可选)" value={newGroupParent} onChange={e => setNewGroupParent(e.target.value)} />
@@ -576,35 +576,35 @@ function InventoriesPanel() {
             </div>
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginBottom:16}}>
             <div className="card">
-              <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>分组</div>
+              <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>分组</div>
               {Object.values(selected.groups).map(g => (
-                <div key={g.name} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:13,borderBottom:'1px solid var(--border)'}}>
+                <div key={g.name} style={{display:'flex',justifyContent:'space-between',padding:'0.25rem 0',fontSize:'0.8125rem',borderBottom:'1px solid var(--border)'}}>
                   <span><strong>{g.name}</strong>{g.parent ? <span className="dim"> → {g.parent}</span> : ''}</span>
                   {g.vars && Object.keys(g.vars).length > 0 && <span className="dim" style={{fontSize:11}}>{JSON.stringify(g.vars)}</span>}
                 </div>
               ))}
             </div>
             <div className="card">
-              <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>主机 ({Object.keys(selected.hosts).length})</div>
+              <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>主机 ({Object.keys(selected.hosts).length})</div>
               {Object.values(selected.hosts).map(h => (
-                <div key={h.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize:13,borderBottom:'1px solid var(--border)'}}>
+                <div key={h.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.25rem 0',fontSize:'0.8125rem',borderBottom:'1px solid var(--border)'}}>
                   <div>
                     <span className="mono">{h.alias || h.id}</span>
                     <span className="dim" style={{marginLeft:8}}>{h.addr}:{h.port}</span>
-                    <span style={{marginLeft:8,fontSize:11,color:'var(--accent)'}}>{h.groups?.join(', ')}</span>
+                    <span style={{marginLeft:'0.5rem',fontSize:'0.6875rem',color:'var(--accent)'}}>{h.groups?.join(', ')}</span>
                   </div>
-                  <button className="btn btn-sm btn-danger" style={{fontSize:11,padding:'2px 8px'}} onClick={() => { if (confirm(`从清单移除 ${h.id}？`)) removeInvHost(h.id) }}>移除</button>
+                  <button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从清单移除 ${h.id}？`)) removeInvHost(h.id) }}>移除</button>
                 </div>
               ))}
-              {Object.keys(selected.hosts).length === 0 && <div className="dim" style={{fontSize:12,padding:'8px 0'}}>暂无主机</div>}
+              {Object.keys(selected.hosts).length === 0 && <div className="dim" style={{fontSize:'0.75rem',padding:'0.5rem 0'}}>暂无主机</div>}
             </div>
           </div>
 
           <div className="card" style={{marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>从全局主机添加</div>
-            <div className="table-wrap" style={{maxHeight:200,overflow:'auto'}}>
+            <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>从全局主机添加</div>
+            <div className="table-wrap" style={{maxHeight:'12.5rem',overflow:'auto'}}>
               <table className="data-table" style={{tableLayout:'auto',fontSize:12}}>
                 <thead>
                   <tr><th>ID</th><th>别名</th><th>地址</th><th style={{width:60}}></th></tr>
@@ -615,7 +615,7 @@ function InventoriesPanel() {
                       <td className="mono">{h.id}</td>
                       <td>{h.alias}</td>
                       <td className="mono">{h.addr}</td>
-                      <td><button className="btn btn-sm" style={{fontSize:11,padding:'2px 8px'}} onClick={() => addInvHost(h.id)}>添加</button></td>
+                      <td><button className="btn btn-sm" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => addInvHost(h.id)}>添加</button></td>
                     </tr>
                   ))}
                   {allHosts.filter(h => !selected.hosts[h.id]).length === 0 && <tr><td colSpan={4} style={{textAlign:'center',padding:12,color:'var(--text-dim)'}}>所有主机已在清单中</td></tr>}
@@ -626,7 +626,7 @@ function InventoriesPanel() {
 
           <div className="section">
             <h3>Inventory INI 预览</h3>
-            <pre className="code-block" style={{maxHeight:300,fontSize:11}}>{iniContent}</pre>
+            <pre className="code-block" style={{maxHeight:'18.75rem',fontSize:11}}>{iniContent}</pre>
           </div>
         </div>
       )}
@@ -696,7 +696,7 @@ function GroupsPanel() {
 
       <div className="section">
         <h3>主机组 ({data.groups.length} 组 · 共 {data.total} 台主机 · 未分组 {data.ungrouped.length} 台)</h3>
-        <div className="table-wrap" style={{maxHeight:320,overflow:'auto'}}>
+        <div className="table-wrap" style={{maxHeight:'20rem',overflow:'auto'}}>
           <table className="data-table" style={{tableLayout:'auto',fontSize:13}}>
             <thead>
               <tr><th>组名</th><th>父组</th><th>成员数</th><th style={{width:60}}></th></tr>
@@ -713,7 +713,7 @@ function GroupsPanel() {
                   <td><strong>{g.name}</strong>{g.children && g.children.length > 0 ? <span className="dim" style={{fontSize:11}}> (子组: {g.children.join(', ')})</span> : ''}</td>
                   <td>{g.parent || '-'}</td>
                   <td>{g.members.length}</td>
-                  <td><span className="btn btn-sm btn-danger" style={{fontSize:11,padding:'2px 8px'}} onClick={e => { e.stopPropagation(); deleteGroup() }}>删除</span></td>
+                  <td><span className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); deleteGroup() }}>删除</span></td>
                 </tr>
               ))}
               {data.groups.length === 0 && <tr><td colSpan={4} style={{textAlign:'center',padding:24,color:'var(--text-dim)'}}>暂无主机组，先在下方创建</td></tr>}
@@ -745,8 +745,8 @@ function GroupsPanel() {
           </div>
 
           <div className="card" style={{marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>从全部主机添加</div>
-            <div className="table-wrap" style={{maxHeight:200,overflow:'auto'}}>
+            <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>从全部主机添加</div>
+            <div className="table-wrap" style={{maxHeight:'12.5rem',overflow:'auto'}}>
               <table className="data-table" style={{tableLayout:'auto',fontSize:12}}>
                 <thead><tr><th style={{width:30}}></th><th>ID</th><th>别名</th><th>地址</th><th>当前组</th></tr></thead>
                 <tbody>
@@ -768,15 +768,15 @@ function GroupsPanel() {
           </div>
 
           <div className="card">
-            <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>成员列表</div>
-            {members.length === 0 && <div className="dim" style={{fontSize:12,padding:'8px 0'}}>暂无成员</div>}
+            <div style={{fontSize:'0.8125rem',fontWeight:600,marginBottom:8}}>成员列表</div>
+            {members.length === 0 && <div className="dim" style={{fontSize:'0.75rem',padding:'0.5rem 0'}}>暂无成员</div>}
             {members.map(m => (
-              <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize:13,borderBottom:'1px solid var(--border)'}}>
+              <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.25rem 0',fontSize:'0.8125rem',borderBottom:'1px solid var(--border)'}}>
                 <div>
                   <span className="mono">{m.alias || m.id}</span>
                   <span className="dim" style={{marginLeft:8}}>{m.addr}:{m.port}</span>
                 </div>
-                <button className="btn btn-sm btn-danger" style={{fontSize:11,padding:'2px 8px'}} onClick={() => { if (confirm(`从 ${selGroup} 组移除 ${m.id}？`)) removeMember(m.id) }}>移除</button>
+                <button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从 ${selGroup} 组移除 ${m.id}？`)) removeMember(m.id) }}>移除</button>
               </div>
             ))}
           </div>
@@ -1128,12 +1128,12 @@ function PlaybooksPanel() {
       {showTmpl && (
         <div className="section">
           <div className="flex-between"><h3>Playbook 模板库</h3><button className="btn btn-sm" onClick={() => setShowTmpl(false)}>关闭</button></div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'0.5rem',marginTop:8}}>
             {templates.map(t => (
-              <div key={t.id} className="card" style={{flex:'1 1 260px',cursor:'pointer'}} onClick={() => createFromTemplate(t)}>
-                <div style={{fontSize:10,color:'var(--theme)',marginBottom:2}}>{t.category}</div>
+              <div key={t.id} className="card" style={{flex:'1 1 16.25rem',cursor:'pointer'}} onClick={() => createFromTemplate(t)}>
+                <div style={{fontSize:'0.625rem',color:'var(--theme)',marginBottom:2}}>{t.category}</div>
                 <div style={{fontWeight:600}}>{t.name}</div>
-                <div className="dim" style={{fontSize:11,marginTop:4}}>{t.description}</div>
+                <div className="dim" style={{fontSize:'0.6875rem',marginTop:4}}>{t.description}</div>
               </div>
             ))}
           </div>
@@ -1157,16 +1157,16 @@ function PlaybooksPanel() {
                 <button className="btn btn-sm btn-danger" onClick={() => del(p.id)}>删除</button>
               </div>
             </div>
-            <div className="form-row" style={{fontSize:12,gap:6}}>
-              <select value={runInv} onChange={e => setRunInv(e.target.value)} className="sel" style={{minWidth:100,fontSize:12}}>
+            <div className="form-row" style={{fontSize:'0.75rem',gap:6}}>
+              <select value={runInv} onChange={e => setRunInv(e.target.value)} className="sel" style={{minWidth:'6.25rem',fontSize:12}}>
                 <option value="">默认清单</option>
                 {inventories.map(i => <option key={i.id} value={i.id}>{i.name || i.id}</option>)}
               </select>
               <label className="chk" style={{fontSize:12}}><input type="checkbox" checked={runCheck} onChange={e => setRunCheck(e.target.checked)} /> check</label>
-              <input placeholder="tags" title="标签过滤" value={runTags} onChange={e => setRunTags(e.target.value)} style={{width:80,fontSize:12}} />
-              <input placeholder="limit" title="目标限制 (host pattern)" value={runLimit} onChange={e => setRunLimit(e.target.value)} style={{width:80,fontSize:12}} />
-              <input type="number" placeholder="forks" title="并行进程数" value={runForks || ''} onChange={e => setRunForks(+e.target.value)} style={{width:60,fontSize:12}} />
-              <input placeholder="extra-vars" title='额外变量 JSON ({"key":"val"})' value={runExtraVars} onChange={e => setRunExtraVars(e.target.value)} style={{flex:1,fontSize:12,minWidth:120}} />
+              <input placeholder="tags" title="标签过滤" value={runTags} onChange={e => setRunTags(e.target.value)} style={{width:'5rem',fontSize:12}} />
+              <input placeholder="limit" title="目标限制 (host pattern)" value={runLimit} onChange={e => setRunLimit(e.target.value)} style={{width:'5rem',fontSize:12}} />
+              <input type="number" placeholder="forks" title="并行进程数" value={runForks || ''} onChange={e => setRunForks(+e.target.value)} style={{width:'3.75rem',fontSize:12}} />
+              <input placeholder="extra-vars" title='额外变量 JSON ({"key":"val"})' value={runExtraVars} onChange={e => setRunExtraVars(e.target.value)} style={{flex:1,fontSize:'0.75rem',minWidth:120}} />
             </div>
           </div>
         ))}
@@ -1178,7 +1178,7 @@ function PlaybooksPanel() {
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
           <div className="flex-between"><h3>执行输出</h3>{sse.running && <button className="btn btn-sm" onClick={sse.cancel}>取消</button>}</div>
-          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:12,maxHeight:400,overflow:'auto'}}>
+          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:'0.75rem',maxHeight:'25rem',overflow:'auto'}}>
             {sse.lines.join('\n')}
           </div>
           {sse.results && <ResultsCard results={sse.results} />}
@@ -1258,7 +1258,7 @@ function AdhocPanel() {
             )}
           </div>
           {!invId && (
-            <div className="table-wrap" style={{maxHeight:180,overflow:'auto',marginBottom:8}}>
+            <div className="table-wrap" style={{maxHeight:'11.25rem',overflow:'auto',marginBottom:8}}>
               <table className="data-table" style={{tableLayout:'auto',fontSize:12}}>
                 <thead>
                   <tr>
@@ -1294,7 +1294,7 @@ function AdhocPanel() {
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
           <h3>执行输出</h3>
-          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:12,maxHeight:400,overflow:'auto'}}>
+          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:'0.75rem',maxHeight:'25rem',overflow:'auto'}}>
             {sse.lines.join('\n')}
           </div>
           {sse.results && <ResultsCard results={sse.results} />}
@@ -1340,7 +1340,7 @@ function HistoryPanel() {
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
           <div className="flex-between"><h3>重跑输出</h3>{sse.running && <button className="btn btn-sm" onClick={sse.cancel}>取消</button>}</div>
-          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:12,maxHeight:300,overflow:'auto'}}>{sse.lines.join('\n')}</div>
+          <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:'0.75rem',maxHeight:'18.75rem',overflow:'auto'}}>{sse.lines.join('\n')}</div>
           {sse.results && <ResultsCard results={sse.results} />}
         </div>
       )}
@@ -1354,20 +1354,20 @@ function HistoryPanel() {
               <span className="dim" style={{marginLeft:8}}>({r.duration})</span>
             </span>
             <div className="btn-row" style={{gap:4}}>
-              {r.run && <button className="btn btn-sm" style={{fontSize:10,padding:'2px 8px'}} onClick={e => { e.stopPropagation(); rerun(r.id) }}>重跑</button>}
+              {r.run && <button className="btn btn-sm" style={{fontSize:'0.625rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); rerun(r.id) }}>重跑</button>}
               <span className={`badge ${r.success ? 'badge-on' : 'badge-off'}`}>{r.success ? '成功' : '失败'}</span>
             </div>
           </div>
           {expanded === r.id && (
-            <div style={{padding:'8px 14px'}}>
+            <div style={{padding:'0.5rem 0.875rem'}}>
               {r.results.map(res => (
-                <div key={res.host} style={{marginBottom:6,padding:8,background:'rgba(0,0,0,0.15)',borderRadius:8,fontSize:12}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                <div key={res.host} style={{marginBottom:'0.375rem',padding:8,background:'rgba(0,0,0,0.15)',borderRadius:'0.5rem',fontSize:12}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:4}}>
                     <strong>{res.host}</strong>
                     <span className={`badge ${res.success ? 'badge-on' : 'badge-off'}`} style={{fontSize:10}}>{res.success ? 'ok' : 'fail'}</span>
                     {res.changed && <span className="badge badge-warn" style={{fontSize:10}}>changed</span>}
                   </div>
-                  <pre className="mono" style={{margin:0,fontSize:11,color:'var(--text-dim)',whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:200,overflow:'auto'}}>{res.output}</pre>
+                  <pre className="mono" style={{margin:0,fontSize:'0.6875rem',color:'var(--text-dim)',whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:'12.5rem',overflow:'auto'}}>{res.output}</pre>
                 </div>
               ))}
             </div>
@@ -1474,10 +1474,10 @@ function SSHPanel() {
                 <tr key={k.name}>
                   <td><strong>{k.name}</strong></td>
                   <td className="mono" style={{fontSize:12}}>{k.fingerprint}</td>
-                  <td className="mono" style={{fontSize:11,maxWidth:300,overflow:'hidden',textOverflow:'ellipsis'}}>{k.publicKey}</td>
+                  <td className="mono" style={{fontSize:'0.6875rem',maxWidth:'18.75rem',overflow:'hidden',textOverflow:'ellipsis'}}>{k.publicKey}</td>
                   <td style={{fontSize:12}}>{new Date(k.createdAt).toLocaleString()}</td>
                   <td>
-                    <div className="btn-row" style={{gap:4,flexWrap:'wrap'}}>
+                    <div className="btn-row" style={{gap:'0.25rem',flexWrap:'wrap'}}>
                       <button className="btn btn-sm" onClick={() => setDeployModal({keyName:k.name,hostId:'',password:''})}>部署</button>
                       <button className="btn btn-sm" onClick={() => {
                         const hid = prompt('输入目标主机 ID：')

@@ -257,7 +257,7 @@ function OverviewCards({ runtime, nginx, containers, sites, summary }: {
       {items.map((it) => (
         <Card key={it.label} title={it.label}>
           <div className="sysinfo">
-            <div className="sysinfo-item"><span className="sysinfo-v" style={{ fontSize: 22, fontWeight: 700 }}>{it.value}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-v" style={{ fontSize:'1.375rem', fontWeight: 700 }}>{it.value}</span></div>
             <div className="sysinfo-item"><span className="sysinfo-k">{it.sub}</span></div>
           </div>
         </Card>
@@ -320,7 +320,7 @@ function SiteStats({ site, sites, onSelect }: {
 
   return (
     <Card title="站点访问统计" subtitle="按需读取 access.log · 不轮询">
-      <div className="trend-controls" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div className="trend-controls" style={{ display: 'flex', alignItems: 'center', gap:'0.625rem', flexWrap: 'wrap' }}>
         <select className="sel sel-sm" value={site?.name || ''} onChange={(e) => {
           const s = sites.find((x) => x.name === e.target.value)
           if (s) onSelect(s)
@@ -465,7 +465,7 @@ function healthBadge(h?: string, note?: string): React.ReactNode {
   return (
     <span className={`badge ${m.cls}`} title={note}>
       {m.label}
-      {note ? <span className="dim" style={{ marginLeft: 4, fontSize: 11 }}>· {note}</span> : null}
+      {note ? <span className="dim" style={{ marginLeft:'0.25rem', fontSize: 11 }}>· {note}</span> : null}
     </span>
   )
 }

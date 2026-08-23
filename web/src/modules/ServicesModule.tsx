@@ -224,7 +224,7 @@ export default function ServicesModule() {
                   <td className="mono small">{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
                   <td className="mono small dim">
                     {s.logCommand
-                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft: 6, cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
+                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft:'0.375rem', cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
                       : '—'}
                   </td>
                   <td>
