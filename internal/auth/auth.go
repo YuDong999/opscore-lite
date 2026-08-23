@@ -89,7 +89,6 @@ func HandleToken(w http.ResponseWriter, r *http.Request) {
 		t := cfg.Token
 		cfgMu.RUnlock()
 		json.NewEncoder(w).Encode(map[string]string{
-			"token":     t,
 			"configured": boolStr(t != ""),
 		})
 	case http.MethodPost:

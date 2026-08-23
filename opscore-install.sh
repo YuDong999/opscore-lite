@@ -144,7 +144,7 @@ echo -e "    启动:     systemctl start opscore"
 echo -e "    停止:     systemctl stop opscore"
 echo -e "    重启:     systemctl restart opscore"
 echo -e "    日志:     journalctl -u opscore -f"
-echo -e "    文件日志: tail -100f ${INSTALL_DIR}/data/opscope.log"
+echo -e "    文件日志: tail -100f ${INSTALL_DIR}/data/opscore.log"
 echo -e "    自启:     systemctl enable/disable opscore"
 echo ""
 echo -e "  PATH:       /etc/profile.d/opscore.sh (重登录生效)"
@@ -173,7 +173,7 @@ cat > "${INSTALL_DIR}/data/.install-note" <<NOTE
     停止:     systemctl stop opscore
     重启:     systemctl restart opscore
     日志:     journalctl -u opscore -f
-    文件日志: tail -100f ${INSTALL_DIR}/data/opscope.log
+    文件日志: tail -100f ${INSTALL_DIR}/data/opscore.log
     自启:     systemctl enable/disable opscore
 
   PATH:       /etc/profile.d/opscore.sh (重登录生效)

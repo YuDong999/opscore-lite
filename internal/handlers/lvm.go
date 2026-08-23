@@ -4,8 +4,27 @@ import (
 	"encoding/json"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// LVM 参数白名单: 防止通过 device/vg/lv/size/mount 注入远程 shell 命令。
+var (
+	reLVMName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`) // vg/lv 名
+	reLVMDev   = regexp.MustCompile(`^/dev/[A-Za-z0-9/_.-]+$`)           // /dev/sdb1 等
+	reLVMSize  = regexp.MustCompile(`^\d+(\.\d+)?[bBsSkKmMgGtT]?$`)      // 如 10G
+	reLVMMount = regexp.MustCompile(`^/[A-Za-z0-9/_.-]*$`)               // 绝对路径
+)
+
+func validLVMName(s string) bool { return reLVMName.MatchString(s) }
+func validLVMDev(s string) bool  { return reLVMDev.MatchString(s) }
+func validLVMSize(s string) bool { return reLVMSize.MatchString(s) }
+func validLVMMount(s string) bool {
+	if !reLVMMount.MatchString(s) || strings.Contains(s, "..") {
+		return false
+	}
+	return true
+}
 
 type PVInfo struct {
 	Name string `json:"name"`
@@ -79,22 +98,26 @@ func LvmHandler(w http.ResponseWriter, r *http.Request) {
 	switch body.Action {
 	case "pvcreate":
 		if body.Device == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 device"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 device"})
+			return
 		}
 		cmd = exec.Command("pvcreate", body.Device)
 	case "vgcreate":
 		if body.VG == "" || body.Device == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"})
+			return
 		}
 		cmd = exec.Command("vgcreate", body.VG, body.Device)
 	case "lvcreate":
 		if body.VG == "" || body.LV == "" || body.Size == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg/lv/size"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg/lv/size"})
+			return
 		}
 		cmd = exec.Command("lvcreate", "-L", body.Size, "-n", body.LV, body.VG)
 	case "lvextend":
 		if body.LV == "" || body.Size == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/size"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/size"})
+			return
 		}
 		cmd = exec.Command("lvextend", "-L", "+"+body.Size, body.LV)
 		if body.Device != "" {
@@ -102,12 +125,14 @@ func LvmHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	case "mount":
 		if body.LV == "" || body.Mount == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"})
+			return
 		}
 		exec.Command("mkdir", "-p", body.Mount).Run()
 		cmd = exec.Command("mount", body.LV, body.Mount)
 	default:
-		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + body.Action}); return
+		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + body.Action})
+		return
 	}
 
 	out, err := cmd.CombinedOutput()
@@ -130,7 +155,8 @@ func runLVM(cmd string) string {
 func lvmRemoteGet(w http.ResponseWriter, hostID string) {
 	h := resolveAnsibleHost(hostID)
 	if h == nil {
-		writeErr(w, "未找到指定主机", http.StatusNotFound); return
+		writeErr(w, "未找到指定主机", http.StatusNotFound)
+		return
 	}
 	rmHost := resolveRemoteHost(*h)
 	cmds := map[string]string{
@@ -151,46 +177,78 @@ func lvmRemoteGet(w http.ResponseWriter, hostID string) {
 func lvmRemoteAction(w http.ResponseWriter, body lvmActionBody) {
 	h := resolveAnsibleHost(body.Host)
 	if h == nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": "未找到指定主机"}); return
+		WriteJSON(w, map[string]any{"ok": false, "error": "未找到指定主机"})
+		return
 	}
 	rmHost := resolveRemoteHost(*h)
 	var cmd string
 	switch body.Action {
 	case "pvcreate":
 		if body.Device == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 device"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 device"})
+			return
+		}
+		if !validLVMDev(body.Device) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "device 格式非法(须为 /dev/ 下的绝对路径)"})
+			return
 		}
 		cmd = "pvcreate " + body.Device + " 2>&1"
 	case "vgcreate":
 		if body.VG == "" || body.Device == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"})
+			return
+		}
+		if !validLVMName(body.VG) || !validLVMDev(body.Device) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "vg 或 device 格式非法"})
+			return
 		}
 		cmd = "vgcreate " + body.VG + " " + body.Device + " 2>&1"
 	case "lvcreate":
 		if body.VG == "" || body.LV == "" || body.Size == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg/lv/size"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg/lv/size"})
+			return
+		}
+		if !validLVMName(body.VG) || !validLVMName(body.LV) || !validLVMSize(body.Size) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "vg/lv/size 格式非法"})
+			return
 		}
 		cmd = "lvcreate -L " + body.Size + " -n " + body.LV + " " + body.VG + " 2>&1"
 	case "lvextend":
 		if body.LV == "" || body.Size == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/size"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/size"})
+			return
+		}
+		if !validLVMSize(body.Size) || (!validLVMName(body.LV) && !strings.HasPrefix(body.LV, "/dev/")) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "lv/size 格式非法"})
+			return
 		}
 		cmd = "lvextend -L +" + body.Size + " " + body.LV
 		if body.Device != "" {
+			if !validLVMDev(body.Device) {
+				WriteJSON(w, map[string]any{"ok": false, "error": "device 格式非法"})
+				return
+			}
 			cmd += " " + body.Device
 		}
 		cmd += " 2>&1"
 	case "mount":
 		if body.LV == "" || body.Mount == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"}); return
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"})
+			return
+		}
+		if !validLVMMount(body.Mount) || (!validLVMName(body.LV) && !strings.HasPrefix(body.LV, "/dev/")) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "lv/mount 格式非法"})
+			return
 		}
 		cmd = "mkdir -p " + body.Mount + " && mount " + body.LV + " " + body.Mount + " 2>&1"
 	default:
-		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + body.Action}); return
+		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + body.Action})
+		return
 	}
 	res := remotePool.Exec(rmHost, map[string]string{"out": cmd})
 	if res["out"].Error != "" {
-		WriteJSON(w, map[string]any{"ok": false, "error": res["out"].Error}); return
+		WriteJSON(w, map[string]any{"ok": false, "error": res["out"].Error})
+		return
 	}
 	WriteJSON(w, map[string]any{"ok": true, "output": res["out"].Output})
 }

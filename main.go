@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"opscore/internal/auth"
 	"opscore/internal/central"
 	"opscore/internal/handlers"
+	"opscore/internal/hostkey"
 	"opscore/internal/metrics"
 	"opscore/internal/module"
 	"opscore/internal/registry"
@@ -35,6 +37,8 @@ func main() {
 	flagData := flag.String("data", "", "数据目录(默认二进制同级 data/,用于配置/备份存储)")
 	flagDB := flag.String("database", "", "数据库 DSN (默认 sqlite://<dataDir>/opscore.db, postgres://user:pass@host/db 可覆盖)")
 	flagAgentAddr := flag.String("agent-addr", ":8089", "Agent WebSocket 监听地址,如 :8089(默认 :8089,OPCORE_AGENT_LISTEN 可覆盖)")
+	flagTLSCert := flag.String("tls-cert", "", "TLS 证书路径(设置后启用 HTTPS)")
+	flagTLSKey := flag.String("tls-key", "", "TLS 私钥路径(与 -tls-cert 同时设置生效)")
 	flag.Parse()
 	if *flagAddr != "" {
 		addr = *flagAddr
@@ -46,6 +50,7 @@ func main() {
 		dataDir = filepath.Join(filepath.Dir(exe), "data")
 	}
 	os.MkdirAll(dataDir, 0755)
+	hostkey.SetDataDir(dataDir)
 
 	distDir := *flagDist
 	if distDir == "" {
@@ -217,7 +222,16 @@ func main() {
 	log.Println(banner)
 	log.Println("OpsCore demo 已启动 -> http://" + addr)
 	log.Println("日志文件: " + filepath.Join(dataDir, "opscore.log"))
-	log.Fatal(http.ListenAndServe(addr, cors(auth.Middleware(mux))))
+	handler := cors(auth.Middleware(mux))
+	if *flagTLSCert != "" && *flagTLSKey != "" {
+		log.Printf("HTTPS 监听 %s (cert=%s)", addr, *flagTLSCert)
+		log.Fatal(http.ListenAndServeTLS(addr, *flagTLSCert, *flagTLSKey, handler))
+		return
+	}
+	if auth.GetToken() == "" {
+		log.Printf("[安全警告] 未设置访问 Token 且未启用 TLS, 所有 API 处于无鉴权明文状态; 生产环境请 POST /api/auth/token 设置并配合 -tls-cert/-tls-key 或反向代理使用")
+	}
+	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
 // resolveAgentAddr returns the WebSocket URL for remote agents to connect back.
@@ -235,9 +249,15 @@ func resolveAgentAddr(listenAddr string) string {
 
 	// isRFC1918 判断是否为内网私有地址（优先选择）
 	isRFC1918 := func(ip net.IP) bool {
-		if ip[0] == 10 { return true }
-		if ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 { return true }
-		if ip[0] == 192 && ip[1] == 168 { return true }
+		if ip[0] == 10 {
+			return true
+		}
+		if ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 {
+			return true
+		}
+		if ip[0] == 192 && ip[1] == 168 {
+			return true
+		}
 		return false
 	}
 
@@ -278,8 +298,8 @@ func registerCoreModules(r *registry.Registry) {
 	}
 
 	type modCfg struct {
-		m       registry.Manifest
-		routes  []registry.Route
+		m      registry.Manifest
+		routes []registry.Route
 	}
 
 	modules := []modCfg{
@@ -381,15 +401,35 @@ func registerCoreModules(r *registry.Registry) {
 
 func cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if isLocalOrigin(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+func isLocalOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 const banner = `

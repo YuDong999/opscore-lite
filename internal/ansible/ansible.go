@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -62,18 +63,18 @@ type Host struct {
 }
 
 type Inventory struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Groups      map[string]*Group `json:"groups"`
+	ID          string                `json:"id"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Groups      map[string]*Group     `json:"groups"`
 	Hosts       map[string]*HostEntry `json:"hosts"`
 }
 
 type Group struct {
-	Name     string   `json:"name"`
-	Parent   string   `json:"parent,omitempty"`
+	Name     string            `json:"name"`
+	Parent   string            `json:"parent,omitempty"`
 	Vars     map[string]string `json:"vars,omitempty"`
-	Children []string `json:"children,omitempty"`
+	Children []string          `json:"children,omitempty"`
 }
 
 type HostEntry struct {
@@ -91,12 +92,12 @@ type Playbook struct {
 }
 
 type Result struct {
-	Host      string `json:"host"`
-	Success   bool   `json:"success"`
-	Output    string `json:"output"`
-	Stdout    string `json:"stdout"`
-	Stderr    string `json:"stderr"`
-	Changed   bool   `json:"changed"`
+	Host    string `json:"host"`
+	Success bool   `json:"success"`
+	Output  string `json:"output"`
+	Stdout  string `json:"stdout"`
+	Stderr  string `json:"stderr"`
+	Changed bool   `json:"changed"`
 }
 
 type RunContext struct {
@@ -113,13 +114,13 @@ type RunContext struct {
 }
 
 type ExecRecord struct {
-	ID       string    `json:"id"`
-	Time     time.Time `json:"time"`
-	Type     string    `json:"type"` // ping, adhoc, playbook
-	Target   string    `json:"target"`
-	Results  []Result  `json:"results"`
-	Success  bool      `json:"success"`
-	Duration string    `json:"duration"`
+	ID       string      `json:"id"`
+	Time     time.Time   `json:"time"`
+	Type     string      `json:"type"` // ping, adhoc, playbook
+	Target   string      `json:"target"`
+	Results  []Result    `json:"results"`
+	Success  bool        `json:"success"`
+	Duration string      `json:"duration"`
 	Run      *RunContext `json:"run,omitempty"`
 }
 
@@ -1126,7 +1127,9 @@ func (m *Manager) runAnsible(hosts []string, inventoryID string, extraArgs ...st
 	cmd.Stderr = &stderr
 	start := time.Now()
 
-	_ = cmd.Run()
+	if runErr := cmd.Run(); runErr != nil {
+		log.Printf("[ansible] 子进程退出码非零(可能部分失败): %v", runErr)
+	}
 	elapsed := time.Since(start)
 
 	out := strings.TrimSpace(stdout.String())
@@ -1145,8 +1148,12 @@ func (m *Manager) runAnsible(hosts []string, inventoryID string, extraArgs ...st
 
 	mod, arg := "", ""
 	for i, a := range extraArgs {
-		if a == "-m" && i+1 < len(extraArgs) { mod = extraArgs[i+1] }
-		if a == "-a" && i+1 < len(extraArgs) { arg = extraArgs[i+1] }
+		if a == "-m" && i+1 < len(extraArgs) {
+			mod = extraArgs[i+1]
+		}
+		if a == "-a" && i+1 < len(extraArgs) {
+			arg = extraArgs[i+1]
+		}
 	}
 	rc := &RunContext{Hosts: hosts, InventoryID: inventoryID, Module: mod, Args: arg}
 	m.saveHistory("adhoc", "", rc, results, elapsed)
@@ -1188,7 +1195,9 @@ func (m *Manager) runAnsiblePlaybook(playbookPath, inventoryID string, checkMode
 	cmd.Stderr = &stderr
 	start := time.Now()
 
-	_ = cmd.Run()
+	if runErr := cmd.Run(); runErr != nil {
+		log.Printf("[ansible] 子进程退出码非零(可能部分失败): %v", runErr)
+	}
 	elapsed := time.Since(start)
 
 	out := strings.TrimSpace(stdout.String())
@@ -1380,5 +1389,3 @@ func parseAnsibleJSON(output string, hosts []Host) []Result {
 	}
 	return results
 }
-
-

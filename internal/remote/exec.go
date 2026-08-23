@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"opscore/internal/hostkey"
 )
 
 type Host struct {
@@ -94,7 +96,7 @@ func dialHost(host Host) (*ssh.Client, error) {
 	config := &ssh.ClientConfig{
 		User:            host.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostkey.Callback,
 		Timeout:         10 * time.Second,
 	}
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +15,20 @@ import (
 
 	"opscore/internal/remote"
 )
+
+// validDNSList 校验逗号分隔的 DNS 服务器列表(每项须为合法 IP)。
+func validDNSList(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	for _, part := range strings.Split(s, ",") {
+		if net.ParseIP(strings.TrimSpace(part)) == nil {
+			return false
+		}
+	}
+	return true
+}
 
 func remoteNmcliGet(rmHost remote.Host, cmds map[string]string) map[string]string {
 	res := remotePool.Exec(rmHost, cmds)
@@ -209,11 +224,11 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			rmHost := resolveRemoteHost(*h)
 			out := remoteNmcliGet(rmHost, map[string]string{
-				"interfaces": "ip addr show 2>/dev/null",
-				"routes":     "ip route show 2>/dev/null",
+				"interfaces":     "ip addr show 2>/dev/null",
+				"routes":         "ip route show 2>/dev/null",
 				"dns_resolvectl": "resolvectl status 2>/dev/null",
-				"resolv":     "cat /etc/resolv.conf 2>/dev/null",
-				"nm":         "nmcli -t dev status 2>/dev/null",
+				"resolv":         "cat /etc/resolv.conf 2>/dev/null",
+				"nm":             "nmcli -t dev status 2>/dev/null",
 			})
 			dns := out["dns_resolvectl"]
 			if dns == "" || !strings.Contains(dns, "DNS") {
@@ -294,7 +309,15 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			cidr := postBody.IP
 			if postBody.Mask > 0 {
+				if postBody.Mask > 32 {
+					WriteJSON(w, map[string]any{"error": "掩码非法(0-32)", "permission": "remote"})
+					return
+				}
 				cidr += "/" + strconv.Itoa(postBody.Mask)
+			}
+			if !strings.Contains(cidr, "/") || net.ParseIP(strings.SplitN(cidr, "/", 2)[0]) == nil {
+				WriteJSON(w, map[string]any{"error": "ip 格式非法", "permission": "remote"})
+				return
 			}
 			cmd = fmt.Sprintf("nmcli connection modify %s ipv4.addresses %s ipv4.method manual && nmcli connection up %s 2>/dev/null || ip addr add %s dev %s", quote(postBody.Device), quote(cidr), quote(postBody.Device), quote(cidr), quote(postBody.Device))
 		case "set-dns":
@@ -302,7 +325,11 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 				WriteJSON(w, map[string]any{"error": "缺少 dns 或 device", "permission": "remote"})
 				return
 			}
-			cmd = fmt.Sprintf("nmcli connection modify %s ipv4.dns %s && nmcli connection up %s 2>/dev/null || echo 'nameserver %s' > /etc/resolv.conf", quote(postBody.Device), quote(postBody.DNS), quote(postBody.Device), postBody.DNS)
+			if !validDNSList(postBody.DNS) {
+				WriteJSON(w, map[string]any{"error": "dns 格式非法(须为逗号分隔的 IP 地址)", "permission": "remote"})
+				return
+			}
+			cmd = fmt.Sprintf("nmcli connection modify %s ipv4.dns %s && nmcli connection up %s 2>/dev/null || echo 'nameserver %s' > /etc/resolv.conf", quote(postBody.Device), quote(postBody.DNS), quote(postBody.Device), quote(postBody.DNS))
 		case "restart":
 			if postBody.Device == "" {
 				WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "remote"})

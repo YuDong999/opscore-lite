@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -290,6 +291,81 @@ type fwCmdParams struct {
 	DryRun     bool // 仅预览命令,绝不真正执行(前端二次确认前的预览用)
 }
 
+// ── 输入校验(白名单) ──
+
+func validatePort(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	port, err := strconv.Atoi(s)
+	if err != nil || port < 1 || port > 65535 {
+		return ""
+	}
+	return s
+}
+
+func validateProto(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "":
+		return "tcp"
+	case "tcp", "udp", "sctp":
+		return s
+	}
+	return ""
+}
+
+func validateCIDR(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s, ";|&`$(){}[]!<>'\"\n\r") {
+		return ""
+	}
+	return s
+}
+
+func validateZone(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	for _, c := range s {
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'
+		if !ok {
+			return ""
+		}
+	}
+	return s
+}
+
+func validateRichRule(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "rule ") {
+		return ""
+	}
+	if strings.ContainsAny(s, "'\"`;|$&<>(){}\\\n\r") {
+		return ""
+	}
+	return s
+}
+
+// validateHostPort 校验 "10.0.0.2:80" 形式, 返回 (规范化值, 是否合法)。
+func validateHostPort(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	dp := strings.SplitN(s, ":", 2)
+	if len(dp) != 2 || dp[0] == "" || validatePort(dp[1]) == "" {
+		return "", false
+	}
+	addr := dp[0]
+	for _, c := range addr {
+		ok := (c >= '0' && c <= '9') || c == '.' || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == ':'
+		if !ok {
+			return "", false
+		}
+	}
+	return addr + ":" + dp[1], true
+}
+
 // FirewallAction 处理 POST /api/core/firewall/action
 // 设计原则(对应 ADR-002 红线):
 //   - 每次写入都产生审计链记录;
@@ -311,7 +387,12 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	backend, _, manageable, _ := detectBackend()
-	cmdStr, lockRisk := buildFirewallCommand(backend, p)
+	cmdArgs, lockRisk := buildFirewallCommand(backend, p)
+	if cmdArgs == nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(port/cidr/proto/zone/rich-rule 格式校验失败)"})
+		return
+	}
+	cmdStr := strings.Join(cmdArgs, " ")
 
 	entry := AuditEntry{
 		TS:         time.Now().Format(time.RFC3339),
@@ -339,8 +420,8 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 真正执行(仅 Linux + 特权环境可达)
-	out, err := exec.Command("sh", "-c", cmdStr).CombinedOutput()
+	// 真正执行(仅 Linux + 特权环境可达): 参数数组直传, 不经过 shell。
+	out, err := exec.Command(cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
 	if err != nil {
 		entry.Result = "fail: " + strings.TrimSpace(string(out))
 	} else {
@@ -357,130 +438,163 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildFirewallCommand 把结构化参数翻译成对应后端的真实命令,并标记是否可能锁死自己。
-func buildFirewallCommand(backend string, p fwCmdParams) (string, bool) {
-	proto := p.Proto
-	if proto == "" {
-		proto = "tcp"
-	}
+// buildFirewallCommand 返回 (参数数组, 是否可能锁死自己)。参数直接交给 exec.Command 执行, 完全不经过 shell。
+func buildFirewallCommand(backend string, p fwCmdParams) ([]string, bool) {
+	proto := validateProto(p.Proto)
 	switch p.Action {
 	case "delete-rule":
 		switch backend {
 		case "netsh":
-			return `netsh advfirewall firewall delete rule name="` + p.Source + `"`, false
+			return []string{"netsh", "advfirewall", "firewall", "delete", "rule", "name=" + p.Source}, false
 		case "ufw":
-			return `ufw delete ` + p.Source, false
+			fields := strings.Fields(strings.TrimSpace(p.Source))
+			if len(fields) == 0 {
+				return nil, false
+			}
+			for _, f := range fields {
+				if strings.ContainsAny(f, ";|&`$<>\n\r") {
+					return nil, false
+				}
+			}
+			return append([]string{"ufw", "delete"}, fields...), false
 		case "firewalld":
-			return `firewall-cmd --remove-port=` + p.Source + ` --permanent`, false
+			if strings.ContainsAny(p.Source, ";|&`$<>'\"\n\r") {
+				return nil, false
+			}
+			return []string{"firewall-cmd", "--remove-port=" + p.Source, "--permanent"}, false
 		}
 	case "start":
 		switch backend {
 		case "ufw":
-			return "ufw enable", false
+			return []string{"ufw", "enable"}, false
 		case "firewalld":
-			return "systemctl start firewalld", false
+			return []string{"systemctl", "start", "firewalld"}, false
 		case "netsh":
-			return `netsh advfirewall set allprofiles state on`, false
+			return []string{"netsh", "advfirewall", "set", "allprofiles", "state", "on"}, false
 		}
 	case "stop":
 		switch backend {
 		case "ufw":
-			return "ufw disable", false
+			return []string{"ufw", "disable"}, false
 		case "firewalld":
-			return "systemctl stop firewalld", false
+			return []string{"systemctl", "stop", "firewalld"}, false
 		case "netsh":
-			return `netsh advfirewall set allprofiles state off`, false
+			return []string{"netsh", "advfirewall", "set", "allprofiles", "state", "off"}, false
 		}
 	case "restart":
 		switch backend {
 		case "ufw":
-			return "ufw reload", false
+			return []string{"ufw", "reload"}, false
 		case "firewalld":
-			return "firewall-cmd --reload", false
+			return []string{"firewall-cmd", "--reload"}, false
 		case "netsh":
-			return `netsh advfirewall set allprofiles state on`, false
+			return []string{"netsh", "advfirewall", "set", "allprofiles", "state", "on"}, false
 		}
 	case "allow-port":
+		port := validatePort(p.Port)
+		if proto == "" || port == "" {
+			return nil, false
+		}
 		switch backend {
 		case "ufw":
-			return "ufw allow " + p.Port + "/" + proto, false
+			return []string{"ufw", "allow", port + "/" + proto}, false
 		case "firewalld":
-			return "firewall-cmd --add-port=" + p.Port + "/" + proto + " --permanent", false
+			return []string{"firewall-cmd", "--add-port=" + port + "/" + proto, "--permanent"}, false
 		case "netsh":
-			return `netsh advfirewall firewall add rule name="opscore-allow-` + p.Port + `" dir=in action=allow protocol=` + proto + ` localport=` + p.Port, false
+			return []string{"netsh", "advfirewall", "firewall", "add", "rule", "name=opscore-allow-" + port, "dir=in", "action=allow", "protocol=" + proto, "localport=" + port}, false
 		}
 	case "deny-port":
 		lock := p.Port == "22" || p.Port == "3389" || p.Port == "8080"
+		port := validatePort(p.Port)
+		if proto == "" || port == "" {
+			return nil, false
+		}
 		switch backend {
 		case "ufw":
-			return "ufw deny " + p.Port + "/" + proto, lock
+			return []string{"ufw", "deny", port + "/" + proto}, lock
 		case "firewalld":
-			return "firewall-cmd --add-rich-rule='rule port port=" + p.Port + " protocol=" + proto + " reject' --permanent", lock
+			return []string{"firewall-cmd", "--add-rich-rule=rule port port=" + port + " protocol=" + proto + " reject", "--permanent"}, lock
 		case "netsh":
-			return `netsh advfirewall firewall add rule name="opscore-deny-` + p.Port + `" dir=in action=block protocol=` + proto + ` localport=` + p.Port, lock
+			return []string{"netsh", "advfirewall", "firewall", "add", "rule", "name=opscore-deny-" + port, "dir=in", "action=block", "protocol=" + proto, "localport=" + port}, lock
 		}
 	case "allow-ip":
+		cidr := validateCIDR(p.CIDR)
+		if cidr == "" {
+			return nil, false
+		}
 		switch backend {
 		case "ufw":
-			return "ufw allow from " + p.CIDR, false
+			return []string{"ufw", "allow", "from", cidr}, false
 		case "firewalld":
-			return "firewall-cmd --add-source=" + p.CIDR + " --permanent", false
+			return []string{"firewall-cmd", "--add-source=" + cidr, "--permanent"}, false
 		case "netsh":
-			return `netsh advfirewall firewall add rule name="opscore-allow-` + p.CIDR + `" dir=in action=allow remoteip=` + p.CIDR, false
+			return []string{"netsh", "advfirewall", "firewall", "add", "rule", "name=opscore-allow-ip", "dir=in", "action=allow", "remoteip=" + cidr}, false
 		}
 	case "deny-ip":
 		lock := p.CIDR == "0.0.0.0/0" || p.CIDR == "::/0"
+		cidr := validateCIDR(p.CIDR)
+		if cidr == "" {
+			return nil, false
+		}
 		switch backend {
 		case "ufw":
-			return "ufw deny from " + p.CIDR, lock
+			return []string{"ufw", "deny", "from", cidr}, lock
 		case "firewalld":
-			return "firewall-cmd --add-rich-rule='rule source address=" + p.CIDR + " reject' --permanent", lock
+			return []string{"firewall-cmd", "--add-rich-rule=rule source address=" + cidr + " reject", "--permanent"}, lock
 		case "netsh":
-			return `netsh advfirewall firewall add rule name="opscore-deny-` + p.CIDR + `" dir=in action=block remoteip=` + p.CIDR, lock
+			return []string{"netsh", "advfirewall", "firewall", "add", "rule", "name=opscore-deny-ip", "dir=in", "action=block", "remoteip=" + cidr}, lock
 		}
 	case "set-default-zone":
 		if backend != "firewalld" {
-			return "echo only firewalld supports zone", false
+			return []string{"echo", "only firewalld supports zone"}, false
 		}
-		return "firewall-cmd --set-default-zone=" + p.Zone, false
+		zone := validateZone(p.Zone)
+		if zone == "" {
+			return nil, false
+		}
+		return []string{"firewall-cmd", "--set-default-zone=" + zone}, false
 	case "add-rich-rule", "remove-rich-rule":
 		if backend != "firewalld" {
-			return "echo only firewalld supports rich-rule", false
+			return []string{"echo", "only firewalld supports rich-rule"}, false
 		}
-		op := "add-rich-rule"
+		op := "--add-rich-rule="
 		if p.Action == "remove-rich-rule" {
-			op = "remove-rich-rule"
+			op = "--remove-rich-rule="
 		}
-		zoneOpt := ""
-		if p.Zone != "" {
-			zoneOpt = " --zone=" + p.Zone
+		rule := validateRichRule(p.RichRule)
+		if rule == "" {
+			return nil, false
 		}
-		return "firewall-cmd --" + op + "='" + p.RichRule + "' " + zoneOpt + "--permanent", false
-	case "add-forward-port":
+		args := []string{"firewall-cmd", op + rule, "--permanent"}
+		if z := validateZone(p.Zone); z != "" {
+			args = append(args, "--zone="+z)
+		}
+		return args, false
+	case "add-forward-port", "remove-forward-port":
 		if backend != "firewalld" {
-			return "echo only firewalld supports forward-port", false
+			return []string{"echo", "only firewalld supports forward-port"}, false
 		}
-		// FwdDest 格式 "10.0.0.2:80"
-		dp := strings.SplitN(p.FwdDest, ":", 2)
+		dst, ok := validateHostPort(p.FwdDest)
+		if proto == "" || !ok {
+			return nil, false
+		}
+		srcPort := validatePort(p.FwdSrcPort)
+		if srcPort == "" {
+			return nil, false
+		}
+		dp := strings.SplitN(dst, ":", 2)
 		toAddr, toPort := dp[0], dp[1]
-		zoneOpt := ""
-		if p.Zone != "" {
-			zoneOpt = " --zone=" + p.Zone
+		verb := "add"
+		if p.Action == "remove-forward-port" {
+			verb = "remove"
 		}
-		return "firewall-cmd --add-forward-port=port=" + p.FwdSrcPort + ":proto=" + p.Proto + ":toaddr=" + toAddr + ":toport=" + toPort + zoneOpt + " --permanent", false
-	case "remove-forward-port":
-		if backend != "firewalld" {
-			return "echo only firewalld supports forward-port", false
+		args := []string{"firewall-cmd", "--" + verb + "-forward-port=port=" + srcPort + ":proto=" + proto + ":toaddr=" + toAddr + ":toport=" + toPort, "--permanent"}
+		if z := validateZone(p.Zone); z != "" {
+			args = append(args, "--zone="+z)
 		}
-		dp := strings.SplitN(p.FwdDest, ":", 2)
-		toAddr, toPort := dp[0], dp[1]
-		zoneOpt := ""
-		if p.Zone != "" {
-			zoneOpt = " --zone=" + p.Zone
-		}
-		return "firewall-cmd --remove-forward-port=port=" + p.FwdSrcPort + ":proto=" + p.Proto + ":toaddr=" + toAddr + ":toport=" + toPort + zoneOpt + " --permanent", false
+		return args, false
 	}
-	return "", false
+	return nil, false
 }
 
 func mustJSON(v any) string {

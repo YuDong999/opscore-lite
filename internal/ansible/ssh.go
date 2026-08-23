@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"opscore/internal/hostkey"
 )
 
 type SSHKeyPair struct {
@@ -163,7 +165,7 @@ func (m *SSHManager) DeployKey(req SSHDeployReq) error {
 	config := &ssh.ClientConfig{
 		User:            req.User,
 		Auth:            []ssh.AuthMethod{ssh.Password(req.Password)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostkey.Callback,
 		Timeout:         10 * time.Second,
 	}
 
