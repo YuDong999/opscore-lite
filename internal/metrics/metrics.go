@@ -175,6 +175,13 @@ func tick() {
 	}
 	if info, err := cpu.Info(); err == nil && len(info) > 0 {
 		s.CPU.Model = info[0].ModelName
+		// ARM(飞腾/鲲鹏等)的 /proc/cpuinfo 通常没有 model name 字段,
+		// 回退读设备树里的机型信息, 避免型号显示为空
+		if s.CPU.Model == "" {
+			if b, err := os.ReadFile("/proc/device-tree/model"); err == nil {
+				s.CPU.Model = strings.TrimRight(string(b), "\x00\n ")
+			}
+		}
 	}
 	if v, err := mem.VirtualMemory(); err == nil {
 		s.Memory = MemoryInfo{Total: v.Total, Used: v.Used, UsedPercent: round2(v.UsedPercent), Free: v.Free}

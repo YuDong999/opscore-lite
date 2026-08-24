@@ -10,7 +10,7 @@ server:
 
 agent: agent-linux-amd64
 
-agent-all: agent-linux-amd64 agent-linux-arm64 agent-windows-amd64
+agent-all: agent-linux-amd64 agent-linux-arm64 agent-windows-amd64 agent-linux-loong64
 
 agent-linux-amd64:
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/agent-linux-amd64 ./cmd/agent
@@ -20,6 +20,9 @@ agent-linux-arm64:
 
 agent-windows-amd64:
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/agent-windows-amd64.exe ./cmd/agent
+
+agent-linux-loong64:
+	GOOS=linux GOARCH=loong64 go build $(LDFLAGS) -o $(BIN_DIR)/agent-linux-loong64 ./cmd/agent
 
 linux: agent-linux-amd64
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/opscore-linux-amd64 .

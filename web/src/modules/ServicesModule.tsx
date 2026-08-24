@@ -47,7 +47,7 @@ export default function ServicesModule() {
   const [msg, setMsg] = useState<string>('')
   const [logTarget, setLogTarget] = useState<ServiceInfo | null>(null)  // 日志弹窗目标服务
   const [search, setSearch] = useState('')        // 搜索关键词
-  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'exited' | 'failed' | 'stopped'>('all')
   const [sortKey, setSortKey] = useState<'cpu' | 'mem' | null>(null)
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [copied, setCopied] = useState(false)
@@ -101,6 +101,7 @@ export default function ServicesModule() {
       switch (statusFilter) {
         case 'running': return s.subStatus === 'running'
         case 'exited': return s.subStatus === 'exited'
+        case 'stopped': return s.subStatus === 'dead' || s.status === 'inactive'
         case 'failed': return s.status === 'failed'
         default: return true
       }
@@ -133,10 +134,12 @@ export default function ServicesModule() {
   const act = async (id: string, action: string) => {
     setBusy(`${id}:${action}`)
     setMsg('')
-    const res = await postJSON('/api/core/services/action', { id, action })
+    const res = await postJSON('/api/core/services/action', { id, action, host: selected?.id || '' })
     setBusy(null)
     if (res.ok) {
-      setMsg(`✓ ${action} ${id} 成功`)
+      const t = (res as any).target ? ` @ ${(res as any).target}` : ''
+      const v = (res as any).verified === false ? ' (回读未确认)' : ''
+      setMsg(`✓ ${action} ${id}${t}成功${v}`)
       load()
     } else {
       setMsg(`✗ ${res.error || '操作失败'}`)
@@ -190,6 +193,7 @@ export default function ServicesModule() {
                     <option value="running">运行中</option>
                     <option value="exited">已退出</option>
                     <option value="failed">失败</option>
+                    <option value="stopped">已停止</option>
                   </select>
                 </th>
                 <th>说明</th>
@@ -266,6 +270,9 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
   const logBodyRef = useRef<HTMLDivElement | null>(null)
   const followBottom = useRef(true)
   const MAX_LOG_LINES = 800
+  // 当前日志源标识(tab+文件路径): 切换源时整屏替换而非增量追加,
+  // 否则新文件的行号(1..N)会被旧的 lastNum 去重逻辑全部滤掉, 表现为"切换不生效"
+  const srcKeyRef = useRef('')
 
   const hasJournal = service.logSource === 'journalctl' || service.logSource === 'both'
   const hasFile = (service.logPaths && service.logPaths.length > 0) || service.logSource === 'file'
@@ -290,7 +297,13 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
       const res = (await getJSON(url)) as LogResponse
       const reversed = [...(res.lines || [])].reverse()
       reversed.forEach((l, i) => { l.num = i + 1 })
-      if (filter.trim()) {
+      const prevKey = srcKeyRef.current
+      const keyNow = tab === 'file'
+        ? `file:${filePath || (service.logPaths && service.logPaths[0]) || ''}`
+        : `journalctl:${service.name}`
+      if (filter.trim() || prevKey !== keyNow) {
+        // 源切换或过滤模式: 整屏替换
+        srcKeyRef.current = keyNow
         setLogLines(reversed)
       } else {
         setLogLines(prev => {

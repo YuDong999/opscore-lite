@@ -30,14 +30,29 @@ func validDNSList(s string) bool {
 	return true
 }
 
+// remoteNmcliGet 多条命令合并为单条脚本一次 SSH 往返(哨兵分段),
+// 替代逐条开 session 的串行执行; 传输层故障由 ExecScript 自动换新连接重试。
 func remoteNmcliGet(rmHost remote.Host, cmds map[string]string) map[string]string {
-	res := remotePool.Exec(rmHost, cmds)
+	keys := make([]string, 0, len(cmds))
+	var b strings.Builder
+	for k, cmd := range cmds {
+		keys = append(keys, k)
+		b.WriteString("echo __OPSCORE_" + k + "__\n" + strings.TrimSpace(cmd) + "\n")
+	}
+	res, err := remotePool.ExecScript(rmHost, b.String())
+	if err != nil {
+		out := map[string]string{}
+		for _, k := range keys {
+			out[k] = fmt.Sprintf("(%s error: %v)", k, err)
+		}
+		return out
+	}
 	out := map[string]string{}
-	for k, v := range res {
-		if v.Error != "" {
-			out[k] = fmt.Sprintf("(%s error: %s)", k, v.Error)
-		} else {
+	for _, k := range keys {
+		if v, ok := res[k]; ok && v.Error == "" {
 			out[k] = v.Output
+		} else {
+			out[k] = fmt.Sprintf("(%s error: %s)", k, v.Error)
 		}
 	}
 	return out

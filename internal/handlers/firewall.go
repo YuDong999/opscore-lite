@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os/exec"
@@ -36,6 +37,8 @@ type FirewallRule struct {
 // AuditEntry 是 ADR-002 审计链的单条记录:(actor, role, credential, action, params, result, ts)。
 type AuditEntry struct {
 	TS         string `json:"ts"`
+	Target     string `json:"target"`          // 操作落点主机(审计核心字段)
+	Verified   bool   `json:"verified"`        // 写操作后回读验证结果
 	Actor      string `json:"actor"`
 	Role       string `json:"role"`
 	Credential string `json:"credential"`
@@ -114,11 +117,185 @@ func runCmd(cmd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ── 目标主机分发: 本机 sh -c / 远程经 RunOnTarget(单会话 SSH) ──
+
+type fwExec func(cmd string) (string, error)
+
+func newFwExec(hostID string) fwExec {
+	if IsLocalTarget(hostID) {
+		return runCmd
+	}
+	return func(cmd string) (string, error) {
+		out, err := RunOnTarget(hostID, []string{"sh", "-c", cmd})
+		return strings.TrimSpace(out), err
+	}
+}
+
+func mustOut(ex fwExec, cmd string) string {
+	o, _ := ex(cmd)
+	return strings.TrimSpace(o)
+}
+
+// ufwActiveEx / firewalldRunningEx: 目标机版状态探测
+func ufwActiveEx(ex fwExec) bool {
+	return strings.Contains(mustOut(ex, "ufw status"), "Status: active")
+}
+func firewalldRunningEx(ex fwExec) bool {
+	_, err := ex("firewall-cmd --state")
+	return err == nil
+}
+
+// detectBackendFor 返回"目标主机"的防火墙后端与可写性。
+// 本机走原 detectBackend; 远程经 SSH 探测(SSH 清单用户为 root, 视为可管理)。
+//
+// 探测容错: 单条组合命令一次往返; 失败(传输抖动)最多重试3次;
+// 全部失败时回退到最近一次已知后端(fwBackendCache), 仍无才报 unknown。
+func detectBackendFor(hostID string) (backend string, running bool, manageable bool, msg string) {
+	if IsLocalTarget(hostID) {
+		return detectBackend()
+	}
+	ex := newFwExec(hostID)
+
+	if b := fwCachedBackend(hostID); b != "" {
+		switch b {
+		case "ufw":
+			return b, ufwActiveEx(ex), true, ""
+		case "firewalld":
+			return b, firewalldRunningEx(ex), true, ""
+		case "none":
+			return "none", false, false, "目标主机未安装 ufw / firewalld"
+		}
+	}
+
+	const probeCmd = `if command -v ufw >/dev/null 2>&1; then echo ufw; elif command -v firewall-cmd >/dev/null 2>&1; then echo firewalld; else echo none; fi`
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+		}
+		out, err := RunOnTarget(hostID, []string{"sh", "-c", probeCmd})
+		b := strings.TrimSpace(out)
+		if err != nil || b == "" {
+			lastErr = fmt.Errorf("探测输出空(err=%v)", err)
+			continue // 传输抖动, 重试
+		}
+		fwSetBackendCache(hostID, b)
+		switch b {
+		case "ufw":
+			return b, ufwActiveEx(ex), true, ""
+		case "firewalld":
+			return b, firewalldRunningEx(ex), true, ""
+		default: // none: 目标确实没装
+			return "none", false, false, "目标主机未检测到 ufw / firewalld"
+		}
+	}
+	// 三次探测全失败
+	if c := fwCachedBackend(hostID); c == "none" {
+		return "none", false, false, "目标主机未检测到 ufw / firewalld"
+	}
+	_ = lastErr
+	return "unknown", false, false, "目标主机探测失败(连接抖动), 请重试"
+}
+
+// fwBackendCache 按主机缓存最近已知防火墙后端, 吸收探测瞬间的传输抖动。
+var (
+	fwBackendMu    sync.Mutex
+	fwBackendCache = map[string]fwBackendEntry{}
+)
+
+type fwBackendEntry struct {
+	backend string
+	at      time.Time
+}
+
+func fwSetBackendCache(hostID, backend string) {
+	fwBackendMu.Lock()
+	fwBackendCache[hostID] = fwBackendEntry{backend: backend, at: time.Now()}
+	fwBackendMu.Unlock()
+}
+
+func fwCachedBackend(hostID string) string {
+	fwBackendMu.Lock()
+	defer fwBackendMu.Unlock()
+	e, ok := fwBackendCache[hostID]
+	if !ok || time.Since(e.at) > 15*time.Minute {
+		return ""
+	}
+	return e.backend
+}
+
+// displayTarget 审计与响应里展示的目标主机名。
+func displayTarget(hostID string) string {
+	if IsLocalTarget(hostID) {
+		return "本机(server)"
+	}
+	if h := resolveAnsibleHost(hostID); h != nil {
+		name := h.Alias
+		if name == "" {
+			name = h.Hostname
+		}
+		if name == "" {
+			name = h.Addr
+		}
+		return name + "(" + h.Addr + ")"
+	}
+	return hostID
+}
+
+// verifyFirewallState 写操作后的回读验证: 状态必须真实变化才返回 true。
+// systemd 状态切换存在短暂过渡态(deactivating 等), 采用轮询窗口(最长6s)等待到位。
+func verifyFirewallState(target, backend, action string) bool {
+	var want string
+	switch action {
+	case "start", "restart":
+		want = "active"
+	case "stop":
+		want = "inactive"
+	default:
+		return true // 规则类操作以命令退出码为准
+	}
+
+	check := func() string {
+		switch backend {
+		case "firewalld":
+			// 注意: is-active 在 inactive 时退出码为 3, 只看输出文本
+			out, _ := RunOnTarget(target, []string{"systemctl", "is-active", "firewalld"})
+			return strings.TrimSpace(out)
+		case "ufw":
+			out, _ := RunOnTarget(target, []string{"ufw", "status"})
+			if strings.Contains(out, "Status: active") {
+				return "active"
+			}
+			return "inactive"
+		default:
+			return want // 无已知探测方式, 以命令退出码为准
+		}
+	}
+
+	if backend != "firewalld" && backend != "ufw" {
+		return true
+	}
+	deadline := time.Now().Add(6 * time.Second)
+	var lastGot string
+	for {
+		lastGot = check()
+		if lastGot == want {
+			return true
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[FW-VERIFY] 目标=%s backend=%s action=%s want=%s 但持续读到 %q", displayTarget(target), backend, action, want, lastGot)
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 // FirewallZones 处理 GET /api/core/firewall/zones
 func FirewallZones(w http.ResponseWriter, r *http.Request) {
-	zones, _ := runCmd("firewall-cmd --get-zones")
-	zone, _ := runCmd("firewall-cmd --get-default-zone")
-	active, _ := runCmd("firewall-cmd --get-active-zones")
+	ex := newFwExec(HostIDFromRequest(r))
+	zones, _ := ex("firewall-cmd --get-zones")
+	zone, _ := ex("firewall-cmd --get-default-zone")
+	active, _ := ex("firewall-cmd --get-active-zones")
 	WriteJSON(w, map[string]any{
 		"all":     strings.Fields(zones),
 		"default": zone,
@@ -128,7 +305,8 @@ func FirewallZones(w http.ResponseWriter, r *http.Request) {
 
 // FirewallRichRules 处理 GET /api/core/firewall/rich-rules
 func FirewallRichRules(w http.ResponseWriter, r *http.Request) {
-	out, err := runCmd("firewall-cmd --list-rich-rules")
+	ex := newFwExec(HostIDFromRequest(r))
+	out, err := ex("firewall-cmd --list-rich-rules")
 	if err != nil {
 		WriteJSON(w, map[string]any{"rules": []string{}, "note": "firewalld 不可用"})
 		return
@@ -145,7 +323,8 @@ func FirewallRichRules(w http.ResponseWriter, r *http.Request) {
 
 // FirewallForwardPorts 处理 GET /api/core/firewall/forward-ports
 func FirewallForwardPorts(w http.ResponseWriter, r *http.Request) {
-	out, err := runCmd("firewall-cmd --list-forward-ports")
+	ex := newFwExec(HostIDFromRequest(r))
+	out, err := ex("firewall-cmd --list-forward-ports")
 	if err != nil {
 		WriteJSON(w, map[string]any{"ports": []string{}, "note": "firewalld 不可用"})
 		return
@@ -164,8 +343,14 @@ func FirewallForwardPorts(w http.ResponseWriter, r *http.Request) {
 
 // FirewallStatusHandler 处理 GET /api/core/firewall
 func FirewallStatusHandler(w http.ResponseWriter, r *http.Request) {
-	b, running, m, msg := detectBackend()
-	st := FirewallStatus{OS: runtime.GOOS, Backend: b, Running: running, Manageable: m, Message: msg}
+	hostID := HostIDFromRequest(r)
+	b, running, m, msg := detectBackendFor(hostID)
+	osName := runtime.GOOS
+	if !IsLocalTarget(hostID) {
+		osName = "linux(远程)"
+	}
+	st := FirewallStatus{OS: osName, Backend: b, Running: running, Manageable: m, Message: msg}
+	st.Message += " · 目标: " + displayTarget(hostID)
 	if st.Message == "" {
 		st.Message = "可读写(环境支持)"
 	}
@@ -174,12 +359,12 @@ func FirewallStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 // FirewallRules 处理 GET /api/core/firewall/rules —— 真实读取当前规则(尽力而为)。
 func FirewallRules(w http.ResponseWriter, r *http.Request) {
+	hostID := HostIDFromRequest(r)
 	var rules []FirewallRule
-	switch runtime.GOOS {
-	case "windows":
+	if IsLocalTarget(hostID) && runtime.GOOS == "windows" {
 		rules = parseNetshRules()
-	default:
-		rules = parseLinuxRules()
+	} else {
+		rules = parseLinuxRulesEx(newFwExec(hostID))
 	}
 	resp := map[string]any{"rules": rules, "count": len(rules)}
 	if len(rules) == 0 {
@@ -241,12 +426,15 @@ func parseNetshRules() []FirewallRule {
 	return rules
 }
 
-func parseLinuxRules() []FirewallRule {
-	if _, err := exec.LookPath("ufw"); err == nil {
-		out, err := exec.Command("ufw", "status", "numbered").Output()
+func parseLinuxRules() []FirewallRule { return parseLinuxRulesEx(runCmd) }
+
+// parseLinuxRulesEx 从目标主机读取 ufw / firewalld 规则并解析。
+func parseLinuxRulesEx(ex fwExec) []FirewallRule {
+	if mustOut(ex, "command -v ufw") != "" {
+		out, err := ex("ufw status numbered")
 		if err == nil {
 			var rules []FirewallRule
-			for _, line := range strings.Split(string(out), "\n") {
+			for _, line := range strings.Split(out, "\n") {
 				line = strings.TrimSpace(line)
 				if !strings.HasPrefix(line, "[") {
 					continue
@@ -272,12 +460,37 @@ func parseLinuxRules() []FirewallRule {
 			return rules
 		}
 	}
+	if mustOut(ex, "command -v firewall-cmd") != "" {
+		var rules []FirewallRule
+		if out, err := ex("firewall-cmd --list-ports"); err == nil {
+			for _, tok := range strings.Fields(out) {
+				pp := strings.SplitN(tok, "/", 2)
+				r := FirewallRule{Name: "firewalld:" + tok, Action: "ALLOW", Direction: "IN"}
+				if len(pp) == 2 {
+					r.LocalPort, r.Protocol = pp[0], pp[1]
+				} else {
+					r.LocalPort = tok
+				}
+				rules = append(rules, r)
+			}
+		}
+		if out, err := ex("firewall-cmd --list-services"); err == nil {
+			for _, svc := range strings.Fields(out) {
+				rules = append(rules, FirewallRule{
+					Name: "firewalld:service:" + svc, Action: "ALLOW", Direction: "IN",
+					LocalPort: svc, Protocol: "service",
+				})
+			}
+		}
+		return rules
+	}
 	return nil
 }
 
 // ── 写入端点(安全骨架) ──
 
 type fwCmdParams struct {
+	Host       string // 目标主机ID(空=本机); 切换主机后所有操作必须落在所选主机
 	Action     string
 	Port       string
 	Proto      string
@@ -386,7 +599,20 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backend, _, manageable, _ := detectBackend()
+	target := strings.TrimSpace(p.Host)
+	backend, _, manageable, msg := detectBackendFor(target)
+	// 后端探测失败/不支持 ≠ 参数非法: 分流报错, 前端可提示重试
+	switch backend {
+	case "ufw", "firewalld", "netsh":
+	default:
+		WriteJSON(w, map[string]any{
+			"ok":        false,
+			"error":     "目标主机防火墙后端不可用(" + backend + "): " + msg,
+			"target":    displayTarget(target),
+			"retryable": true,
+		})
+		return
+	}
 	cmdArgs, lockRisk := buildFirewallCommand(backend, p)
 	if cmdArgs == nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(port/cidr/proto/zone/rich-rule 格式校验失败)"})
@@ -398,6 +624,7 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 		TS:         time.Now().Format(time.RFC3339),
 		Actor:      "demo-anonymous",
 		Role:       "demo",
+		Target:     displayTarget(target),
 		Credential: backend,
 		Action:     p.Action,
 		Params:     cmdStr,
@@ -414,26 +641,33 @@ func FirewallAction(w http.ResponseWriter, r *http.Request) {
 			"dryRun":      true,
 			"command":     cmdStr,
 			"lockoutRisk": lockRisk,
-			"message":     "当前环境为只读演示,未真正执行;该命令将在 Linux + 特权的目标主机上生效。",
+			"target":      entry.Target,
+			"message":     "目标不可写或预览模式,未执行。" + msg,
 			"audit":       entry,
 		})
 		return
 	}
 
-	// 真正执行(仅 Linux + 特权环境可达): 参数数组直传, 不经过 shell。
-	out, err := exec.Command(cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
+	// 真正执行: 统一经 RunOnTarget 分发到目标主机(本机 exec / 远程 SSH)。
+	out, err := RunOnTarget(target, cmdArgs)
+	entry.Result = "ok"
 	if err != nil {
-		entry.Result = "fail: " + strings.TrimSpace(string(out))
-	} else {
-		entry.Result = "ok"
+		entry.Result = "fail: " + strings.TrimSpace(out)
+	}
+	// 回读验证: 防止"显示已执行实际没执行"
+	entry.Verified = err == nil && verifyFirewallState(target, backend, p.Action)
+	if err == nil && !entry.Verified {
+		entry.Result += "(回读不符)"
 	}
 	log.Printf("[FW-AUDIT] %s", mustJSON(entry))
 	fwAudits.add(entry)
 	WriteJSON(w, map[string]any{
 		"ok":          err == nil,
+		"verified":    entry.Verified,
+		"target":      entry.Target,
 		"command":     cmdStr,
 		"lockoutRisk": lockRisk,
-		"output":      strings.TrimSpace(string(out)),
+		"output":      strings.TrimSpace(out),
 		"audit":       entry,
 	})
 }
@@ -484,9 +718,9 @@ func buildFirewallCommand(backend string, p fwCmdParams) ([]string, bool) {
 	case "restart":
 		switch backend {
 		case "ufw":
-			return []string{"ufw", "reload"}, false
+			return []string{"systemctl", "restart", "ufw"}, false
 		case "firewalld":
-			return []string{"firewall-cmd", "--reload"}, false
+			return []string{"systemctl", "restart", "firewalld"}, false
 		case "netsh":
 			return []string{"netsh", "advfirewall", "set", "allprofiles", "state", "on"}, false
 		}

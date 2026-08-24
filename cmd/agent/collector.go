@@ -155,9 +155,15 @@ func (c *collector) collectNodeData(s *metrics.Snapshot) {
 }
 
 func collectServices() []metrics.ServiceInfo {
-	out, err := exec.Command("systemctl", "list-units", "--type=service", "--no-legend", "--no-pager").Output()
+	// 与 server 端同一标准: --all 含已停止单元; 跳过 ● 前缀与 not-found 悬空引用;
+	// 再用 list-unit-files 差集补齐"已安装但未加载"的服务(metrics.MergeStoppedUnits 共享实现)。
+	out, err := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager").Output()
 	if err != nil {
 		return nil
+	}
+	var ufOut []byte
+	if uf, e := exec.Command("systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager").Output(); e == nil {
+		ufOut = uf
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) == 0 {
@@ -167,13 +173,16 @@ func collectServices() []metrics.ServiceInfo {
 	// Build a map of unit -> properties from a single systemctl show call
 	units := make([]string, 0, len(lines))
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
+		line = metrics.NormUnitLine(line)
 		if line == "" {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 1 {
+		if len(fields) < 4 {
 			continue
+		}
+		if fields[1] == "not-found" {
+			continue // 悬空引用残影, 跳过
 		}
 		units = append(units, fields[0])
 	}
@@ -246,13 +255,16 @@ func collectServices() []metrics.ServiceInfo {
 
 	var svcs []metrics.ServiceInfo
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
+		line = metrics.NormUnitLine(line)
 		if line == "" {
 			continue
 		}
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
 			continue
+		}
+		if fields[1] == "not-found" {
+			continue // 悬空引用残影, 跳过
 		}
 		unit := fields[0]
 		si := metrics.ServiceInfo{
@@ -278,7 +290,7 @@ func collectServices() []metrics.ServiceInfo {
 		}
 		svcs = append(svcs, si)
 	}
-	return svcs
+	return metrics.MergeStoppedUnits(svcs, string(ufOut))
 }
 
 func collectProcesses() []metrics.ProcessInfo {

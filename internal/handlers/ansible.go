@@ -318,6 +318,7 @@ func AnsibleHostsUpdate(w http.ResponseWriter, r *http.Request) {
 	if remotePool != nil {
 		remotePool.Remove(h.ID)
 	}
+	invalidateSnapshot(h.ID)
 	WriteJSON(w, map[string]string{"ok": "true"})
 }
 

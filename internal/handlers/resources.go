@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,9 +14,18 @@ import (
 
 func remoteResourceSnapshot(host ansible.Host) *metrics.Snapshot {
 	rmHost := resolveRemoteHost(host)
-	r := remotePool.Exec(rmHost, remote.Cmds)
-
+	// 单条 SSH 会话一次往返采集全部指标(替代逐条开 session 的串行执行)
+	r, err := remotePool.ExecScript(rmHost, remote.SnapshotScript)
 	snap := &metrics.Snapshot{Timestamp: time.Now().Unix()}
+	if err != nil {
+		// 记录真实失败原因(拨号/会话/传输), 便于排查间歇性 502
+		log.Printf("[resources] 主机 %s(%s:%d) 快照采集失败: %v", rmHost.Alias, rmHost.Addr, rmHost.Port, err)
+		return snap
+	}
+	// 关键段缺失同样记一条(脚本异常/输出被截断)
+	if r["Hostname"].Output == "" {
+		log.Printf("[resources] 主机 %s(%s) 快照输出异常: sections=%d", rmHost.Alias, rmHost.Addr, len(r))
+	}
 
 	snap.Host.Hostname = r["Hostname"].Output
 	snap.Host.Platform = r["OsRelease"].Output
@@ -24,7 +34,11 @@ func remoteResourceSnapshot(host ansible.Host) *metrics.Snapshot {
 	snap.CPU.Percent = parseFloat64(r["CpuUsage"].Output)
 	snap.CPU.Cores = int(parseUint64(r["CpuCores"].Output))
 	snap.CPU.Model = r["CpuModel"].Output
+	// 每核占用: 与总占用共用同一组 /proc/stat 双采样, 空格分隔的百分比列表
 	snap.CPU.PerCore = []float64{}
+	for _, s := range strings.Fields(r["CpuPerCore"].Output) {
+		snap.CPU.PerCore = append(snap.CPU.PerCore, parseFloat64(s))
+	}
 
 	memParts := strings.Fields(r["MemInfo"].Output)
 	if len(memParts) >= 3 {
@@ -92,14 +106,10 @@ func Resources(w http.ResponseWriter, r *http.Request) {
 						WriteJSON(w, snap)
 						return
 					}
-				if agentHub.IsOnline(hostID) {
-					// 注意: 不能用 202 — 202 在 Response.ok(200-299) 范围内, 前端 getJSON 不会 reject,
-					// 会把 {error:...} 当快照解析导致渲染崩溃(白屏)。用 503 让前端走错误分支。
-					writeErr(w, "Agent 在线但尚无数据", http.StatusServiceUnavailable)
-					return
+				// Agent 在线但快照未就绪(刚注册/重启窗口): 不报错,
+				// 继续走下方 SSH 回退, 前端始终拿到可用数据
 				}
-				}
-				snap := remoteResourceSnapshot(h)
+				snap := cachedRemoteSnapshot(h)
 				if snap.CPU.Percent != 0 || snap.Host.Hostname != "" {
 					WriteJSON(w, snap)
 					return

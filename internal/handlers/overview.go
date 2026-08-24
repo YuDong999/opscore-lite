@@ -9,7 +9,6 @@ import (
 
 	"opscore/internal/ansible"
 	"opscore/internal/metrics"
-	"opscore/internal/remote"
 )
 
 const localHostID = "_local"
@@ -215,53 +214,35 @@ func remoteOverviewHost(h ansible.Host, now time.Time) OverviewHost {
 		}
 	}
 
-	// Agent 离线 → SSH 回退 (池化连接, 拨号失败立即返回)
-	r := remotePool.Exec(rmHost, remote.Cmds)
+	// Agent 离线 → SSH 回退: 走共享快照缓存(与资源页同一份 2s TTL 数据,
+	// 单会话一次往返采集, 并发轮询由 singleflight 合并), 不再每次全量重跑
+	o := OverviewHost{ID: rmHost.ID, Alias: rmHost.Alias, Addr: rmHost.Addr}
+	snap := cachedRemoteSnapshot(h)
 
-	o := OverviewHost{
-		ID:    rmHost.ID,
-		Alias: rmHost.Alias,
-		Addr:  rmHost.Addr,
-	}
-
-	if r["CpuUsage"].Error != "" {
-		return o
+	if snap.Host.Hostname == "" {
+		return o // 采集失败(传输层错误/主机不可达), 返回离线占位
 	}
 
 	o.Online = true
+	o.CPU = snap.CPU.Percent
 
-	o.CPU = toFloat64(r["CpuUsage"].Output)
-
-	memParts := strings.Fields(r["MemInfo"].Output)
-	if len(memParts) >= 3 {
-		o.MemTotal = toInt64(memParts[0])
-		o.MemUsed = toInt64(memParts[1])
-		if o.MemTotal > 0 {
-			o.MemPct = float64(o.MemUsed) / float64(o.MemTotal) * 100
-		}
+	o.MemTotal = int64(snap.Memory.Total)
+	o.MemUsed = int64(snap.Memory.Used)
+	if snap.Memory.Total > 0 {
+		o.MemPct = float64(snap.Memory.Used) / float64(snap.Memory.Total) * 100
 	}
 
-	diskLines := strings.Split(strings.TrimSpace(r["DiskInfo"].Output), "\n")
-	for _, line := range diskLines {
-		parts := strings.Fields(line)
-		if len(parts) >= 3 {
-			o.DiskTotal += toInt64(parts[1])
-			o.DiskUsed += toInt64(parts[2])
-		}
+	for _, d := range snap.Disks {
+		o.DiskTotal += int64(d.Total)
+		o.DiskUsed += int64(d.Used)
 	}
 	if o.DiskTotal > 0 {
 		o.DiskPct = float64(o.DiskUsed) / float64(o.DiskTotal) * 100
 	}
 
-	netLines := strings.Split(strings.TrimSpace(r["NetDev"].Output), "\n")
 	nicData := map[string]nicSample{}
-	for _, line := range netLines {
-		parts := strings.Fields(line)
-		if len(parts) >= 3 && parts[0] != "lo" {
-			rx := toInt64(parts[1])
-			tx := toInt64(parts[2])
-			nicData[parts[0]] = nicSample{rx: rx, tx: tx}
-		}
+	for _, nic := range snap.Net.ByNic {
+		nicData[nic.Name] = nicSample{rx: int64(nic.RxTotal), tx: int64(nic.TxTotal)}
 	}
 
 	if prev := netPrevOf(rmHost.ID); prev != nil {
@@ -285,10 +266,10 @@ func remoteOverviewHost(h ansible.Host, now time.Time) OverviewHost {
 	lastNet[rmHost.ID] = nicData
 	lastNetMu.Unlock()
 
-	o.Uptime = toInt64(r["Uptime"].Output)
-	o.Hostname = r["Hostname"].Output
+	o.Uptime = int64(snap.Host.Uptime)
+	o.Hostname = snap.Host.Hostname
 
-	osLines := strings.Split(r["OsRelease"].Output, "\n")
+	osLines := strings.Split(snap.Host.Platform, "\n")
 	for _, l := range osLines {
 		if strings.HasPrefix(l, "NAME=") {
 			o.OS = strings.TrimPrefix(l, "NAME=")

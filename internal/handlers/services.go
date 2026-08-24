@@ -3,14 +3,18 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"opscore/internal/ansible"
+	"opscore/internal/metrics"
 
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -106,7 +110,10 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 
 	rmHost := resolveRemoteHost(*h)
 
-	cmds := map[string]string{"systemctl": `systemctl list-units --type=service --no-legend --no-pager 2>/dev/null`}
+	cmds := map[string]string{
+		"systemctl": `systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null`,
+		"unitfiles": `systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null`,
+	}
 	res := remotePool.Exec(rmHost, cmds)
 	if res["systemctl"].Error != "" {
 		return nil, fmt.Errorf("%s", res["systemctl"].Error)
@@ -120,7 +127,7 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 			if line == "" {
 				continue
 			}
-			fields := strings.Fields(line)
+			fields := strings.Fields(metrics.NormUnitLine(line))
 			if len(fields) < 3 {
 				continue
 			}
@@ -142,8 +149,12 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := strings.Fields(metrics.NormUnitLine(line))
 		if len(fields) < 4 {
+			continue
+		}
+		// LOAD=not-found: 悬空引用(被 wants 但单元文件已不存在), 无法操作, 不进列表
+		if fields[1] == "not-found" {
 			continue
 		}
 		units = append(units, fields[0])
@@ -177,9 +188,12 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := strings.Fields(metrics.NormUnitLine(line))
 		if len(fields) < 4 {
 			continue
+		}
+		if fields[1] == "not-found" {
+			continue // 悬空引用残影, 跳过
 		}
 		unit := fields[0]
 		si := ServiceInfo{ID: unit, Name: unit, Status: fields[2], SubStatus: fields[3], Description: strings.Join(fields[4:], " ")}
@@ -209,6 +223,17 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		si.LogSource = "journalctl"
 		svcs = append(svcs, si)
 	}
+	have := map[string]bool{}
+	for _, it := range svcs {
+		have[it.ID] = true
+	}
+	for _, stub := range metrics.StoppedUnitStubs(res["unitfiles"].Output, have) {
+		svcs = append(svcs, ServiceInfo{
+			ID: stub.ID, Name: stub.Name,
+			Status: stub.Status, SubStatus: stub.SubStatus,
+			Description: stub.Description,
+		})
+	}
 	return svcs, nil
 }
 
@@ -231,7 +256,7 @@ func fetchPsStats() (map[int32]float64, map[int32]float32) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := strings.Fields(metrics.NormUnitLine(line))
 		if len(fields) < 3 {
 			continue
 		}
@@ -248,22 +273,25 @@ func fetchPsStats() (map[int32]float64, map[int32]float32) {
 	return cpuMap, memMap
 }
 
-// listSystemd 解析 `systemctl list-units --type=service`,把 Linux 命令变成结构化数据。
-// 若 systemctl 不可用(如容器环境),降级为进程列表。
+// listSystemd 解析 systemd 单元(--all 含已停止的), 转为结构化数据; 不可用时降级为进程列表。
 func listSystemd() []ServiceInfo {
-	out, err := exec.Command("systemctl", "list-units", "--type=service", "--no-legend", "--no-pager").Output()
+	out, err := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager").Output()
 	if err != nil {
 		return listProcesses()
 	}
+	ufOut, _ := exec.Command("systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager").Output()
 	cpuMap, memMap := fetchPsStats()
 	var res []ServiceInfo
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := strings.Fields(metrics.NormUnitLine(line))
 		if len(fields) < 4 {
 			continue
+		}
+		if fields[1] == "not-found" {
+			continue // 悬空引用残影, 跳过
 		}
 		unit := fields[0]
 		active := fields[2]
@@ -304,6 +332,17 @@ func listSystemd() []ServiceInfo {
 			si.LogSource = "both"
 		}
 		res = append(res, si)
+	}
+	have := map[string]bool{}
+	for _, it := range res {
+		have[it.ID] = true
+	}
+	for _, stub := range metrics.StoppedUnitStubs(string(ufOut), have) {
+		res = append(res, ServiceInfo{
+			ID: stub.ID, Name: stub.Name,
+			Status: stub.Status, SubStatus: stub.SubStatus,
+			Description: stub.Description,
+		})
 	}
 	return res
 }
@@ -358,6 +397,9 @@ func listProcesses() []ServiceInfo {
 }
 
 // ServiceAction 对指定单元执行 start/stop/restart —— 把运维命令变成可视化按钮。
+// validUnitName systemd 单元名白名单: 防止经 SSH 分发时的命令注入。
+var validUnitName = regexp.MustCompile(`^[A-Za-z0-9_.@:\\-]+\.service$`)
+
 func ServiceAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -366,13 +408,14 @@ func ServiceAction(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID     string `json:"id"`
 		Action string `json:"action"` // start | stop | restart
+		Host   string `json:"host"`   // 目标主机ID(空=本机); 切换主机后的操作必须落在所选主机
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return
 	}
-	if runtime.GOOS != "linux" {
-		WriteJSON(w, map[string]any{"ok": false, "error": "服务启停仅支持 Linux / systemd(当前 " + runtime.GOOS + ")"})
+	if !validUnitName.MatchString(body.ID) {
+		WriteJSON(w, map[string]any{"ok": false, "error": "非法的服务单元名"})
 		return
 	}
 	switch body.Action {
@@ -381,13 +424,46 @@ func ServiceAction(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "action 必须是 start/stop/restart"})
 		return
 	}
-	cmd := exec.Command("systemctl", body.Action, body.ID)
-	out, err := cmd.CombinedOutput()
+
+	argv := []string{"systemctl", body.Action, body.ID}
+	out, err := RunOnTarget(body.Host, argv)
 	if err != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": strings.TrimSpace(string(out))})
+		WriteJSON(w, map[string]any{"ok": false, "error": strings.TrimSpace(out), "target": displayTarget(body.Host)})
 		return
 	}
-	WriteJSON(w, map[string]any{"ok": true, "action": body.Action, "id": body.ID})
+	// 回读验证(轮询窗口): 状态必须真实变化才报成功
+	wantActive := body.Action != "stop"
+	verified := verifyServiceState(body.Host, body.ID, wantActive)
+	WriteJSON(w, map[string]any{
+		"ok":       true,
+		"verified": verified,
+		"target":   displayTarget(body.Host),
+		"action":   body.Action,
+		"id":       body.ID,
+	})
+}
+
+// verifyServiceState 服务操作后回读 systemctl is-active, 最长等待 8s(过渡态)。
+func verifyServiceState(hostID, unit string, wantActive bool) bool {
+	check := func() string {
+		out, _ := RunOnTarget(hostID, []string{"systemctl", "is-active", unit})
+		return strings.TrimSpace(out)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		st := check()
+		if wantActive && st == "active" {
+			return true
+		}
+		if !wantActive && (st == "inactive" || st == "failed") {
+			return true
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[services] 回读不符: %s %s want-active=%v got=%q", displayTarget(hostID), unit, wantActive, st)
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // round2 将浮点数保留 2 位小数（四舍五入）。

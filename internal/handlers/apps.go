@@ -83,6 +83,7 @@ type HealthSummary struct {
 	Ok   int `json:"ok"`
 	Warn int `json:"warn"`
 	Down int `json:"down"`
+	Skip int `json:"skip"` // 因前置条件不满足而未探测(如 nginx 未运行), 不算异常
 }
 
 type AppsResp struct {
@@ -542,8 +543,8 @@ func probeSiteHealth(hostID string, sites []AppSite) {
 	for i := range sites {
 		s := &sites[i]
 		if !s.NginxActive {
-			s.Health = "down"
-			s.HealthNote = "nginx 未运行"
+			s.Health = "skip"
+			s.HealthNote = "nginx 未运行, 未探测(不计入异常)"
 			continue
 		}
 		code, note := probePorts(hostID, s.Listens)
@@ -582,19 +583,33 @@ func probePorts(hostID string, ports []string) (int, string) {
 	if len(ports) == 0 {
 		return 0, "无监听端口"
 	}
+	// 各端口并发探测(此前串行, 多端口站点最坏 3s×N), 单端口超时 3s→1s
+	type probeRes struct{ code int }
+	ch := make(chan int, len(ports))
 	for _, p := range ports {
-		cmds := map[string]string{"curl": fmt.Sprintf(`curl -s -o /dev/null -m 3 -w '%%{http_code}' http://127.0.0.1:%s/ 2>/dev/null`, p)}
-		res := execAppsCmds(hostID, cmds)
-		if res["curl"].Error != "" {
-			continue
-		}
-		code, err := strconv.Atoi(strings.TrimSpace(res["curl"].Output))
-		if err == nil && code > 0 {
-			if code >= 200 && code < 400 {
-				return code, ""
+		go func(p string) {
+			cmds := map[string]string{"curl": fmt.Sprintf(`curl -s -o /dev/null -m 1 -w '%%{http_code}' http://127.0.0.1:%s/ 2>/dev/null`, p)}
+			res := execAppsCmds(hostID, cmds)
+			code, err := strconv.Atoi(strings.TrimSpace(res["curl"].Output))
+			if err == nil && code > 0 {
+				ch <- code
+			} else {
+				ch <- 0
 			}
+		}(p)
+	}
+	fallback := 0
+	for range ports {
+		code := <-ch
+		if code >= 200 && code < 400 {
 			return code, ""
 		}
+		if code > fallback {
+			fallback = code
+		}
+	}
+	if fallback > 0 {
+		return fallback, ""
 	}
 	return 0, "端口无响应"
 }
@@ -726,11 +741,17 @@ func collectSiteStats(hostID, site, accessLog, win string) AppSiteStats {
 // ===== Handlers =====
 
 // AppsHandler GET /api/core/apps?host=<id>
+// AppsHandler 应用与容器总览(读): 5s TTL 缓存 + singleflight,
+// 切换主机/重复进入时秒回; 探测类冷访问由后台合并重建。
 func AppsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	ServeCachedJSON(w, r, 5*time.Second, func() any { return appsBuild(r) })
+}
+
+func appsBuild(r *http.Request) any {
 	hostID := r.URL.Query().Get("host")
 
 	cmds := map[string]string{
@@ -803,6 +824,8 @@ func AppsHandler(w http.ResponseWriter, r *http.Request) {
 				summary.Ok++
 			case "warn":
 				summary.Warn++
+			case "skip":
+				summary.Skip++
 			default:
 				summary.Down++
 			}
@@ -824,7 +847,7 @@ func AppsHandler(w http.ResponseWriter, r *http.Request) {
 		if !installed {
 			resp.Errors = append(resp.Errors, "未检测到 nginx")
 		}
-		WriteJSON(w, resp)
+		return resp
 	}
 }
 

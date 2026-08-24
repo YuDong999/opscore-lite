@@ -274,10 +274,6 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if !isRoot() {
-		WriteJSON(w, map[string]any{"error": "需要 root 权限", "permission": "user"})
-		return
-	}
 	var body struct {
 		Action     string `json:"action"`
 		Device     string `json:"device"`
@@ -287,9 +283,20 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		Options    string `json:"options"`
 		Start      string `json:"start"`
 		End        string `json:"end"`
+		Host       string `json:"host"` // 目标主机ID(空=本机)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteJSON(w, map[string]any{"error": "请求格式错误", "permission": "root"})
+		return
+	}
+
+	// 切换主机后的操作必须落在目标主机上(前端 body.host 此前被忽略)
+	if !IsLocalTarget(body.Host) {
+		diskActionRemote(w, body.Host, &body)
+		return
+	}
+	if !isRoot() {
+		WriteJSON(w, map[string]any{"error": "需要 root 权限", "permission": "user"})
 		return
 	}
 
@@ -440,6 +447,148 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		resp["output"] = string(out)
 	}
 	WriteJSON(w, resp)
+}
+
+// diskActionRemote 磁盘操作的远程分发: 与本机分支语义一致, 经 RunOnTarget 落到目标主机。
+// 只读类(smart/info)与写操作(mount/umount/delete/partition/format)统一处理;
+// partition 的空闲空间探测与新分区识别同样经 SSH 完成。
+func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
+	Action     string `json:"action"`
+	Device     string `json:"device"`
+	Partition  string `json:"partition"`
+	Mountpoint string `json:"mountpoint"`
+	Fstype     string `json:"fstype"`
+	Options    string `json:"options"`
+	Start      string `json:"start"`
+	End        string `json:"end"`
+	Host       string `json:"host"`
+}) {
+	target := displayTarget(hostID)
+	run := func(argv []string) (string, error) { return RunOnTarget(hostID, argv) }
+	resp := map[string]any{"permission": "root", "target": target}
+
+	switch body.Action {
+	case "mount":
+		if body.Device == "" || body.Mountpoint == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device 或 mountpoint", "target": target})
+			return
+		}
+		argv := []string{"mount"}
+		if body.Fstype != "" {
+			argv = append([]string{"-t", body.Fstype}, argv...)
+		}
+		if body.Options != "" {
+			argv = append([]string{"-o", body.Options}, argv...)
+		}
+		argv = append(argv, body.Device, body.Mountpoint)
+		out, err := run(argv)
+		fillDiskResp(resp, out, err)
+
+	case "umount":
+		t := body.Mountpoint
+		if t == "" {
+			t = body.Device
+		}
+		out, err := run([]string{"umount", t})
+		fillDiskResp(resp, out, err)
+
+	case "delete":
+		dev, verr := wholeDiskDev(body.Device)
+		if verr != "" {
+			WriteJSON(w, map[string]any{"error": verr, "target": target})
+			return
+		}
+		out, err := run([]string{"parted", "-s", dev, "rm", body.Partition})
+		if err == nil {
+			run([]string{"partprobe", dev})
+		}
+		fillDiskResp(resp, out, err)
+
+	case "partition":
+		dev, verr := wholeDiskDev(body.Device)
+		if verr != "" {
+			WriteJSON(w, map[string]any{"error": verr, "target": target})
+			return
+		}
+		start, end := body.Start, body.End
+		if start == "" || end == "" {
+			freeOut, _ := run([]string{"parted", "-s", dev, "print", "free"})
+			fs := parseFreeSpace(freeOut)
+			if fs.start == "" || fs.end == "" {
+				WriteJSON(w, map[string]any{"error": "未找到可用空闲空间", "target": target})
+				return
+			}
+			start, end = fs.start, fs.end
+		}
+		beforeOut, _ := run([]string{"lsblk", "-l", "-n", "-o", "NAME"})
+		before := getDeviceNames(beforeOut)
+		out, err := run([]string{"parted", "-s", dev, "mkpart", "primary", "xfs", start, end})
+		if err == nil {
+			run([]string{"partprobe", dev})
+		}
+		newPartition := ""
+		afterOut, _ := run([]string{"lsblk", "-l", "-n", "-o", "NAME"})
+		for _, d := range getDeviceNames(afterOut) {
+			if !contains(before, d) && strings.HasPrefix(d, filepath.Base(dev)) {
+				newPartition = "/dev/" + d
+				break
+			}
+		}
+		fillDiskResp(resp, out, err)
+		if newPartition != "" {
+			resp["newPartition"] = newPartition
+		}
+
+	case "format":
+		dev, verr := wholeDiskDev(body.Device)
+		if verr != "" {
+			WriteJSON(w, map[string]any{"error": verr, "target": target})
+			return
+		}
+		ft := body.Fstype
+		if ft == "" {
+			ft = "xfs"
+		}
+		var argv []string
+		switch ft {
+		case "xfs":
+			argv = []string{"mkfs.xfs", "-f", dev}
+		case "ext4":
+			argv = []string{"mkfs.ext4", "-F", dev}
+		default:
+			WriteJSON(w, map[string]any{"error": "不支持的格式: " + ft, "target": target})
+			return
+		}
+		out, err := run(argv)
+		fillDiskResp(resp, out, err)
+
+	case "smart":
+		dev := body.Device
+		if dev == "" {
+			WriteJSON(w, map[string]any{"error": "缺少 device", "target": target})
+			return
+		}
+		if !strings.HasPrefix(dev, "/dev/") {
+			dev = "/dev/" + dev
+		}
+		out, _ := run([]string{"smartctl", "-a", dev})
+		resp["output"] = out
+
+	default:
+		WriteJSON(w, map[string]any{"error": "未知操作: " + body.Action, "target": target})
+		return
+	}
+	WriteJSON(w, resp)
+}
+
+func fillDiskResp(resp map[string]any, out string, err error) {
+	if err != nil {
+		resp["error"] = err.Error()
+		resp["output"] = out
+		return
+	}
+	resp["ok"] = true
+	resp["output"] = out
 }
 
 // runCapture 执行命令并捕获输出

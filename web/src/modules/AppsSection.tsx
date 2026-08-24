@@ -154,6 +154,22 @@ export default function AppsSection() {
         />
       )}
 
+      {tab === 'overview' && summary && (summary.warn > 0 || summary.down > 0) && (
+        <div className="banner banner-err" style={{ gridColumn: '1 / -1', cursor: 'pointer' }}
+             onClick={() => setTab(summary.down > 0 ? (sites.some(x => x.health === 'down') ? 'sites' : 'containers') : 'containers')}>
+          异常 {summary.down} · 警告 {summary.warn}
+          {(() => {
+            const names = [
+              ...containers.filter(c => c.health === 'down').map(c => `容器:${c.name}`),
+              ...containers.filter(c => c.health === 'warn').map(c => `容器:${c.name}(警告)`),
+              ...sites.filter(s => s.health === 'down').map(s => `站点:${s.name}${s.healthNote ? '(' + s.healthNote + ')' : ''}`),
+              ...sites.filter(s => s.health === 'warn').map(s => `站点:${s.name}(警告)`),
+            ]
+            return <div style={{ marginTop: 4 }}>{"点击此处查看 → "}{names.join('、')}</div>
+          })()}
+        </div>
+      )}
+
       {tab === 'containers' && (
         <Card title="容器列表" subtitle={`运行时: ${data.runtime || '未检测到'} · 点击行查看详情`}>
           <div className="table-wrap">
@@ -262,11 +278,7 @@ function OverviewCards({ runtime, nginx, containers, sites, summary }: {
           </div>
         </Card>
       ))}
-      {summary && (summary.warn > 0 || summary.down > 0) && (
-        <div className="banner banner-err" style={{ gridColumn: '1 / -1' }}>
-          存在 {summary.down} 个异常、{summary.warn} 个警告对象，请到对应子页查看。
-        </div>
-      )}
+
     </div>
   )
 }
