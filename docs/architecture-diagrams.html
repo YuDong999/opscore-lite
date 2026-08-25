@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>OpsCore Lite 架构总图</title>
+<style>
+  body{margin:0;background:#f6f8fb;font-family:"Microsoft YaHei","PingFang SC",sans-serif;color:#1e293b}
+  .wrap{width:1500px;margin:0 auto;padding:28px 0 60px}
+  h1{font-size:30px;margin:6px 0 2px;text-align:center}
+  .sub{text-align:center;color:#64748b;font-size:13px;margin-bottom:26px}
+  .sec{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px 18px 8px;margin-bottom:26px;box-shadow:0 2px 10px rgba(15,23,42,.05)}
+  .sec h2{font-size:19px;margin:4px 0 12px;color:#0f172a;border-left:5px solid #3b82f6;padding-left:10px}
+  svg{display:block;width:1464px}
+  text{font-family:"Microsoft YaHei",sans-serif}
+  .t   {font-size:13px;fill:#1e293b;font-weight:600}
+  .ts  {font-size:11px;fill:#475569}
+  .tm  {font-size:10px;fill:#94a3b8}
+  .tw  {font-size:12px;fill:#fff;font-weight:700}
+  .lane{fill:#f8fafc;stroke:#cbd5e1}
+  .laneT{font-size:13px;fill:#475569;font-weight:800}
+  .fe  {fill:#dbeafe;stroke:#2563eb;stroke-width:1.4}
+  .feH {fill:#3b82f6}
+  .srv {fill:#ede9fe;stroke:#7c3aed;stroke-width:1.4}
+  .srvH{fill:#8b5cf6}
+  .hdl {fill:#cffafe;stroke:#0891b2;stroke-width:1.4}
+  .hdlH{fill:#06b6d4}
+  .exe {fill:#fef3c7;stroke:#d97706;stroke-width:1.4}
+  .exeH{fill:#f59e0b}
+  .tgt {fill:#dcfce7;stroke:#16a34a;stroke-width:1.4}
+  .tgtH{fill:#22c55e}
+  .cch {fill:#fce7f3;stroke:#db2777;stroke-width:1.4}
+  .cchH{fill:#ec4899}
+  .secB{fill:#fee2e2;stroke:#dc2626;stroke-width:1.4}
+  .secH{fill:#ef4444}
+  .old {fill:#f1f5f9;stroke:#94a3b8;stroke-dasharray:5 4}
+  .flow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#ah)}
+  .flowG{stroke:#16a34a;stroke-width:1.6;fill:none;marker-end:url(#ag)}
+  .flowR{stroke:#dc2626;stroke-width:1.6;fill:none;marker-end:url(#ar);stroke-dasharray:6 3}
+  .flowB{stroke:#2563eb;stroke-width:1.6;fill:none;marker-end:url(#ab);stroke-dasharray:6 3}
+  .lbl {font-size:10.5px;fill:#334155;background:#fff}
+  .num {font-size:11px;font-weight:800;fill:#fff}
+</style>
+</head>
+<body><div class="wrap">
+<h1>OpsCore Lite · 项目架构总图</h1>
+<div class="sub">运维控制台 Go(net/http) + React18/Vite/ECharts · 更新 2026-08-25 · 含插件热生效 / 三级缓存闭环 / 写操作安全闭环</div>
+
+<!-- ══════════════ 图例 ══════════════ -->
+<div class="sec"><h2>图例</h2>
+<svg viewBox="0 0 1464 74">
+  <rect class="fe"  x="20"  y="14" width="130" height="34" rx="7"/><text class="t" x="85"  y="36" text-anchor="middle">前端 FE</text>
+  <rect class="srv" x="180" y="14" width="170" height="34" rx="7"/><text class="t" x="265" y="36" text-anchor="middle">路由 / 插件机制</text>
+  <rect class="hdl" x="380" y="14" width="170" height="34" rx="7"/><text class="t" x="465" y="36" text-anchor="middle">Handler 业务层</text>
+  <rect class="exe" x="580" y="14" width="170" height="34" rx="7"/><text class="t" x="665" y="36" text-anchor="middle">统一执行层</text>
+  <rect class="cch" x="780" y="14" width="190" height="34" rx="7"/><text class="t" x="875" y="36" text-anchor="middle">三级缓存 (加速)</text>
+  <rect class="tgt" x="1000" y="14" width="170" height="34" rx="7"/><text class="t" x="1085" y="36" text-anchor="middle">远程 Linux 主机</text>
+  <rect class="secB" x="1200" y="14" width="240" height="34" rx="7"/><text class="t" x="1320" y="36" text-anchor="middle">安全校验 / 审计 (红线)</text>
+  <line class="flow" x1="20" y1="62" x2="90" y2="62"/><text class="tm" x="98" y="66">同步调用/请求</text>
+  <line class="flowB" x1="230" y1="62" x2="300" y2="62"/><text class="tm" x="308" y="66">异步/缓存命中捷径</text>
+  <line class="flowR" x1="480" y1="62" x2="550" y2="62"/><text class="tm" x="558" y="66">失败/拒绝分支</text>
+</svg></div>
+
+<!-- ══════════════ 图1 总体分层 ══════════════ -->
+<div class="sec"><h2>① 系统总体分层架构</h2>
+<svg viewBox="0 0 1464 1010">
+<defs>
+  <marker id="ah" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker>
+</defs>
+<!-- FE -->
+<rect class="lane" x="14" y="46" width="330" height="900" rx="12"/>
+<text class="laneT" x="179" y="70" text-anchor="middle">前端 React18 + Vite + ECharts</text>
+<rect class="fe" x="44" y="92" width="270" height="64" rx="8"/>
+<text class="t" x="179" y="114" text-anchor="middle">App.tsx 启动链路</text>
+<text class="ts" x="179" y="131" text-anchor="middle">/api/auth/token 登录闸门 → /api/manifest</text>
+<text class="ts" x="179" y="146" text-anchor="middle">动态侧栏(core组+plugin组) · Routes 注册</text>
+<rect class="fe" x="44" y="176" width="270" height="58" rx="8"/>
+<text class="t" x="179" y="198" text-anchor="middle">HostProvider 主机上下文</text>
+<text class="ts" x="179" y="215" text-anchor="middle">sessionStorage 记忆所选远程主机</text>
+<text class="ts" x="179" y="228" text-anchor="middle">所有 ?host= 参数的来源</text>
+<rect class="fe" x="44" y="254" width="270" height="76" rx="8"/>
+<text class="t" x="179" y="276" text-anchor="middle">api/client.ts 双通道</text>
+<text class="ts" x="179" y="293" text-anchor="middle">getJSON: SWR缓存 TTL2.5s 切换秒出</text>
+<text class="ts" x="179" y="307" text-anchor="middle">postJSON: 写后自动失效同路径缓存</text>
+<text class="ts" x="179" y="321" text-anchor="middle">resources/logs/stats 排除SWR保实时</text>
+<rect class="fe" x="44" y="350" width="270" height="88" rx="8"/>
+<text class="t" x="179" y="372" text-anchor="middle">模块页面 modules/*.tsx</text>
+<text class="ts" x="179" y="389" text-anchor="middle">资源/服务/网络防火墙/诊断</text>
+<text class="ts" x="179" y="403" text-anchor="middle">任务存储/Ansible多机/插件中心</text>
+<text class="ts" x="179" y="417" text-anchor="middle">容器管理(Docker页·K8s页·三级tab)</text>
+<text class="ts" x="179" y="431" text-anchor="middle">EChart 封装: init/resize/setOption</text>
+<rect class="cch" x="44" y="458" width="270" height="52" rx="8"/>
+<text class="t" x="179" y="479" text-anchor="middle">SWR 内存缓存 Map</text>
+<text class="ts" x="179" y="496" text-anchor="middle">hit&lt;2.5s 直接回 · 过期先返旧值后台拉新</text>
+<path class="flow" d="M179 156 L179 172"/>
+<path class="flow" d="M179 234 L179 250"/>
+<path class="flow" d="M179 330 L179 346"/>
+<path class="flow" d="M179 438 L179 454"/>
+
+<!-- Server -->
+<rect class="lane" x="360" y="46" width="740" height="900" rx="12"/>
+<text class="laneT" x="730" y="70" text-anchor="middle">Go Server · main.go (标准库 net/http)</text>
+<rect class="srv" x="392" y="92" width="320" height="86" rx="8"/>
+<text class="t" x="552" y="113" text-anchor="middle">认证 auth.MW (可选 Bearer TOKEN)</text>
+<text class="ts" x="552" y="130" text-anchor="middle">CORS · 401 驱动前端跳登录</text>
+<text class="ts" x="552" y="145" text-anchor="middle">/api/auth/token 配置探测端点</text>
+<rect class="srv" x="732" y="92" width="340" height="86" rx="8"/>
+<text class="t" x="902" y="113" text-anchor="middle">模块注册中心 registry (热生效★)</text>
+<text class="ts" x="902" y="130" text-anchor="middle">全量注册路由(含未激活插件)</text>
+<text class="ts" x="902" y="145" text-anchor="middle">/api/manifest 按 IsPluginActive 实时过滤</text>
+<text class="ts" x="902" y="160" text-anchor="middle">pluginGuard: 未激活 API → 403</text>
+<path class="flow" d="M712 135 L728 135"/>
+
+<rect class="hdl" x="392" y="200" width="680" height="150" rx="8"/>
+<text class="t" x="732" y="222" text-anchor="middle">HTTP Handlers · 8 大模块 · 60+ 端点</text>
+<text class="ts" x="500" y="245">resources: 快照+overview 多机并行聚合</text>
+<text class="ts" x="500" y="262">services: systemd启停+回读 · 应用容器总览</text>
+<text class="ts" x="500" y="279">network: 接口/端口/防火墙读写+审计/netconfig</text>
+<text class="ts" x="500" y="296">diagnostics/tasks/ansible(SSE流)</text>
+<text class="ts" x="905" y="245">plugins: 清单+activate/deactivate</text>
+<text class="ts" x="905" y="262">containers★: list/detail/action</text>
+<text class="ts" x="905" y="279">images/logs/flows(连接走向)</text>
+<text class="ts" x="905" y="296">统一范式: 白名单→RunOnTarget→verified</text>
+<text class="ts" x="905" y="313">审计 target 字段 · InvalidateRespCache</text>
+<path class="flow" d="M552 178 L552 196"/>
+<path class="flow" d="M902 178 L902 196"/>
+
+<rect class="exe" x="392" y="372" width="218" height="118" rx="8"/>
+<text class="t" x="501" y="394" text-anchor="middle">metrics 本机采集</text>
+<text class="ts" x="501" y="412" text-anchor="middle">gopsutil v4 后台 2s tick</text>
+<text class="ts" x="501" y="427" text-anchor="middle">Snapshot{CPU/内存/磁盘/网卡}</text>
+<text class="ts" x="501" y="442" text-anchor="middle">Get() 读内存非阻塞</text>
+<text class="ts" x="501" y="457" text-anchor="middle">ps 批量取进程CPU/内存</text>
+<rect class="exe" x="628" y="372" width="242" height="118" rx="8"/>
+<text class="t" x="749" y="394" text-anchor="middle">remote.Pool SSH 引擎</text>
+<text class="ts" x="749" y="412" text-anchor="middle">引用计数+dead标记延迟关闭</text>
+<text class="ts" x="749" y="427" text-anchor="middle">ExecLine/Exec(逐条)/ExecScript</text>
+<text class="ts" x="749" y="442" text-anchor="middle">SnapshotScript 10命令1往返</text>
+<text class="ts" x="749" y="457" text-anchor="middle">hostkey 校验 · 传输故障换连重试</text>
+<rect class="exe" x="888" y="372" width="184" height="118" rx="8"/>
+<text class="t" x="980" y="394" text-anchor="middle">agent.AgentHub</text>
+<text class="ts" x="980" y="412" text-anchor="middle">WS :8089/ws/agent</text>
+<text class="ts" x="980" y="427" text-anchor="middle">register/snapshot 2s心跳</text>
+<text class="ts" x="980" y="442" text-anchor="middle">cache[hostID] 最新快照</text>
+<text class="ts" x="980" y="457" text-anchor="middle">lastSeen&gt;60s 清理 · 自动部署</text>
+<path class="flow" d="M501 350 L501 368"/>
+<path class="flow" d="M749 350 L749 368"/>
+<path class="flow" d="M980 350 L980 368"/>
+
+<rect class="cch" x="392" y="512" width="680" height="96" rx="8"/>
+<text class="t" x="732" y="534" text-anchor="middle">三级缓存体系 (切换卡顿根治)</text>
+<text class="ts" x="732" y="554" text-anchor="middle">L1 前端SWR(2.5s) ─ L2 通用响应缓存 ServeCachedJSON(可配TTL+singleflight) ─ L3 快照缓存 snapshotcache(per-host 2s)</text>
+<text class="ts" x="732" y="572" text-anchor="middle">singleflight: 同 key 并发合并为一次真实构建 · InvalidateRespCache: 写后定向失效 L2</text>
+<text class="ts" x="732" y="590" text-anchor="middle">实测: 冷~0.5s → 缓存内 &lt;1ms · 切换加载态基本消失</text>
+<path class="flowB" d="M501 490 L501 508"/>
+<path class="flowB" d="M749 490 L749 508"/>
+<path class="flowB" d="M980 490 L980 508"/>
+
+<rect class="srv" x="392" y="630" width="680" height="104" rx="8"/>
+<text class="t" x="732" y="652" text-anchor="middle">持久化 central.CentralStore (接口抽象)</text>
+<text class="ts" x="560" y="674">SQLiteStore(modernc.org/sqlite · 默认)</text>
+<text class="ts" x="560" y="691">PostgreSQLStore(pgx/v5 · DATABASE_URL)</text>
+<text class="ts" x="560" y="708">/api/system/migrate Export⇄Import</text>
+<text class="ts" x="935" y="674">存: 模块激活状态 / 认证</text>
+<text class="ts" x="935" y="691">store.JSONFile: ansible_hosts.json</text>
+<text class="ts" x="935" y="708">playbooks / history / templates</text>
+<path class="flow" d="M732 608 L732 626"/>
+
+<rect class="secB" x="392" y="756" width="680" height="82" rx="8"/>
+<text class="t" x="732" y="778" text-anchor="middle">安全横切 (所有写操作强制经过)</text>
+<text class="ts" x="732" y="797" text-anchor="middle">参数白名单正则(reContainerName/validUnitName/fw校验) → Shq() 单引号转义防注入</text>
+<text class="ts" x="732" y="813" text-anchor="middle">回读验证 verified(轮询≤8s抗过渡态) → 审计[AUDIT]{ts,target,action,result} → K8s托管运行时只读</text>
+<text class="ts" x="732" y="829" text-anchor="middle">SSH hostkey 首次信任(da13610) · 日志 tail≤500 上限</text>
+
+<rect class="tgt" x="392" y="860" width="330" height="72" rx="8"/>
+<text class="t" x="557" y="882" text-anchor="middle">目标 Linux 主机 A (无Agent)</text>
+<text class="ts" x="557" y="900" text-anchor="middle">SSH :22 · SnapshotScript / RunOnTarget</text>
+<text class="ts" x="557" y="916" text-anchor="middle">docker/podman 可写 · crictl/ctr 只读</text>
+<rect class="tgt" x="742" y="860" width="330" height="72" rx="8"/>
+<text class="t" x="907" y="882" text-anchor="middle">目标 Linux 主机 B (带Agent)</text>
+<text class="ts" x="907" y="900" text-anchor="middle">cmd/agent systemd 守护 · WS 主动推 2s</text>
+<text class="ts" x="907" y="916" text-anchor="middle">断线指数退避重连 1s→30s</text>
+<path class="flow" d="M557 856 L557 842" />
+<path class="flow" d="M907 856 L907 842"/>
+</svg></div>
+
+<!-- ══════════════ 图2 读数据闭环 ══════════════ -->
+<div class="sec"><h2>② 读数据三级缓存闭环（切主机秒出）</h2>
+<svg viewBox="0 0 1464 700">
+<defs><marker id="ah2" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker>
+<marker id="ab2" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#2563eb"/></marker></defs>
+<text class="ts" x="732" y="24" text-anchor="middle">场景: 用户在资源页从「本机」切换到「KN1」→ 数据如何在 &lt;100ms 呈现</text>
+
+<rect class="fe" x="30" y="50" width="280" height="70" rx="8"/>
+<text class="t" x="170" y="74" text-anchor="middle">① 前端发起 GET /api/core/resources?host=KN1</text>
+<text class="ts" x="170" y="93" text-anchor="middle">client.ts 先查 SWR 缓存 Map</text>
+<rect class="cch" x="30" y="150" width="280" height="86" rx="8"/>
+<text class="t" x="170" y="174" text-anchor="middle">② SWR 命中判断</text>
+<text class="ts" x="170" y="192" text-anchor="middle">age &lt; 2.5s → 直接 resolve 旧值</text>
+<text class="ts" x="170" y="207" text-anchor="middle">(不发网络请求, 零延迟渲染)</text>
+<text class="ts" x="170" y="224" text-anchor="middle">过期但有旧值 → 先渲染旧值(步骤③照发)</text>
+<path class="flowB" d="M310 185 L420 185"/>
+<text class="lbl" x="330" y="178">&lt;2.5s 秒回</text>
+<path class="flow" d="M310 225 C380 225 380 300 448 300"/>
+<text class="lbl" x="356" y="252">过期/无缓存</text>
+
+<rect class="srv" x="450" y="264" width="250" height="72" rx="8"/>
+<text class="t" x="575" y="288" text-anchor="middle">③ Resources Handler</text>
+<text class="ts" x="575" y="306" text-anchor="middle">解析 ?host= → resolveAnsibleHost</text>
+<text class="ts" x="575" y="321" text-anchor="middle">本机走 metrics.Get() 直达④⑦</text>
+<path class="flow" d="M700 300 L790 300"/>
+
+<rect class="cch" x="792" y="252" width="250" height="96" rx="8"/>
+<text class="t" x="917" y="274" text-anchor="middle">④ agentHub.GetSnapshot(KN1)</text>
+<text class="ts" x="917" y="291" text-anchor="middle">Agent 在线且 cache[KN1] 有值?</text>
+<text class="ts" x="917" y="308" text-anchor="middle">命中 → 毫秒级返回 (最优路径)</text>
+<text class="ts" x="917" y="325" text-anchor="middle">未在线/未就绪 → 静默降级, 不报错</text>
+<path class="flowB" d="M1042 300 L1150 300"/>
+<text class="lbl" x="1052" y="292">Agent 命中</text>
+<path class="flow" d="M917 348 L917 396"/>
+<text class="lbl" x="925" y="378">未命中 ↓ SSH 回退</text>
+
+<rect class="cch" x="792" y="398" width="250" height="110" rx="8"/>
+<text class="t" x="917" y="420" text-anchor="middle">⑤ snapshotcache per-host TTL 2s</text>
+<text class="ts" x="917" y="438" text-anchor="middle">缓存未过期 → 直接返回快照</text>
+<text class="ts" x="917" y="454" text-anchor="middle">已过期 → singleflight 合并:</text>
+<text class="ts" x="917" y="470" text-anchor="middle">同一主机并发 N 个请求等待同一份结果</text>
+<text class="ts" x="917" y="486" text-anchor="middle">仅 1 个协程真正发起 SSH (防雪崩)</text>
+<path class="flow" d="M1042 453 L1150 453"/>
+<text class="lbl" x="1050" y="445">TTL 命中</text>
+<path class="flow" d="M917 508 L917 548"/>
+<text class="lbl" x="925" y="532">miss → 真实采集</text>
+
+<rect class="exe" x="700" y="550" width="342" height="106" rx="8"/>
+<text class="t" x="871" y="572" text-anchor="middle">⑥ remotePool.ExecScript(SnapshotScript)</text>
+<text class="ts" x="871" y="590" text-anchor="middle">单 SSH 会话一次网络往返(替代串行10条)</text>
+<text class="ts" x="871" y="605" text-anchor="middle">echo __OPSCORE_Key__ 哨兵 × 10段</text>
+<text class="ts" x="871" y="620" text-anchor="middle">CPU=/proc/stat 双采样 · 含 CpuPerCore</text>
+<text class="ts" x="871" y="635" text-anchor="middle">ParseSections 解析 → metrics.Snapshot 结构体</text>
+<text class="ts" x="871" y="650" text-anchor="middle">冷耗时 ~0.5s · 传输故障弃连重试一次</text>
+
+<rect class="tgt" x="1120" y="240" width="320" height="180" rx="8"/>
+<text class="t" x="1280" y="264" text-anchor="middle">远程主机 KN1</text>
+<text class="ts" x="1280" y="286" text-anchor="middle">路径A(优先): agent 进程 gopsutil</text>
+<text class="ts" x="1280" y="301" text-anchor="middle">　每 2s WS push → hub.cache[KN1]</text>
+<text class="ts" x="1280" y="322" text-anchor="middle">路径B(降级): sshd 收到合并脚本</text>
+<text class="ts" x="1280" y="337" text-anchor="middle">　cat /proc/stat · free · df · ip</text>
+<text class="ts" x="1280" y="352" text-anchor="middle">　hostname · uptime · os-release…</text>
+<text class="ts" x="1280" y="373" text-anchor="middle">两条路径产出同一 Snapshot 结构</text>
+<text class="ts" x="1280" y="391" text-anchor="middle">对上层完全透明</text>
+<path class="flow" d="M1170 560 C1240 560 1260 430 1280 424"/>
+
+<rect class="cch" x="450" y="550" width="220" height="106" rx="8"/>
+<text class="t" x="560" y="574" text-anchor="middle">⑦ 回填两级缓存</text>
+<text class="ts" x="560" y="592" text-anchor="middle">snapshotcache[KN1]=snap@now</text>
+<text class="ts" x="560" y="607" text-anchor="middle">唤醒 singleflight 等待者</text>
+<text class="ts" x="560" y="622" text-anchor="middle">WriteJSON 响应 → 浏览器</text>
+<text class="ts" x="560" y="637" text-anchor="middle">SWR Map 同步写入新值</text>
+<path class="flow" d="M700 603 L674 603"/>
+
+<rect class="fe" x="30" y="520" width="390" height="166" rx="8"/>
+<text class="t" x="225" y="546" text-anchor="middle">⑧ 闭环回归 UI</text>
+<text class="ts" x="225" y="568" text-anchor="middle">首次: 渲染 KN1 数据 · 仪表盘/趋势图增量更新</text>
+<text class="ts" x="225" y="586" text-anchor="middle">下次切换回 KN1(2.5s内): 步骤②直接秒回 ★</text>
+<text class="ts" x="225" y="604" text-anchor="middle">过期场景: 先画旧图立即可交互, 后台③-⑦静默刷新</text>
+<text class="ts" x="225" y="621" text-anchor="middle">overview 多机屏: 各主机 cachedRemoteSnapshot 并行</text>
+<text class="ts" x="225" y="637" text-anchor="middle">WaitGroup 聚合, 单台故障仅该卡显示离线占位</text>
+<text class="ts" x="225" y="656" text-anchor="middle">效果: 切换加载态基本消失 · 冷0.5s → 热&lt;1ms</text>
+<path class="flowB" d="M448 603 C420 603 440 603 424 603"/>
+</svg></div>
+
+<!-- ══════════════ 图3 写操作安全闭环 ══════════════ -->
+<div class="sec"><h2>③ 写操作安全闭环（以容器 restart 为例 · 全链路含失败分支）</h2>
+<svg viewBox="0 0 1464 880">
+<defs><marker id="ah3" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker>
+<marker id="ar3" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#dc2626"/></marker>
+<marker id="ag3" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#16a34a"/></marker></defs>
+
+<rect class="lane" x="14"   y="40" width="250"  height="820" rx="10"/><text class="laneT" x="139"  y="62" text-anchor="middle">用户 / 前端</text>
+<rect class="lane" x="274"  y="40" width="290"  height="820" rx="10"/><text class="laneT" x="419"  y="62" text-anchor="middle">Guard + 参数校验 (红线)</text>
+<rect class="lane" x="574"  y="40" width="280"  height="820" rx="10"/><text class="laneT" x="714"  y="62" text-anchor="middle">执行层 RunOnTarget</text>
+<rect class="lane" x="864"  y="40" width="270"  height="820" rx="10"/><text class="laneT" x="999"  y="62" text-anchor="middle">远程主机</text>
+<rect class="lane" x="1144" y="40" width="300"  height="820" rx="10"/><text class="laneT" x="1294" y="62" text-anchor="middle">回读验证 / 审计 / 反馈</text>
+
+<rect class="fe" x="34" y="84" width="200" height="54" rx="8"/>
+<text class="t" x="134" y="105" text-anchor="middle">① 点击[重启]</text>
+<text class="ts" x="134" y="121" text-anchor="middle">弹 modal 确认(高危二次确认)</text>
+<rect class="fe" x="34" y="168" width="200" height="50" rx="8"/>
+<text class="ts" x="134" y="188" text-anchor="middle">② POST /api/plugins/containers/action</text>
+<text class="ts" x="134" y="204" text-anchor="middle">{host,name,runtime,action:restart}</text>
+<path class="flow" d="M134 138 L134 164"/>
+<path class="flow" d="M234 193 L304 193"/>
+
+<rect class="secB" x="304" y="84" width="230" height="56" rx="8"/>
+<text class="ts" x="419" y="103" text-anchor="middle">③ pluginGuard(containers)</text>
+<text class="ts" x="419" y="118" text-anchor="middle">IsPluginActive? 未激活→403 ✕</text>
+<rect class="secB" x="304" y="160" width="230" height="52" rx="8"/>
+<text class="ts" x="419" y="179" text-anchor="middle">④ reContainerName 正则 ^[A-Za-z0-9][\w.-]{0,127}$</text>
+<text class="ts" x="419" y="194" text-anchor="middle">runtime ∈ {docker,podman} (crictl拒写)</text>
+<rect class="secB" x="304" y="232" width="230" height="46" rx="8"/>
+<text class="ts" x="419" y="250" text-anchor="middle">⑤ 组装 argv=[rt,restart,-t,10,name]</text>
+<text class="ts" x="419" y="265" text-anchor="middle">update-policy 时 policy∈白名单4值</text>
+<path class="flowR" d="M419 136 L419 156"/><text class="lbl" x="428" y="150">未激活→403</text>
+<path class="flow" d="M419 212 L419 228"/>
+<path class="flow" d="M534 255 L604 255"/>
+<text class="lbl" x="540" y="248">全部通过</text>
+
+<rect class="exe" x="604" y="228" width="220" height="86" rx="8"/>
+<text class="t" x="714" y="250" text-anchor="middle">⑥ IsLocalTarget?</text>
+<text class="ts" x="714" y="267" text-anchor="middle">本机Linux: exec.Command 直跑</text>
+<text class="ts" x="714" y="282" text-anchor="middle">本机Win: 明确报错引导选远程</text>
+<text class="ts" x="714" y="297" text-anchor="middle">远程: ArgsToLine → Shq()转义</text>
+<path class="flow" d="M824 271 L894 271"/>
+
+<rect class="tgt" x="894" y="228" width="210" height="86" rx="8"/>
+<text class="t" x="999" y="250" text-anchor="middle">⑦ sshd 执行</text>
+<text class="ts" x="999" y="268" text-anchor="middle">'docker' 'restart' '-t'</text>
+<text class="ts" x="999" y="283" text-anchor="middle">'10' 'web-app'</text>
+<text class="ts" x="999" y="300" text-anchor="middle">(参数已是独立词, 注入无效)</text>
+
+<rect class="exe" x="604" y="344" width="220" height="64" rx="8"/>
+<text class="t" x="714" y="366" text-anchor="middle">⑧ 执行结果分流</text>
+<text class="ts" x="714" y="383" text-anchor="middle">exit≠0 或传输错误 → err</text>
+<text class="ts" x="714" y="398" text-anchor="middle">传输层故障: 弃池连重试1次</text>
+<path class="flowR" d="M714 408 C714 470 500 470 420 560"/>
+<text class="lbl" x="560" y="472">err → ok:false + stderr 输出</text>
+<path class="flowG" d="M824 376 L894 376" transform="translate(0,-40)"/>
+<text class="lbl" x="830" y="330">exit=0</text>
+
+<rect class="hdl" x="1164" y="300" width="260" height="120" rx="8"/>
+<text class="t" x="1294" y="322" text-anchor="middle">⑨ verifyContainerState ≤8s</text>
+<text class="ts" x="1294" y="340" text-anchor="middle">每500ms: inspect -f {{.State.Status}}</text>
+<text class="ts" x="1294" y="356" text-anchor="middle">start/restart→want running</text>
+<text class="ts" x="1294" y="371" text-anchor="middle">stop→exited · remove→inspect报错即成</text>
+<text class="ts" x="1294" y="386" text-anchor="middle">update-policy→RestartPolicy.Name==p</text>
+<text class="ts" x="1294" y="404" text-anchor="middle">systemd过渡态(deactivating)由轮询吸收</text>
+<path class="flow" d="M999 314 L999 340 L1160 340" />
+
+<rect class="secB" x="1164" y="452" width="260" height="88" rx="8"/>
+<text class="t" x="1294" y="474" text-anchor="middle">⑩ 审计落账 (无条件)</text>
+<text class="ts" x="1294" y="492" text-anchor="middle">log: [CONTAINER-AUDIT] target=KN1(kk)</text>
+<text class="ts" x="1294" y="507" text-anchor="middle">runtime=docker action=restart</text>
+<text class="ts" x="1294" y="522" text-anchor="middle">name="web-app" verified=true/false</text>
+<path class="flow" d="M1294 420 L1294 448"/>
+<text class="lbl" x="1302" y="438">无论成败都记</text>
+
+<rect class="cch" x="1164" y="572" width="260" height="76" rx="8"/>
+<text class="t" x="1294" y="594" text-anchor="middle">⑪ 缓存定向失效</text>
+<text class="ts" x="1294" y="612" text-anchor="middle">InvalidateRespCache(list)</text>
+<text class="ts" x="1294" y="627" text-anchor="middle">InvalidateRespCache(/api/core/apps)</text>
+<path class="flow" d="M1294 540 L1294 568"/>
+<text class="lbl" x="1302" y="558">防止读到旧状态</text>
+
+<rect class="fe" x="34" y="560" width="390" height="120" rx="8"/>
+<text class="t" x="229" y="584" text-anchor="middle">⑫ 响应 {ok:true, verified, target:"KN1(192.168.94.21)"}</text>
+<text class="ts" x="229" y="604" text-anchor="middle">postJSON 自动失效前端 SWR 同路径缓存</text>
+<text class="ts" x="229" y="620" text-anchor="middle">banner: ✓ restart web-app @ KN1 · 回读验证通过</text>
+<text class="ts" x="229" y="636" text-anchor="middle">verified=false → ⚠ 黄色警示(已执行但状态未到位)</text>
+<text class="ts" x="229" y="652" text-anchor="middle">失败 → 红 banner 展示远端 stderr 原文</text>
+<path class="flow" d="M1160 610 C900 610 700 610 428 610"/>
+
+<rect class="fe" x="34" y="712" width="390" height="120" rx="8"/>
+<text class="t" x="229" y="736" text-anchor="middle">⑬ 闭环收口 · 状态自愈</text>
+<text class="ts" x="229" y="756" text-anchor="middle">setTimeout(loadList, 300)  立即刷一次(可能仍在重启态)</text>
+<text class="ts" x="229" y="772" text-anchor="middle">setTimeout(loadList, 2500) 二次刷新确保终态</text>
+<text class="ts" x="229" y="788" text-anchor="middle">表格徽章 running↔exited 更新 · 行按钮可用性联动</text>
+<text class="ts" x="229" y="812" text-anchor="middle">用户无需手动 F5 —— 数据/按钮/横幅三者始终一致</text>
+<path class="flowB" d="M229 680 L229 708"/>
+<text class="lbl" x="237" y="699">UI 反馈驱动再验证</text>
+
+<rect class="old" x="574" y="560" width="280" height="120" rx="8"/>
+<text class="ts" x="714" y="584" text-anchor="middle">对照: 无闭环的旧实现常见缺陷</text>
+<text class="ts" x="714" y="602" text-anchor="middle">✕ 显示已执行但实际没生效(无回读)</text>
+<text class="ts" x="714" y="618" text-anchor="middle">✕ 操作落在 server 本机(target丢失)</text>
+<text class="ts" x="714" y="634" text-anchor="middle">✕ 列表仍显示旧状态(缓存未失效)</text>
+<text class="ts" x="714" y="650" text-anchor="middle">✕ 注入参数直达 shell(无白名单)</text>
+<text class="ts" x="714" y="668" text-anchor="middle">本管线逐项堵死 ↑</text>
+</svg></div>
+
+<!-- ══════════════ 图4 插件热生效 ══════════════ -->
+<div class="sec"><h2>④ 插件热生效生命周期（接入/停用免重启）</h2>
+<svg viewBox="0 0 1464 560">
+<defs><marker id="ah4" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker></defs>
+<text class="ts" x="732" y="24" text-anchor="middle">左: 编译期一次性 · 右: 运行期任意次 · 底部灰框为旧机制对照</text>
+
+<rect class="srv" x="30" y="60" width="300" height="120" rx="8"/>
+<text class="t" x="180" y="84" text-anchor="middle">编译期 registerCoreModules</text>
+<text class="ts" x="180" y="104" text-anchor="middle">8× modCfg{Manifest, Routes[]}</text>
+<text class="ts" x="180" y="120" text-anchor="middle">core 6 + plugin: plugins/containers★</text>
+<text class="ts" x="180" y="140" text-anchor="middle">containers 路由组: list/detail/action</text>
+<text class="ts" x="180" y="155" text-anchor="middle">images/logs/flows 共6端点</text>
+<path class="flow" d="M330 120 L420 120"/>
+
+<rect class="srv" x="424" y="60" width="270" height="120" rx="8"/>
+<text class="t" x="559" y="84" text-anchor="middle">registry.Register (全量★)</text>
+<text class="ts" x="559" y="104" text-anchor="middle">不再跳过未激活模块</text>
+<text class="ts" x="559" y="122" text-anchor="middle">RegisterRoutes(mux) 一次性挂载</text>
+<text class="ts" x="559" y="142" text-anchor="middle">路由永远在, 可用性交给守卫</text>
+<text class="ts" x="559" y="158" text-anchor="middle">→ 这是热生效的结构前提</text>
+
+<rect class="srv" x="760" y="60" width="300" height="120" rx="8"/>
+<text class="t" x="910" y="84" text-anchor="middle">运行期: 插件中心点[接入]</text>
+<text class="ts" x="910" y="104" text-anchor="middle">POST /api/plugins/containers/activate</text>
+<text class="ts" x="910" y="122" text-anchor="middle">module.SetPluginActive(true)</text>
+<text class="ts" x="910" y="142" text-anchor="middle">CentralStore(SQLite) 持久化</text>
+<text class="ts" x="910" y="158" text-anchor="middle">→ 重启后保持用户选择</text>
+<path class="flow" d="M694 120 L756 120"/>
+
+<rect class="fe" x="1126" y="46" width="314" height="70" rx="8"/>
+<text class="t" x="1283" y="68" text-anchor="middle">GET /api/manifest (每次进页面/事件触发)</text>
+<text class="ts" x="1283" y="86" text-anchor="middle">reg.Active() 中 group=plugin 且 id≠plugins</text>
+<text class="ts" x="1283" y="102" text-anchor="middle">按 IsPluginActive 实时过滤</text>
+<path class="flow" d="M1060 120 L1122 120"/>
+
+<rect class="fe" x="1126" y="150" width="314" height="66" rx="8"/>
+<text class="t" x="1283" y="172" text-anchor="middle">前端 dispatch('manifest-changed')</text>
+<text class="ts" x="1283" y="189" text-anchor="middle">App 重拉 manifest → 侧栏「📦 容器管理」</text>
+<text class="ts" x="1283" y="205" text-anchor="middle">目录即时出现(一级▸Docker/K8s二级) ★免重启</text>
+<path class="flow" d="M1283 116 L1283 146"/>
+
+<rect class="secB" x="760" y="216" width="680" height="96" rx="8"/>
+<text class="t" x="1100" y="240" text-anchor="middle">守卫分叉 (每个 containers API 入口第一行)</text>
+<text class="ts" x="1100" y="262" text-anchor="middle">pluginGuard("containers") → 已激活: 放行业务逻辑</text>
+<text class="ts" x="1100" y="280" text-anchor="middle">未激活: 403 {"error":"插件未激活"} → 前端 banner 报错</text>
+<text class="ts" x="1100" y="298" text-anchor="middle">即使绕过侧栏直接调 API 也被拦截</text>
+
+<rect class="old" x="30" y="360" width="640" height="130" rx="8"/>
+<text class="t" x="350" y="386" text-anchor="middle" fill="#64748b">旧机制(已废弃): 启动时跳过未激活 → 路由从未挂载</text>
+<text class="ts" x="350" y="408" text-anchor="middle">接入后: SQLite 有状态 ✓ 但 manifest 不变 ✕ 路由 404 ✕</text>
+<text class="ts" x="350" y="426" text-anchor="middle">必须手动重启服务才生效 → 「插件式」名不副实</text>
+<text class="ts" x="350" y="446" text-anchor="middle">前端 manifest-changed 事件空转(重拉结果不变)</text>
+<text class="ts" x="350" y="468" text-anchor="middle">2026-08-25 随容器管理插件一并修复</text>
+
+<rect class="tgt" x="700" y="360" width="740" height="130" rx="8"/>
+<text class="t" x="1070" y="386" text-anchor="middle">新增一个插件的完整清单(三步)</text>
+<text class="ts" x="1070" y="408">① main.go modCfg 加一条: man(id,name,icon,routePath,"plugin",desc) + Routes[]</text>
+<text class="ts" x="1070" y="426">② internal/module/manifest.go coreModules 加同 ID 条目(供插件中心展示)</text>
+<text class="ts" x="1070" y="444">③ handler 首行 pluginGuard(id) + 前端 MODULE_MAP/侧栏渲染</text>
+<text class="ts" x="1070" y="466">无需改 registry/module 框架代码 → 插件式扩展成本 = 一个配置条目</text>
+</svg></div>
+
+<!-- ══════════════ 图5 Agent 部署与心跳闭环 ══════════════ -->
+<div class="sec"><h2>⑤ Agent 自动部署与心跳自愈闭环</h2>
+<svg viewBox="0 0 1464 620">
+<defs><marker id="ah5" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker>
+<marker id="ar5" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#dc2626"/></marker></defs>
+
+<rect class="srv" x="30" y="50" width="250" height="66" rx="8"/>
+<text class="t" x="155" y="73" text-anchor="middle">触发源(三选一)</text>
+<text class="ts" x="155" y="91" text-anchor="middle">Server 启动扫描 / 新增主机</text>
+<text class="ts" x="155" y="106" text-anchor="middle">检测到 Agent 掉线 TryWakeAgent</text>
+<path class="flow" d="M280 83 L340 83"/>
+
+<rect class="exe" x="344" y="36" width="330" height="94" rx="8"/>
+<text class="t" x="509" y="58" text-anchor="middle">doDeploy(pool, host) 经 SSH 八步</text>
+<text class="ts" x="509" y="75" text-anchor="middle">① pickAgentBinary(bin/agent-linux-amd64)</text>
+<text class="ts" x="509" y="90" text-anchor="middle">② detectServerAddr: 读 $SSH_CLIENT 定内网IP</text>
+<text class="ts" x="509" y="105" text-anchor="middle">③ kill 旧进程 → ④ stdin管道传二进制(6MB)</text>
+<text class="ts" x="509" y="120" text-anchor="middle">⑤ chmod+x → ⑥ 写 systemd unit 文件</text>
+<path class="flow" d="M674 83 L724 83"/>
+
+<rect class="exe" x="728" y="36" width="300" height="94" rx="8"/>
+<text class="t" x="878" y="58" text-anchor="middle">⑦ daemon-reload + restart</text>
+<text class="ts" x="878" y="76" text-anchor="middle">systemd-run 创建独立 cgroup</text>
+<text class="ts" x="878" y="91" text-anchor="middle">彻底脱离 SSH 会话(CentOS7 SIGHUP坑)</text>
+<text class="ts" x="878" y="106" text-anchor="middle">无 systemd-run 回退 nohup</text>
+<text class="ts" x="878" y="121" text-anchor="middle">⑧ opscore-agent 服务常驻</text>
+<path class="flow" d="M1028 83 L1078 83"/>
+
+<rect class="tgt" x="1082" y="36" width="358" height="94" rx="8"/>
+<text class="t" x="1261" y="58" text-anchor="middle">Agent 进程 (cmd/agent)</text>
+<text class="ts" x="1261" y="76" text-anchor="middle">collector.tick 每2s: gopsutil 全量采集</text>
+<text class="ts" x="1261" y="91" text-anchor="middle">snapCh → wsclient.pump</text>
+<text class="ts" x="1261" y="106" text-anchor="middle">{type:"register",hostID} → {type:"snapshot"}</text>
+<text class="ts" x="1261" y="121" text-anchor="middle">OPCORE_AGENT_SERVER 可显式覆盖地址</text>
+
+<path class="flow" d="M1261 130 L1261 168 L900 168"/>
+<rect class="srv" x="620" y="140" width="280" height="70" rx="8"/>
+<text class="t" x="760" y="163" text-anchor="middle">hub.ServeWS: conns[hostID]=conn</text>
+<text class="ts" x="760" y="180" text-anchor="middle">cache[hostID]=最新快照 · lastSeen=now</text>
+<text class="ts" x="760" y="196" text-anchor="middle">registered 回执 → Agent 进入稳态推送</text>
+<path class="flow" d="M616 175 L520 175"/>
+
+<rect class="cch" x="300" y="140" width="216" height="70" rx="8"/>
+<text class="t" x="408" y="163" text-anchor="middle">读路径直通</text>
+<text class="ts" x="408" y="181" text-anchor="middle">Resources/Overview 优先取</text>
+<text class="ts" x="408" y="197" text-anchor="middle">cache → 毫秒级, 见图②第④步</text>
+
+<path class="flow" d="M1261 130 C1330 130 1400 300 1400 330 L1400 420"/>
+<rect class="secB" x="1090" y="424" width="350" height="120" rx="8"/>
+<text class="t" x="1265" y="448" text-anchor="middle">自愈闭环 (掉线分支)</text>
+<text class="ts" x="1265" y="468" text-anchor="middle">cleanLoop 每15s扫: lastSeen&gt;60s → 断开删除</text>
+<text class="ts" x="1265" y="484" text-anchor="middle">读路径自动降级 SSH(图②⑤⑥) 服务不中断</text>
+<text class="ts" x="1265" y="500" text-anchor="middle">同时触发 TryWakeAgent → 回到顶部重新部署 ★</text>
+<text class="ts" x="1265" y="520" text-anchor="middle">Agent 侧: WS断开退避 1s→2s→4s…封顶30s</text>
+<text class="ts" x="1265" y="536" text-anchor="middle">连上后重置1s · 双向兜底</text>
+<path class="flowR" d="M1090 484 C900 484 700 300 520 130" stroke-dasharray="7 4"/>
+<text class="lbl" x="700" y="300">掉线 → 自动重部署(闭环)</text>
+
+<rect class="fe" x="30" y="260" width="640" height="120" rx="8"/>
+<text class="t" x="350" y="284" text-anchor="middle">为什么双路径而不是只用 Agent?</text>
+<text class="ts" x="350" y="305" text-anchor="middle">· Agent 未装/被杀/防火墙拦 WS → SSH 路径保证功能永不缺位</text>
+<text class="ts" x="350" y="321" text-anchor="middle">· Agent 在线 → 省 SSH 会话开销, 数据实时性 2s 与本机一致</text>
+<text class="ts" x="350" y="337" text-anchor="middle">· 写操作(start/stop/防火墙)始终走 RunOnTarget(SSH)——命令语义,</text>
+<text class="ts" x="350" y="353" text-anchor="middle">  与指标推送通道解耦, 权限模型单一清晰</text>
+
+<rect class="old" x="30" y="424" width="640" height="120" rx="8"/>
+<text class="t" x="350" y="448" text-anchor="middle" fill="#64748b">历史坑位记录(均已修复并沉淀)</text>
+<text class="ts" x="350" y="468" text-anchor="middle">nohup 被 SIGHUP 杀 → systemd cgroup 解决</text>
+<text class="ts" x="350" y="484" text-anchor="middle">base64 传6MB 触发长度限制 EOF → stdin 管道解决</text>
+<text class="ts" x="350" y="500" text-anchor="middle">URL 重复拼 /ws/agent/ws/agent → server 下发完整 URL 解决</text>
+<text class="ts" x="350" y="516" text-anchor="middle">多网卡误选 Tailscale 地址 → $SSH_CLIENT 解决</text>
+</svg></div>
+
+<!-- ══════════════ 图6 连接走向管线 ══════════════ -->
+<div class="sec"><h2>⑥ 容器连接走向可视化管线（conntrack 无侵入 · 预留 eBPF 升级位）</h2>
+<svg viewBox="0 0 1464 560">
+<defs><marker id="ah6" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#475569"/></marker></defs>
+
+<rect class="fe" x="30" y="50" width="230" height="66" rx="8"/>
+<text class="t" x="145" y="73" text-anchor="middle">Docker管理页 · tab[连接走向]</text>
+<text class="ts" x="145" y="91" text-anchor="middle">GET /api/plugins/containers/flows</text>
+<text class="ts" x="145" y="106" text-anchor="middle">ServeCachedJSON TTL 5s</text>
+<path class="flow" d="M260 83 L320 83"/>
+
+<rect class="hdl" x="324" y="50" width="270" height="66" rx="8"/>
+<text class="t" x="459" y="73" text-anchor="middle">runScriptOnTarget(host)</text>
+<text class="ts" x="459" y="91" text-anchor="middle">本机sh / 远程 ExecScript 单会话</text>
+<text class="ts" x="459" y="106" text-anchor="middle">哨兵分段 __OPSCORE_CT__ / __MAP__</text>
+<path class="flow" d="M594 83 L654 83"/>
+
+<rect class="exe" x="658" y="30" width="360" height="106" rx="8"/>
+<text class="t" x="838" y="52" text-anchor="middle">目标机一次往返采集</text>
+<text class="ts" x="838" y="70" text-anchor="middle">段CT: conntrack -L || cat nf_conntrack</text>
+<text class="ts" x="838" y="85" text-anchor="middle">　grep -v UNREPLIED | head -400</text>
+<text class="ts" x="838" y="100" text-anchor="middle">段MAP: for id in $(docker ps -q):</text>
+<text class="ts" x="838" y="115" text-anchor="middle">　inspect Networks.IPAddress… + Name</text>
+<text class="ts" x="838" y="130" text-anchor="middle">　输出 "IP IP … 容器名" 映射行</text>
+
+<rect class="hdl" x="1080" y="30" width="360" height="106" rx="8"/>
+<text class="t" x="1260" y="52" text-anchor="middle">ParseSections → 结构化</text>
+<text class="ts" x="1260" y="72" text-anchor="middle">ipToName{}: 容器IP → 名字</text>
+<text class="ts" x="1260" y="88" text-anchor="middle">classify(ip)四分类:</text>
+<text class="ts" x="1260" y="104" text-anchor="middle">命中映射→container · 127.x→host</text>
+<text class="ts" x="1260" y="119" text-anchor="middle">RFC1918/172.17+→internal · 其余→external</text>
+<text class="ts" x="1260" y="134" text-anchor="middle">conntrack行: src/dst/proto 提取</text>
+<path class="flow" d="M1018 83 L1076 83"/>
+
+<rect class="cch" x="1080" y="180" width="360" height="92" rx="8"/>
+<text class="t" x="1260" y="203" text-anchor="middle">边聚合去噪</text>
+<text class="ts" x="1260" y="222" text-anchor="middle">edgeKey(src,dst,proto) → count++</text>
+<text class="ts" x="1260" y="238" text-anchor="middle">数百条会话收敛为少量业务边</text>
+<text class="ts" x="1260" y="254" text-anchor="middle">nodes[{id,name,type}] edges[{…,count}]</text>
+<path class="flow" d="M1260 136 L1260 176"/>
+
+<rect class="fe" x="640" y="180" width="380" height="92" rx="8"/>
+<text class="t" x="830" y="203" text-anchor="middle">ECharts graph · force 力导布局</text>
+<text class="ts" x="830" y="222" text-anchor="middle">节点色: 蓝=容器(34px) 绿=内网 红=外网 紫=回环(20px)</text>
+<text class="ts" x="830" y="238" text-anchor="middle">边宽 = min(1+count/4, 5) · 标签 "tcp ×N"</text>
+<text class="ts" x="830" y="254" text-anchor="middle">roam缩放拖拽 · repulsion260/gravity0.1</text>
+<path class="flow" d="M1076 226 L1024 226"/>
+
+<rect class="secB" x="30" y="180" width="560" height="92" rx="8"/>
+<text class="t" x="310" y="203" text-anchor="middle">边界与防护</text>
+<text class="ts" x="310" y="222" text-anchor="middle">Windows 本机 → 明确 note 提示选 Linux 主机</text>
+<text class="ts" x="310" y="238" text-anchor="middle">conntrack 模块未加载/nf_conntrack 不可读 → note 说明而非空白</text>
+<text class="ts" x="310" y="254" text-anchor="middle">head 截断防大会话表拖垮会话 · 只读零侵入(不改内核态)</text>
+
+<rect class="old" x="30" y="320" width="1410" height="150" rx="8"/>
+<text class="t" x="735" y="346" text-anchor="middle" fill="#64748b">升级路径: eBPF Collector 平滑替换(结构不变)</text>
+<text class="ts" x="360" y="370">现状 v1: conntrack 快照(L3/L4 五元组, 无时延指标)</text>
+<text class="ts" x="960" y="370">未来 v2: 节点常驻 eBPF 探针(Hubble/DeepFlow/Kindling 式)</text>
+<text class="ts" x="360" y="392">采集入口: runScriptOnTarget(SSH脚本)</text>
+<text class="ts" x="960" y="392">采集入口: agent collector 新增 ebpf 数据源(随 Agent 分发)</text>
+<text class="ts" x="360" y="414">产物: nodes[]+edges[{proto,count}]</text>
+<text class="ts" x="960" y="414">产物: 同结构 + rtt/retrans/L7协议/丢包原因等富化字段</text>
+<text class="ts" x="360" y="436">适用: 任何可达 SSH 的机器 · 零安装</text>
+<text class="ts" x="960" y="436">适用: 内核≥4.10 · 需 root · 换取全栈可观测</text>
+<text class="ts" x="735" y="458" text-anchor="middle">前端与 API 契约不动 → 版本切换对用户透明</text>
+</svg></div>
+
+<div class="sub" style="margin-top:10px">OpsCore Lite · ARCHITECTURE DIAGRAMS · 由 ARCHITECTURE.md / CONTAINERS-PLUGIN.md 配套 · 生成于 2026-08-25</div>
+</div></body></html>

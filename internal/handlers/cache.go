@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,4 +65,16 @@ func ServeCachedJSON(w http.ResponseWriter, r *http.Request, ttl time.Duration, 
 func writeCachedJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(body)
+}
+
+// InvalidateRespCache 清除 URI 含指定前缀的响应缓存。
+// 容器等写操作成功后调用, 避免后续读请求在 TTL 内回放操作前的旧状态。
+func InvalidateRespCache(pathPrefix string) {
+	respMu.Lock()
+	for k := range respCache {
+		if strings.Contains(k, pathPrefix) {
+			delete(respCache, k)
+		}
+	}
+	respMu.Unlock()
 }

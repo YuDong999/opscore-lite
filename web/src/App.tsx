@@ -1,5 +1,6 @@
 import { Component, useEffect, useState, useMemo, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { Fragment } from 'react'
 import { getJSON } from './api/client'
 import TopBar from './components/TopBar'
 import LoginPage from './components/LoginPage'
@@ -12,6 +13,7 @@ import SettingsModule from './modules/SettingsModule'
 import DiagnosticsModule from './modules/DiagnosticsModule'
 import TasksModule from './modules/TasksModule'
 import AnsibleModule from './modules/AnsibleModule'
+import ContainersModule from './modules/ContainersModule'
 
 interface Manifest {
   id: string
@@ -30,6 +32,7 @@ const MODULE_MAP: Record<string, () => JSX.Element> = {
   tasks: TasksModule,
   plugins: PluginsModule,
   ansible: AnsibleModule,
+  containers: ContainersModule,
 }
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -125,15 +128,19 @@ export default function App() {
           <>
             <div className="nav-group-label">插件</div>
             <nav>
-              {plugins.map((m) => (
-                <NavLink key={m.id} to={m.routePath} className="nav-item nav-item-plugin">
-                  <span className="nav-icon">{icon(m.icon, 16)}</span>
-                  <span className="nav-text">
-                    <span className="nav-title">{m.name}</span>
-                    <span className="nav-desc">{m.description}</span>
-                  </span>
-                </NavLink>
-              ))}
+              {plugins.map((m) =>
+                m.id === 'containers' ? (
+                  <ContainerNavGroup key={m.id} />
+                ) : (
+                  <NavLink key={m.id} to={m.routePath} className="nav-item nav-item-plugin">
+                    <span className="nav-icon">{icon(m.icon, 16)}</span>
+                    <span className="nav-text">
+                      <span className="nav-title">{m.name}</span>
+                      <span className="nav-desc">{m.description}</span>
+                    </span>
+                  </NavLink>
+                )
+              )}
             </nav>
           </>
         )}
@@ -163,6 +170,15 @@ export default function App() {
           <Routes>
             <Route path="/" element={core[0] ? <Navigate to={core[0].routePath} replace /> : <div className="log-loading">加载中...</div>} />
             {modules.map((m) => {
+              if (m.id === 'containers') {
+                // 容器管理: 二级目录(Docker / Kubernetes), 页内 tab 为第三层
+                return (
+                  <Fragment key="containers-group">
+                    <Route path="/containers/docker" element={<ContainersModule scope="docker" />} />
+                    <Route path="/containers/k8s" element={<ContainersModule scope="k8s" />} />
+                  </Fragment>
+                )
+              }
               const Comp = MODULE_MAP[m.id]
               return Comp ? <Route key={m.id} path={m.routePath} element={<Comp />} /> : null
             })}
@@ -177,8 +193,46 @@ export default function App() {
   )
 }
 
-function icon(name: string, size = 18) {
-  const s = size
+// 容器管理侧栏一级目录: 点击展开 Docker 管理 / Kubernetes 管理 二级项
+function ContainerNavGroup() {
+  const cur = location.hash.replace(/^#/, '')
+  const [open, setOpen] = useState(cur.startsWith('/containers'))
+  const sub = [
+    { to: '/containers/docker', title: 'Docker 管理', desc: '启停 / 删除 / 日志 / 镜像' },
+    { to: '/containers/k8s', title: 'Kubernetes 管理', desc: 'Pod 容器只读巡检' },
+  ]
+  return (
+    <>
+    <div className="nav-item nav-item-plugin" style={{ cursor: 'pointer' }} onClick={() => setOpen(!open)}>
+      <span className="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+          <line x1="12" y1="22.08" x2="12" y2="12" />
+        </svg>
+      </span>
+      <span className="nav-text">
+        <span className="nav-title">容器管理</span>
+        <span className="nav-desc">Docker · Kubernetes</span>
+      </span>
+      <span style={{ marginLeft: 'auto', fontSize: '0.625rem', opacity: 0.6 }}>{open ? '▾' : '▸'}</span>
+    </div>
+    {open && sub.map((s) => (
+      <NavLink key={s.to} to={s.to} className="nav-item nav-item-plugin" style={{ paddingLeft: '2.25rem' }}>
+        <span className="nav-icon" style={{ width: '0.5rem', height: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ width: '0.375rem', height: '0.375rem', borderRadius: '50%', background: 'currentColor', opacity: 0.55 }} />
+        </span>
+        <span className="nav-text">
+          <span className="nav-title" style={{ fontSize: '0.8125rem' }}>{s.title}</span>
+          <span className="nav-desc">{s.desc}</span>
+        </span>
+      </NavLink>
+    ))}
+    </>
+  )
+}
+
+function icon(name: string, size = 18) {  const s = size
   const icons: Record<string, JSX.Element> = {
     cpu: (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -227,6 +281,13 @@ function icon(name: string, size = 18) {
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="4 17 10 11 4 5" />
         <line x1="12" y1="19" x2="20" y2="19" />
+      </svg>
+    ),
+    box: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line x1="12" y1="22.08" x2="12" y2="12" />
       </svg>
     ),
   }

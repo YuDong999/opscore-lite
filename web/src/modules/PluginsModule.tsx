@@ -111,6 +111,7 @@ export default function PluginsModule() {
                       {p.icon === 'activity' && '📊'}
                       {p.icon === 'clipboard' && '📋'}
                       {p.icon === 'puzzle' && '🧩'}
+                      {p.icon === 'box' && '📦'}
                     </span></td>
                     <td>{p.name}</td>
                     <td className="dim" style={{ maxWidth:'12.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

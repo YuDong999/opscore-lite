@@ -142,10 +142,18 @@ func main() {
 	// 认证 API（不受中间件保护）
 	mux.HandleFunc("/api/auth/token", auth.HandleToken)
 
-	// Manifest — 从注册中心读取活跃模块
+	// Manifest — 从注册中心读取模块; 插件按激活状态实时过滤(接入/停用热生效, 无需重启)
 	mux.HandleFunc("/api/manifest", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(reg.Active())
+		all := reg.Active()
+		out := make([]registry.Manifest, 0, len(all))
+		for _, m := range all {
+			if m.Group == "plugin" && m.ID != "plugins" && !module.IsPluginActive(m.ID) {
+				continue
+			}
+			out = append(out, m)
+		}
+		json.NewEncoder(w).Encode(out)
 	})
 
 	// 模块路由 — 从注册中心自动挂载
@@ -389,12 +397,19 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins", Handler: handlers.PluginList},
 			{Path: "/api/plugins/", Handler: handlers.PluginAction},
 		}},
+		{man("containers", "容器管理", "box", "/containers/docker", "plugin", "Docker 管理(启停/删除/日志/镜像/连接走向/策略修改) + Kubernetes 管理(只读)"), []registry.Route{
+			{Path: "/api/plugins/containers/list", Handler: handlers.ContainerListHandler},
+			{Path: "/api/plugins/containers/detail", Handler: handlers.ContainerDetailHandler},
+			{Path: "/api/plugins/containers/action", Handler: handlers.ContainerActionHandler},
+			{Path: "/api/plugins/containers/images", Handler: handlers.ContainerImagesHandler},
+			{Path: "/api/plugins/containers/logs", Handler: handlers.ContainerLogsHandler},
+			{Path: "/api/plugins/containers/flows", Handler: handlers.ContainerFlowsHandler},
+		}},
 	}
 
+	// 全量注册路由(含未激活插件): 侧栏由 /api/manifest 实时过滤,
+	// 插件 API 由 handler 内 pluginGuard 守卫 —— 接入/停用即时生效, 不再依赖重启
 	for _, m := range modules {
-		if m.m.Group == "plugin" && m.m.ID != "plugins" && !module.IsPluginActive(m.m.ID) {
-			continue
-		}
 		r.Register(&registry.Module{Manifest: m.m, Routes: m.routes})
 	}
 }
