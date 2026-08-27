@@ -479,6 +479,56 @@ body {
 }
 .btn-active:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); }
 
+/* 单层玻璃按钮(低税: 仅 1 个 blur(12px), 无 saturate, 无二次模糊/彩虹) */
+.btn-glass {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.16);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.4);
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  box-shadow:
+    0 8px 24px rgba(0,0,0,0.12),
+    inset 0 2px 6px rgba(255,255,255,0.5),
+    inset 0 -2px 6px rgba(0,0,0,0.06);
+  transition: transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .3s ease;
+}
+.btn-glass::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  border-top: 1px solid rgba(255,255,255,0.7);
+  pointer-events: none;
+}
+.btn-glass:hover:not(:disabled) {
+  transform: scale(1.04);
+  box-shadow:
+    0 12px 32px rgba(0,0,0,0.16),
+    inset 0 2px 8px rgba(255,255,255,0.55),
+    inset 0 -2px 6px rgba(0,0,0,0.06);
+}
+.btn-glass:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-glass.is-accent {
+  background: color-mix(in srgb, var(--accent) 42%, rgba(255,255,255,0.12));
+  border-color: color-mix(in srgb, var(--accent) 60%, #fff);
+  color: #fff;
+}
+.btn-glass.is-danger {
+  background: color-mix(in srgb, var(--danger) 42%, rgba(255,255,255,0.12));
+  border-color: color-mix(in srgb, var(--danger) 60%, #fff);
+  color: #fff;
+}
+.btn-glass.btn-sm { padding: 0.3125rem 0.85rem; font-size: 0.75rem; }
+
 /* 拓扑目录树 (tree /F 制表符连线) */
 .topo-dirtree { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .topo-dirtree .tree-row {

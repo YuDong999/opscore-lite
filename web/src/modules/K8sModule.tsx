@@ -327,7 +327,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
         {!cluster ? (
           <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
             <p className="dim">尚未注册集群或未选择</p>
-            <button className="btn btn-accent" onClick={() => setShowReg(true)}>+ 注册第一个集群</button>
+            <button className="btn-glass is-accent" onClick={() => setShowReg(true)}>+ 注册第一个集群</button>
           </div>
         ) : res === 'create' ? (
           <CreateResource
@@ -353,7 +353,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
               <span className="pill pill-sub">{loading ? '加载中…' : `${rows.length} 条`}</span>
               <button className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={loadRows}>刷新</button>
               {CREATE_KIND_OF[res] && (
-                <button className="btn btn-sm btn-accent" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
+                <button className="btn-glass is-accent btn-sm" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
               )}
             </div>
             {note && <div className="banner banner-warn">{note}</div>}
