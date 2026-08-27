@@ -32,14 +32,30 @@ function swrBypassed(url: string): boolean {
 }
 
 async function fetchJSON<T = any>(url: string): Promise<T> {
-  const r = await fetch(url, { headers: authHeaders() })
-  if (r.status === 401) {
-    localStorage.removeItem('opscore-token')
-    window.location.reload()
-    throw new Error('未授权')
+  let lastErr: any
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch(url, { headers: authHeaders() })
+      if (r.status === 401) {
+        localStorage.removeItem('opscore-token')
+        window.location.reload()
+        throw new Error('未授权')
+      }
+      if (!r.ok) throw new Error(await parseError(r))
+      return r.json()
+    } catch (e) {
+      // 仅对真正的网络层错误(部署重启窗口瞬时断连)重试一次
+      const msg = (e as Error)?.message || ''
+      const netErr = e instanceof TypeError || msg.includes('fetch') || msg.includes('NetworkError')
+      if (attempt === 0 && netErr) {
+        lastErr = e
+        await new Promise((res) => setTimeout(res, 800))
+        continue
+      }
+      throw e
+    }
   }
-  if (!r.ok) throw new Error(await parseError(r))
-  return r.json()
+  throw lastErr
 }
 
 // GET 请求, 返回 JSON。

@@ -17,6 +17,7 @@ import (
 	"opscore/internal/ansible"
 	"opscore/internal/auth"
 	"opscore/internal/central"
+	"opscore/internal/kubernetes"
 	"opscore/internal/handlers"
 	"opscore/internal/hostkey"
 	"opscore/internal/metrics"
@@ -85,6 +86,11 @@ func main() {
 	defer cs.Close()
 	auth.Init(cs)
 	module.InitPluginStore(cs)
+
+	// K8s 多集群管理: kubeconfig 凭据落盘 data/kubeconfigs/, 元数据经 central 持久化
+	k8sMgr := kubernetes.NewManager()
+	handlers.InitK8s(k8sMgr, filepath.Join(dataDir, "kubeconfigs"), func() central.CentralStore { return cs })
+	handlers.StartK8sMetricsSampler(dataDir)
 
 	ansibleMgr, err := ansible.NewManager(dataDir)
 	if err != nil {
@@ -397,13 +403,43 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins", Handler: handlers.PluginList},
 			{Path: "/api/plugins/", Handler: handlers.PluginAction},
 		}},
-		{man("containers", "容器管理", "box", "/containers/docker", "plugin", "Docker 管理(启停/删除/日志/镜像/连接走向/策略修改) + Kubernetes 管理(只读)"), []registry.Route{
+		{man("containers", "容器管理", "box", "/containers", "plugin", "Docker 管理(启停/删除/日志/镜像/连接走向/策略修改) + Kubernetes 多集群管理(只读)"), []registry.Route{
 			{Path: "/api/plugins/containers/list", Handler: handlers.ContainerListHandler},
 			{Path: "/api/plugins/containers/detail", Handler: handlers.ContainerDetailHandler},
 			{Path: "/api/plugins/containers/action", Handler: handlers.ContainerActionHandler},
 			{Path: "/api/plugins/containers/images", Handler: handlers.ContainerImagesHandler},
 			{Path: "/api/plugins/containers/logs", Handler: handlers.ContainerLogsHandler},
 			{Path: "/api/plugins/containers/flows", Handler: handlers.ContainerFlowsHandler},
+			{Path: "/api/plugins/containers/docker/image/action", Handler: handlers.DockerImageActionHandler},
+			{Path: "/api/plugins/containers/docker/registries", Handler: handlers.DockerRegistriesHandler},
+			{Path: "/api/plugins/containers/docker/build", Handler: handlers.DockerBuildHandler},
+			{Path: "/api/plugins/containers/docker/pull/async", Handler: handlers.DockerPullAsyncHandler},
+			{Path: "/api/plugins/containers/docker/pull/progress", Handler: handlers.DockerPullProgressHandler},
+			{Path: "/api/plugins/containers/docker/compose", Handler: handlers.DockerComposeHandler},
+			{Path: "/api/plugins/containers/docker/swarm", Handler: handlers.DockerSwarmHandler},
+			{Path: "/api/plugins/containers/docker/swarm/action", Handler: handlers.DockerSwarmActionHandler},
+			{Path: "/api/plugins/containers/docker/exec", Handler: handlers.DockerExecHandler},
+			{Path: "/api/plugins/containers/docker/container/run", Handler: handlers.DockerContainerRunHandler},
+			{Path: "/api/plugins/containers/docker/container/config", Handler: handlers.DockerContainerConfigHandler},
+			{Path: "/api/plugins/containers/k8s/clusters", Handler: handlers.K8sClustersHandler},
+			{Path: "/api/plugins/containers/k8s/cluster/action", Handler: handlers.K8sClusterActionHandler},
+			{Path: "/api/plugins/containers/k8s/apply", Handler: handlers.K8sApplyHandler},
+			{Path: "/api/plugins/containers/k8s/overview", Handler: handlers.K8sOverviewHandler},
+			{Path: "/api/plugins/containers/k8s/pod/detail", Handler: handlers.K8sPodDetailHandler},
+			{Path: "/api/plugins/containers/k8s/pod/related", Handler: handlers.K8sPodRelatedHandler},
+			{Path: "/api/plugins/containers/k8s/pod/log", Handler: handlers.K8sPodLogHandler},
+			{Path: "/api/plugins/containers/k8s/pod/exec", Handler: handlers.K8sPodExecHandler},
+			{Path: "/api/plugins/containers/k8s/yaml", Handler: handlers.K8sYamlHandler},
+			{Path: "/api/plugins/containers/k8s/resource/action", Handler: handlers.K8sResourceActionHandler},
+			{Path: "/api/plugins/containers/k8s/replicas", Handler: handlers.K8sReplicasHandler},
+			{Path: "/api/plugins/containers/k8s/rollout/history", Handler: handlers.K8sRolloutHistoryHandler},
+			{Path: "/api/plugins/containers/k8s/yaml/save", Handler: handlers.K8sYamlSaveHandler},
+			{Path: "/api/plugins/containers/k8s/metrics/nodes", Handler: handlers.K8sNodeMetricsHandler},
+			{Path: "/api/plugins/containers/k8s/metrics/pods", Handler: handlers.K8sPodMetricsHandler},
+			{Path: "/api/plugins/containers/k8s/metrics/history", Handler: handlers.K8sMetricsHistoryHandler},
+			{Path: "/api/plugins/containers/k8s/resources", Handler: handlers.K8sResourcesHandler},
+			{Path: "/api/plugins/containers/k8s/logs", Handler: handlers.K8sPodLogsHandler},
+			{Path: "/api/plugins/containers/k8s/pod/containers", Handler: handlers.K8sPodContainersHandler},
 		}},
 	}
 

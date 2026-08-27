@@ -16,6 +16,10 @@ type CentralStore interface {
 	Ping() error
 	Close() error
 
+	// K8s 集群注册表(元数据)
+	GetK8sClusters() ([]K8sCluster, error)
+	SetK8sClusters(clusters []K8sCluster) error
+
 	// 迁移
 	Export() (map[string]json.RawMessage, error)
 	Import(data map[string]json.RawMessage) error
