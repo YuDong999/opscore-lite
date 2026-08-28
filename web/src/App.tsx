@@ -4,6 +4,7 @@ import { getJSON } from './api/client'
 import TopBar from './components/TopBar'
 import LoginPage from './components/LoginPage'
 import { HostProvider } from './components/HostContext'
+import { ToastProvider } from './components/Toast'
 import ResourcesModule from './modules/ResourcesModule'
 import ServicesModule from './modules/ServicesModule'
 import NetworkModule from './modules/NetworkModule'
@@ -162,6 +163,7 @@ export default function App() {
         <main className="content">
           <HostProvider>
           <ErrorBoundary>
+          <ToastProvider>
           <Routes>
             <Route path="/" element={core[0] ? <Navigate to={core[0].routePath} replace /> : <div className="log-loading">加载中...</div>} />
             {modules.map((m) => {
@@ -171,6 +173,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsModule />} />
             <Route path="*" element={modules.length === 0 ? <div className="log-loading">加载中...</div> : <Navigate to="/resources" replace />} />
           </Routes>
+          </ToastProvider>
           </ErrorBoundary>
           </HostProvider>
         </main>

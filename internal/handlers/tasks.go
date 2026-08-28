@@ -325,7 +325,9 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		if target == "" {
 			target = body.Device
 		}
-		cmd = exec.Command("umount", target)
+		out, err := doUmount(target)
+		WriteJSON(w, map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)})
+		return
 	case "info":
 		dev, verr := wholeDiskDev(body.Device)
 		if verr != "" {
@@ -490,6 +492,9 @@ func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
 			t = body.Device
 		}
 		out, err := run([]string{"umount", t})
+		if err != nil && (strings.Contains(err.Error(), "exit status 32") || strings.Contains(out, "busy")) {
+			out, err = run([]string{"umount", "-l", t})
+		}
 		fillDiskResp(resp, out, err)
 
 	case "delete":
@@ -600,6 +605,23 @@ func runCapture(name string, args ...string) string {
 	cmd := exec.Command(path, args...)
 	out, _ := cmd.CombinedOutput()
 	return string(out)
+}
+
+// doUmount 卸载目标; 普通失败时自动降级为 lazy unmount(-l), 处理 device busy 场景。
+func doUmount(target string) (string, error) {
+	out, err := exec.Command("umount", target).CombinedOutput()
+	if err == nil {
+		return string(out), nil
+	}
+	msg := string(out)
+	if strings.Contains(msg, "busy") || strings.Contains(err.Error(), "exit status 32") {
+		lo, le := exec.Command("umount", "-l", target).CombinedOutput()
+		if le == nil {
+			return string(lo), nil
+		}
+		return string(lo), fmt.Errorf("普通卸载失败(设备忙), 延迟卸载也失败: %v", le)
+	}
+	return string(out), err
 }
 
 // wholeDiskDev 规范化设备路径并要求为整盘(非分区);返回规范化路径与错误信息(错误时路径为空)

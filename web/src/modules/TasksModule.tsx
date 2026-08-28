@@ -5,6 +5,7 @@ import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
+import { useToast } from '../components/Toast'
 
 // ── LVM 类型 ──
 interface PV { name: string; size: string; free: string; vg: string }
@@ -348,6 +349,7 @@ function SelectField({ label, value, onChange, options }: { label: string; value
 function DisksSection() {
   const { selected } = useHost()
   const h = selected?.id ? `?host=${selected.id}` : ''
+  const toast = useToast()
   const [data, setData] = useState<Disks | null>(null)
   const [mountDev, setMountDev] = useState('')
   const [mountPoint, setMountPoint] = useState('')
@@ -360,6 +362,7 @@ function DisksSection() {
   const [allocErr, setAllocErr] = useState('')
   const [allocResult, setAllocResult] = useState('')
   const [selectedFreeIdx, setSelectedFreeIdx] = useState(0)
+  const [highlightDev, setHighlightDev] = useState('')
 
   const units: Record<string, number> = { k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }
   function parseSize(s: string): number {
@@ -381,6 +384,25 @@ function DisksSection() {
       spaces.push({ start: fields[0], end: fields[1], size: fields[2] })
     }
     return spaces
+  }
+
+  const SYS_PATHS = ['/', '/boot', '/var', '/usr', '/etc', '/home', '/tmp', '/root', '/snap', '/opt']
+
+  function isSysPath(p: string): boolean {
+    const norm = p.replace(/\/+$/, '') || '/'
+    return SYS_PATHS.includes(norm) || norm.startsWith('/usr/') || norm.startsWith('/var/') || norm.startsWith('/etc/') || norm.startsWith('/boot/')
+  }
+
+  function fmtDiskErr(action: string, err?: string): string {
+    if (!err) return `${action}失败`
+    if (/exit status 32|busy/.test(err)) return `${action}失败: 设备正忙，有进程或文件占用。已尝试延迟卸载，仍失败请手动结束占用进程后重试。`
+    if (/权限|Permission/.test(err)) return `${action}失败: 权限不足，请确认使用 root 账号。`
+    return `${action}失败: ${err}`
+  }
+
+  function flash(name: string) {
+    setHighlightDev(name)
+    setTimeout(() => setHighlightDev(''), 1200)
   }
 
   const copyPath = async (devName: string, devPath: string) => {
@@ -407,18 +429,33 @@ function DisksSection() {
   useEffect(() => { load() }, [load])
 
   const mountAction = async (action: 'mount' | 'umount', device: string, mountpoint?: string) => {
+    const mp = mountpoint || ''
+    if (action === 'mount' && isSysPath(mp)) {
+      if (!window.confirm(`警告：挂载到 "${mp}" 属于系统关键目录，可能影响系统运行。是否继续？`)) return
+    }
+    if (action === 'umount' && isSysPath(mp)) {
+      if (!window.confirm(`警告：卸载 "${mp}" 可能导致系统异常。是否继续？`)) return
+    }
     try {
-      const body: Record<string, any> = { action, device, mountpoint }
+      const body: Record<string, any> = { action, device, mountpoint: mp }
       if (selected?.id) body.host = selected.id
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
-      if (res.ok) { setMountMsg(`✓ ${action} 成功`); load() }
-      else setMountMsg(`✗ ${res.error || '操作失败'}`)
-    } catch { setMountMsg('✗ 请求失败') }
-    setTimeout(() => setMountMsg(''), 3000)
+      if (res.ok) {
+        const label = action === 'mount' ? `挂载 ${device} → ${mp || '(无)'}` : `卸载 ${device}`
+        toast.success(label)
+        flash(device.replace(/^\/dev\//, ''))
+        load()
+      } else {
+        toast.error(fmtDiskErr(action, res.error))
+      }
+    } catch {
+      toast.error('请求失败')
+    }
   }
 
   const doPartition = async () => {
     if (!allocDev.trim()) return
+    if (!window.confirm(`将在 ${allocDev.trim()} 上创建新分区，该操作不可逆。是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -432,20 +469,29 @@ function DisksSection() {
         body.end = sel.end
       }
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
-      if (res.error) setAllocErr(res.error)
-      else {
-        setAllocResult(res.output || '分区创建成功')
+      if (res.error) {
+        setAllocErr(res.error)
+        toast.error(fmtDiskErr('分区创建', res.error))
+      } else {
+        const msg = res.output || '分区创建成功'
+        setAllocResult(msg)
+        toast.success(msg)
         if (res.newPartition) {
           setAllocDev(res.newPartition)
-          setAllocResult((res.output || '') + '\n✓ 已自动切换到新分区: ' + res.newPartition)
+          flash(res.newPartition.replace(/^\/dev\//, ''))
         }
       }
       load()
-    } catch { setAllocErr('请求失败') }
+    } catch {
+      const err = '请求失败'
+      setAllocErr(err)
+      toast.error(fmtDiskErr('分区创建', err))
+    }
     setAllocLoading(false)
   }
 
   const doDelete = async (partition: string) => {
+    if (!window.confirm(`将删除分区 ${partition}，该操作不可逆。是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -453,15 +499,26 @@ function DisksSection() {
       const body: Record<string, any> = { action: 'delete', device: allocDev.trim(), partition }
       if (selected?.id) body.host = selected.id
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
-      if (res.error) setAllocErr(res.error)
-      else setAllocResult(res.output || '分区已删除')
+      if (res.error) {
+        setAllocErr(res.error)
+        toast.error(fmtDiskErr('删除分区', res.error))
+      } else {
+        const msg = res.output || '分区已删除'
+        setAllocResult(msg)
+        toast.success(msg)
+      }
       load()
-    } catch { setAllocErr('请求失败') }
+    } catch {
+      const err = '请求失败'
+      setAllocErr(err)
+      toast.error(fmtDiskErr('删除分区', err))
+    }
     setAllocLoading(false)
   }
 
   const doFormat = async () => {
     if (!allocDev.trim()) return
+    if (!window.confirm(`将格式化 ${allocDev.trim()} 为 ${mountFstype || 'xfs'}，所有数据将丢失！是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -469,10 +526,20 @@ function DisksSection() {
       const body: Record<string, any> = { action: 'format', device: allocDev.trim(), fstype: mountFstype || 'xfs' }
       if (selected?.id) body.host = selected.id
       const res = await postJSON<DiskActionResult>('/api/core/tasks/disks/action', body)
-      if (res.error) setAllocErr(res.error)
-      else setAllocResult(res.output || '格式化成功')
+      if (res.error) {
+        setAllocErr(res.error)
+        toast.error(fmtDiskErr('格式化', res.error))
+      } else {
+        const msg = res.output || '格式化成功'
+        setAllocResult(msg)
+        toast.success(msg)
+      }
       load()
-    } catch { setAllocErr('请求失败') }
+    } catch {
+      const err = '请求失败'
+      setAllocErr(err)
+      toast.error(fmtDiskErr('格式化', err))
+    }
     setAllocLoading(false)
   }
 
@@ -484,10 +551,15 @@ function DisksSection() {
       const body: Record<string, any> = { action: 'info', device: allocDev.trim() }
       if (selected?.id) body.host = selected.id
       const res = await postJSON<{ output?: string; error?: string }>('/api/core/tasks/disks/action', body)
-      if (res.error) setAllocErr(res.error)
-      else setAllocInfo(res.output || '')
-    } catch { setAllocErr('请求失败') }
-    setAllocLoading(false)
+      if (res.error) {
+        setAllocErr(res.error)
+        toast.error(fmtDiskErr('查询', res.error))
+      } else setAllocInfo(res.output || '')
+    } catch {
+      const err = '请求失败'
+      setAllocErr(err)
+      toast.error(fmtDiskErr('查询', err))
+    }
   }
 
   useEffect(() => { loadAllocInfo() }, [allocDev])
@@ -509,12 +581,19 @@ function DisksSection() {
           <div className="device-list">
             {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
               const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
+              const devTag = d.name.replace(/^\/dev\//, '')
+              const mounted = !!d.mountpoint
               return (
-                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap:'0.5rem', padding: '0.25rem 0', borderBottom: '1px solid #eee' }}>
+                <div key={d.name}
+                  className={`device-row ${mounted ? 'device-mounted' : ''} ${highlightDev === devTag ? 'device-highlight' : ''}`}
+                  style={{ display: 'flex', alignItems: 'center', gap:'0.5rem', padding: '0.25rem 0.5rem', borderBottom: '1px solid var(--border)', transition: 'background .3s' }}>
                   <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(d.name, devPath)}>{devPath}</code>
                   <span className="mono" style={{ fontSize:'0.7188rem', color: '#888' }}>{d.size}</span>
                   <span className="mono" style={{ fontSize:'0.6875rem', color: '#666' }}>{d.fstype || '—'}</span>
-                  {d.mountpoint && <span className="mono" style={{ fontSize:'0.7188rem', color: '#666' }}>↦ {d.mountpoint}</span>}
+                  {mounted
+                    ? <span className="pill pill-ok" style={{ fontSize:'0.7188rem', color: '#30d158', borderColor: 'rgba(48,209,88,0.3)', background: 'rgba(48,209,88,0.08)' }}>↦ {d.mountpoint}</span>
+                    : <span className="pill" style={{ fontSize:'0.7188rem', color: 'var(--text-dim)' }}>未挂载</span>
+                  }
                   {copied === d.name && <span style={{ fontSize:'0.6875rem', color: '#22c55e', marginLeft: 'auto' }}>✓ 已复制</span>}
                 </div>
               )
@@ -535,6 +614,7 @@ function DisksSection() {
               <option value="ntfs">ntfs</option>
               <option value="vfat">vfat</option>
             </select>
+            {isSysPath(mountPoint) && <span className="banner banner-err" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginBottom: 0 }}>⚠ 系统关键路径，挂载将覆盖原有内容</span>}
             <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
               onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
             <button className="btn btn-danger" disabled={!mountDev || !mountPoint}
