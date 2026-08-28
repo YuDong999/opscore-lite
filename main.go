@@ -422,6 +422,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/docker/container/run", Handler: handlers.DockerContainerRunHandler},
 			{Path: "/api/plugins/containers/docker/container/config", Handler: handlers.DockerContainerConfigHandler},
 			{Path: "/api/plugins/containers/k8s/clusters", Handler: handlers.K8sClustersHandler},
+			{Path: "/api/plugins/containers/k8s/kubeconfig/default", Handler: handlers.K8sDefaultKubeconfigHandler},
 			{Path: "/api/plugins/containers/k8s/cluster/action", Handler: handlers.K8sClusterActionHandler},
 			{Path: "/api/plugins/containers/k8s/apply", Handler: handlers.K8sApplyHandler},
 			{Path: "/api/plugins/containers/k8s/overview", Handler: handlers.K8sOverviewHandler},

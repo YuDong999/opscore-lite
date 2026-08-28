@@ -183,21 +183,22 @@ func collectContainers(runtime string, res map[string]remote.Result) []AppContai
 			}
 			var j struct {
 				ID      string          `json:"ID"`
-				Names   string          `json:"Names"`
+				Names   json.RawMessage `json:"Names"` // docker: "name" / podman: ["name"]
 				Image   string          `json:"Image"`
 				State   string          `json:"State"`
 				Status  string          `json:"Status"`
-				Created string          `json:"CreatedAt"`
-				Ports   string          `json:"Ports"`
+				Created json.RawMessage `json:"Created"`  // podman
+				CreatedAt json.RawMessage `json:"CreatedAt"` // docker
+				Ports   json.RawMessage `json:"Ports"` // docker: "80->80/tcp" / podman: [{"HostPort":..}]
 				Labels  json.RawMessage `json:"Labels"`
 			}
 			if err := json.Unmarshal([]byte(line), &j); err != nil {
 				continue
 			}
-			names := strings.Trim(j.Names, "[]")
-			name := names
-			if i := strings.IndexByte(name, ','); i > 0 {
-				name = name[:i]
+			name := firstContainerName(j.Names)
+			created := firstStr(j.Created)
+			if created == "" {
+				created = firstStr(j.CreatedAt)
 			}
 			var labels map[string]string
 			if len(j.Labels) > 0 && j.Labels[0] == '{' {
@@ -210,9 +211,12 @@ func collectContainers(runtime string, res map[string]remote.Result) []AppContai
 				State:     j.State,
 				Status:    j.Status,
 				Runtime:   runtime,
-				CreatedAt: j.Created,
+				CreatedAt: created,
 				Labels:    labels,
-				Ports:     splitPorts(j.Ports),
+				Ports:     splitPortsFlex(j.Ports),
+			}
+			if c.Status == "" {
+				c.Status = c.State
 			}
 			c.Health, c.HealthNote = containerHealth(j.State, 0)
 			list = append(list, c)
@@ -901,6 +905,69 @@ func splitPorts(s string) []string {
 		}
 	}
 	return out
+}
+
+// firstStr 解析 RawMessage 为字符串(JSON 字符串字段通用兜底)。
+func firstStr(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return ""
+}
+
+// firstContainerName 兼容 docker("name") 与 podman(["name","alias"]) 的 Names 字段。
+func firstContainerName(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if raw[0] == '[' {
+		var arr []string
+		if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
+			return strings.TrimSpace(arr[0])
+		}
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.Trim(strings.TrimSpace(s), "[]")
+	}
+	return ""
+}
+
+// splitPortsFlex 兼容 docker(字符串) 与 podman(数组) 的 Ports 字段。
+func splitPortsFlex(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '[' {
+		var arr []map[string]any
+		if json.Unmarshal(raw, &arr) != nil {
+			return nil
+		}
+		var out []string
+		for _, m := range arr {
+			hp, _ := m["HostPort"].(string)
+			cb, _ := m["ContainerPort"].(string)
+			if cb == "" {
+				continue
+			}
+			if hp != "" {
+				out = append(out, hp+"->"+cb)
+			} else {
+				out = append(out, cb)
+			}
+		}
+		return out
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return splitPorts(s)
+	}
+	return nil
 }
 
 func containsStr(list []string, s string) bool {

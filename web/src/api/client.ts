@@ -94,15 +94,9 @@ export function getJSON<T = any>(url: string): Promise<T> {
   return p
 }
 
-// 使指定路径前缀的 GET 缓存失效(写操作成功后调用, 避免读到操作前的旧状态)
-function invalidatePath(url: string) {
-  const path = url.split('?')[0]
-  for (const k of [...swrCache.keys()]) {
-    if (k.split('?')[0] === path || k.startsWith(path)) swrCache.delete(k)
-  }
-}
-
 // POST 请求, body 自动序列化 JSON, 返回 JSON
+// 写操作后整表清空 GET 缓存: 写操作低频, 而所影响的读路径(列表/详情)未必与本次
+// URL 同前缀(如删除集群清的是 /k8s/clusters), 全清比按前缀精确失效更可靠。
 export async function postJSON<T = any>(url: string, body: any): Promise<T> {
   const r = await fetch(url, {
     method: 'POST',
@@ -114,7 +108,7 @@ export async function postJSON<T = any>(url: string, body: any): Promise<T> {
     window.location.reload()
     throw new Error('未授权')
   }
-  invalidatePath(url)
+  swrCache.clear()
   if (!r.ok) throw new Error(await parseError(r))
   const d = r.json()
   return d

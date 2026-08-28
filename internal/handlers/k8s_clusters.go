@@ -13,8 +13,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,8 @@ import (
 
 	"opscore/internal/central"
 	"opscore/internal/kubernetes"
+
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 var (
@@ -167,6 +171,75 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[K8S-AUDIT] action=register cluster=%s status=%s api=%s", id, status, apiServer)
 	InvalidateRespCache("/api/plugins/containers/k8s")
 	WriteJSON(w, map[string]any{"ok": true, "cluster": rec})
+}
+
+// K8sDefaultKubeconfigHandler GET /api/plugins/containers/k8s/kubeconfig/default
+// 返回服务器本机按固定优先级发现的默认 kubeconfig, 供注册面板一键预填。
+func K8sDefaultKubeconfigHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	path, data, err := discoverDefaultKubeconfig()
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": true, "found": false})
+		return
+	}
+	resp := map[string]any{"ok": true, "found": true, "path": path, "source": string(data)}
+	cfg, lerr := clientcmd.Load(data)
+	if lerr != nil {
+		WriteJSON(w, resp)
+		return
+	}
+	type ctxView struct {
+		Name    string `json:"name"`
+		Cluster string `json:"cluster"`
+		Server  string `json:"server"`
+		Current bool   `json:"current"`
+	}
+	contexts := []ctxView{}
+	for cName, c := range cfg.Contexts {
+		server := ""
+		if cl, ok := cfg.Clusters[c.Cluster]; ok {
+			server = cl.Server
+		}
+		contexts = append(contexts, ctxView{Name: cName, Cluster: c.Cluster, Server: server, Current: cName == cfg.CurrentContext})
+	}
+	sort.Slice(contexts, func(i, j int) bool { return contexts[i].Name < contexts[j].Name })
+	resp["contexts"] = contexts
+	resp["current"] = cfg.CurrentContext
+	WriteJSON(w, resp)
+}
+
+// discoverDefaultKubeconfig 按固定优先级返回服务器本机第一份存在的 kubeconfig。
+// 顺序: $OPSCORE_KUBECONFIG → $KUBECONFIG(冒号多路径) → ~/.kube/config → /etc/kubernetes/admin.conf
+func discoverDefaultKubeconfig() (string, []byte, error) {
+	var paths []string
+	if v := os.Getenv("KUBECONFIG"); v != "" {
+		for _, p := range filepath.SplitList(v) {
+			if p = strings.TrimSpace(p); p != "" {
+				paths = append(paths, p)
+			}
+		}
+	}
+	if home, e := os.UserHomeDir(); e == nil {
+		paths = append(paths, filepath.Join(home, ".kube", "config"))
+	} else if u, ue := user.Current(); ue == nil {
+		paths = append(paths, filepath.Join(u.HomeDir, ".kube", "config"))
+	}
+	paths = append(paths, "/root/.kube/config") // systemd 服务无 $HOME 时兜底
+	paths = append(paths, "/etc/kubernetes/admin.conf")
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		return p, data, nil
+	}
+	return "", nil, fmt.Errorf("未找到默认 kubeconfig")
 }
 
 // ===== 集群操作 (删除 / 重探测) =====

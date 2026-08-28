@@ -692,9 +692,32 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
   const [name, setName] = useState('')
   const [kubeconfig, setKubeconfig] = useState('')
   const [busy, setBusy] = useState(false)
+  const [scanBusy, setScanBusy] = useState(false)
+  const [scanInfo, setScanInfo] = useState('')
 
   const pickFile = async (f: File | null) => {
     if (f) setKubeconfig(await f.text())
+  }
+
+  const loadDefault = async () => {
+    setScanBusy(true)
+    setScanInfo('')
+    try {
+      const d: any = await getJSON('/api/plugins/containers/k8s/kubeconfig/default')
+      if (!d || !d.found) {
+        setScanInfo('未发现服务器默认 kubeconfig，请粘贴或上传')
+        return
+      }
+      setKubeconfig(d.source || '')
+      if (!name.trim() && d.current) setName(d.current)
+      const n = (d.contexts || []).length
+      const extra = n > 1 ? `（文件含 ${n} 个 context，已默认取 ${d.current || 'current-context'}）` : ''
+      setScanInfo(`✓ 已读取 ${d.path}${extra}`)
+    } catch (e) {
+      setScanInfo('✗ 读取失败: ' + String(e))
+    } finally {
+      setScanBusy(false)
+    }
   }
 
   const submit = () => {
@@ -727,10 +750,16 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
           </label>
           <label style={{ fontSize: '0.8125rem' }}>
             kubeconfig
-            <input type="file" accept=".yaml,.yml,.conf,.txt" onChange={(e) => pickFile(e.target.files?.[0] || null)}
-              style={{ display: 'block', margin: '4px 0', fontSize: '0.75rem' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+              <button className="btn" onClick={loadDefault} disabled={scanBusy}>
+                {scanBusy ? '读取中…' : '读取服务器默认配置'}
+              </button>
+              <input type="file" accept=".yaml,.yml,.conf,.txt" onChange={(e) => pickFile(e.target.files?.[0] || null)}
+                style={{ fontSize: '0.75rem' }} />
+            </div>
+            {scanInfo && <div style={{ fontSize: '0.75rem', marginBottom: 4 }}>{scanInfo}</div>}
             <textarea className="input" value={kubeconfig} onChange={(e) => setKubeconfig(e.target.value)}
-              placeholder="粘贴 kubeconfig YAML(凭据仅保存在服务端 data/kubeconfigs/, 权限 0600)"
+              placeholder="留空可点上方「读取服务器默认配置」自动加载；或粘贴 kubeconfig YAML（凭据仅保存在服务端 ~/.kube/config, 权限0600）"
               rows={10} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.6875rem' }} />
           </label>
           <div className="modal-actions">
