@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useMemo, type ReactNode } from 'react'
 
 export type ToastType = 'success' | 'error' | 'info' | 'warn'
 
@@ -6,13 +6,22 @@ interface ToastItem {
   id: number
   message: string
   type: ToastType
+  exiting?: boolean
 }
 
 interface ToastCtx {
-  toast: (message: string, type?: ToastType) => void
+  success: (message: string) => void
+  error: (message: string) => void
+  info: (message: string) => void
+  warn: (message: string) => void
 }
 
-const ToastContext = createContext<ToastCtx>({ toast: () => {} })
+const ToastContext = createContext<ToastCtx>({
+  success: () => {},
+  error: () => {},
+  info: () => {},
+  warn: () => {},
+})
 
 let nextId = 0
 
@@ -29,19 +38,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((message: string, type: ToastType = 'info') => {
     const id = nextId++
-    setItems(list => [...list, { id, message, type }])
-    const timer = setTimeout(() => remove(id), 3200)
-    timers.current.set(id, timer)
+    setItems(list => [...list, { id, message, type, exiting: false }])
+    const t1 = setTimeout(() => {
+      setItems(list => list.map(t => t.id === id ? { ...t, exiting: true } : t))
+      const t2 = setTimeout(() => remove(id), 320)
+      timers.current.set(id, t2)
+    }, 2800)
+    timers.current.set(id, t1)
   }, [remove])
 
+  const api = useMemo<ToastCtx>(() => ({
+    success: (m) => toast(m, 'success'),
+    error: (m) => toast(m, 'error'),
+    info: (m) => toast(m, 'info'),
+    warn: (m) => toast(m, 'warn'),
+  }), [toast])
+
   return (
-    <ToastContext.Provider value={{ toast }}>
+    <ToastContext.Provider value={api}>
       {children}
       <div className="toast-container">
         {items.map(t => (
           <div key={t.id}
-            className={`toast-card toast-${t.type}`}
-            onAnimationEnd={() => remove(t.id)}>
+            className={`toast-card toast-${t.type} ${t.exiting ? 'exit' : ''}`}>
             <span className="toast-ico">{icon(t.type)}</span>
             <span className="toast-msg">{t.message}</span>
           </div>

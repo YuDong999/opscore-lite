@@ -244,35 +244,63 @@ function buildManifest(m: Model): Record<string, any> | null {
 // ── 控件 ──
 const IN = 'input'
 
-function F({ label, children, hint }: { label: string; children: any; hint?: string }) {
+function F({ label, children, hint, wide }: { label: string; children: any; hint?: string; wide?: boolean }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', minWidth: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', minWidth: 0, ...(wide ? { gridColumn: '1 / -1' } : {}) }}>
       <span>{label}{hint && <i style={{ fontStyle: 'normal', opacity: 0.7 }}> · {hint}</i>}</span>
       {children}
-    </label>
+    </div>
   )
 }
 
 function Grid({ cols = 3, children }: { cols?: number; children: any }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},minmax(0,1fr))`, gap: '0.5rem' }}>{children}</div>
+  return <div className={`cr-grid cr-grid-${cols}`}>{children}</div>
 }
 
 function KvRows({ items, onChange, kHint, vHint, vOptions }: { items: Kv[]; onChange: (x: Kv[]) => void; kHint: string; vHint: string; vOptions?: string[] }) {
   const lid = useMemo(() => 'dl' + Math.random().toString(36).slice(2, 8), [])
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, gridColumn: '1 / -1' }}>
-      {items.map((it, i) => (
-        <div key={i} style={{ display: 'flex', gap: 4 }}>
-          <input className={IN} value={it.k} placeholder={kHint} onChange={(e) => { const n = [...items]; n[i] = { ...it, k: e.target.value }; onChange(n) }} />
-          <>
-            <input className={IN} list={vOptions ? lid : undefined} value={it.v} placeholder={vHint}
-              onChange={(e) => { const n = [...items]; n[i] = { ...it, v: e.target.value }; onChange(n) }} />
-            {vOptions && <datalist id={lid}>{vOptions.map((v) => <option key={v} value={v} />)}</datalist>}
-          </>
-          <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => onChange(items.filter((_, j) => j !== i))}>✕</button>
+    <RowList rows={items} onDelete={(i) => onChange(items.filter((_, j) => j !== i))}
+      onAdd={() => onChange([...items, { k: '', v: '' }])}>
+      {(it, i) => (<>
+        <input className={IN} value={it.k} placeholder={kHint} onChange={(e) => { const n = [...items]; n[i] = { ...it, k: e.target.value }; onChange(n) }} />
+        <>
+          <input className={IN} list={vOptions ? lid : undefined} value={it.v} placeholder={vHint}
+            onChange={(e) => { const n = [...items]; n[i] = { ...it, v: e.target.value }; onChange(n) }} />
+          {vOptions && <datalist id={lid}>{vOptions.map((v) => <option key={v} value={v} />)}</datalist>}
+        </>
+      </>)}
+    </RowList>
+  )
+}
+
+// 统一删除按钮(所有列表行共用, 避免每个字段重复写一样的 ✕)
+function Del({ onClick, title }: { onClick: () => void; title?: string }) {
+  return (
+    <button type="button" className="btn btn-sm k8s-del-cluster cr-del" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={onClick} title={title}>✕</button>
+  )
+}
+
+// 通用列表编辑器: rows 渲染成若干行(每行 = children 字段 + 删除按钮), 底部添加按钮。
+// 行的响应式换行由共享的 .cr-row / .cr-rowlist 规则统一处理(flex-wrap), 与字段数量无关。
+function RowList({ rows, onDelete, onAdd, addLabel, children }: {
+  rows: any[]
+  onDelete?: (i: number) => void
+  onAdd?: () => void
+  addLabel?: string
+  children: (item: any, i: number) => any
+}) {
+  return (
+    <div className="cr-rowlist">
+      {rows.map((r, i) => (
+        <div key={i} className="cr-row">
+          {children(r, i)}
+          {onDelete && <Del onClick={() => onDelete(i)} title="删除" />}
         </div>
       ))}
-      <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => onChange([...items, { k: '', v: '' }])}>+ 添加</button>
+      {(onAdd != null) && (
+        <button type="button" className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={onAdd}>{addLabel || '+ 添加'}</button>
+      )}
     </div>
   )
 }
@@ -301,7 +329,7 @@ function Section({ title, children, defaultOpen, badge }: { title: string; child
         <span>{open ? '▾' : '▸'} {title}</span>
         {badge && <span className="dim" style={{ fontSize: '0.6875rem' }}>{badge}</span>}
       </div>
-      {open && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: '0.5rem', marginTop: '0.625rem' }}>{children}</div>}
+      {open && <div className="cr-sec-grid">{children}</div>}
     </div>
   )
 }
@@ -386,7 +414,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
       {/* 左: 表单 */}
       <div className="card" style={{ minWidth: 0 }}>
         <div className="card-head"><h3><KindIcon kind={m.kind} size={15} />{m.kind}</h3><span className="card-sub">{kindMeta?.desc}</span></div>
-        <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+        <div className="card-body cr-form-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
           <Grid cols={2}>
             <F label="名称 *"><input className={IN} value={m.name} placeholder="如 my-nginx" onChange={(e) => set({ name: e.target.value })} /></F>
             <F label="命名空间 *" hint="从已有选择或手动输入">
@@ -441,18 +469,16 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
               </Grid>
               <F label="Selector(匹配 Pod 标签)"><KvRows items={m.svcSelector} onChange={(x) => set({ svcSelector: x })} kHint="app" vHint="名称" /></F>
               <F label="端口映射">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {m.svcPorts.map((p, i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 4 }}>
-                      <input className={IN} value={p.port} placeholder="port" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, port: e.target.value }; set({ svcPorts: n }) }} />
-                      <input className={IN} value={p.targetPort} placeholder="targetPort" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, targetPort: e.target.value }; set({ svcPorts: n }) }} />
-                      <select className={IN} value={p.protocol} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, protocol: e.target.value }; set({ svcPorts: n }) }}><option>TCP</option><option>UDP</option></select>
-                      <input className={IN} value={p.nodePort} placeholder="nodePort" disabled={m.svcType !== 'NodePort'} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, nodePort: e.target.value }; set({ svcPorts: n }) }} />
-                      <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => set({ svcPorts: m.svcPorts.filter((_, j) => j !== i) })}>✕</button>
-                    </div>
-                  ))}
-                  <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ svcPorts: [...m.svcPorts, { port: '', targetPort: '', protocol: 'TCP', nodePort: '' }] })}>+ 端口</button>
-                </div>
+                <RowList rows={m.svcPorts}
+                  onDelete={(i) => set({ svcPorts: m.svcPorts.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ svcPorts: [...m.svcPorts, { port: '', targetPort: '', protocol: 'TCP', nodePort: '' }] })} addLabel="+ 端口">
+                  {(p, i) => (<>
+                    <input className={IN} value={p.port} placeholder="port" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, port: e.target.value }; set({ svcPorts: n }) }} />
+                    <input className={IN} value={p.targetPort} placeholder="targetPort" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, targetPort: e.target.value }; set({ svcPorts: n }) }} />
+                    <select className={IN} value={p.protocol} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, protocol: e.target.value }; set({ svcPorts: n }) }}><option>TCP</option><option>UDP</option></select>
+                    <input className={IN} value={p.nodePort} placeholder="nodePort" disabled={m.svcType !== 'NodePort'} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, nodePort: e.target.value }; set({ svcPorts: n }) }} />
+                  </>)}
+                </RowList>
               </F>
             </>
           )}
@@ -468,10 +494,12 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                         <input className={IN} value={r.host} placeholder="域名, 如 app.example.com (留空=全host)"
                           onChange={(e) => { const n = [...m.ingressRules]; n[ri] = { ...r, host: e.target.value }; set({ ingressRules: n }) }} />
-                        {m.ingressRules.length > 1 && <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => set({ ingressRules: m.ingressRules.filter((_, j) => j !== ri) })}>✕</button>}
+                        {m.ingressRules.length > 1 && <Del onClick={() => set({ ingressRules: m.ingressRules.filter((_, j) => j !== ri) })} title="删除规则" />}
                       </div>
-                      {r.paths.map((p, pi) => (
-                        <div key={pi} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.6fr 0.8fr auto', gap: 4 }}>
+                      <RowList rows={r.paths}
+                        onDelete={(pi) => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: r.paths.filter((_, j) => j !== pi) }; set({ ingressRules: n }) }}
+                        onAdd={() => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: [...r.paths, { path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }; set({ ingressRules: n }) }} addLabel="+ path">
+                        {(p, pi) => (<>
                           <input className={IN} value={p.path} placeholder="/api" onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, path: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }} />
                           <select className={IN} value={p.pathType} onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, pathType: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }}>
                             <option>Prefix</option><option>Exact</option><option>ImplementationSpecific</option>
@@ -481,11 +509,8 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                             {opts.svcs.map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
                           <input className={IN} value={p.svcPort} placeholder="端口" onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, svcPort: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }} />
-                          <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: r.paths.filter((_, j) => j !== pi) }; set({ ingressRules: n }) }}>✕</button>
-                        </div>
-                      ))}
-                      <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }}
-                        onClick={() => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: [...r.paths, { path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }; set({ ingressRules: n }) }}>+ path</button>
+                        </>)}
+                      </RowList>
                     </div>
                   ))}
                   <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ ingressRules: [...m.ingressRules, { host: '', paths: [{ path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }] })}>+ 路由规则</button>
@@ -551,35 +576,35 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
           {isWl && (
             <>
               <Section title="卷挂载" badge="引用已有 ConfigMap / Secret / PVC">
-                <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {m.volumes.map((v, i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1.4fr 1fr auto auto', gap: 4, alignItems: 'center' }}>
-                      <select className={IN} value={v.type} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, type: e.target.value, name: '' }; set({ volumes: n }) }}>
-                        <option value="configmap">ConfigMap</option>
-                        <option value="secret">Secret</option>
-                        <option value="pvc">PVC</option>
-                      </select>
-                      <select className={IN} value={v.name}
-                        onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, name: e.target.value }; set({ volumes: n }) }}>
-                        <option value="" disabled>{v.type === 'configmap' ? (opts.cms.length ? '选择 ConfigMap' : '暂无 ConfigMap') : v.type === 'secret' ? (opts.secrets.length ? '选择 Secret' : '暂无 Secret') : (opts.scs.length ? '选择 PVC' : '暂无 PVC')}</option>
-                        {(v.type === 'configmap' ? opts.cms : v.type === 'secret' ? opts.secrets : []).map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <input className={IN} value={v.mountPath} placeholder="挂载路径 /app/conf" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, mountPath: e.target.value }; set({ volumes: n }) }} />
-                      <input className={IN} value={v.subPath} placeholder="subPath(可选)" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, subPath: e.target.value }; set({ volumes: n }) }} />
-                      <label style={{ display: 'flex', gap: 2, fontSize: '0.7rem', alignItems: 'center', color: 'var(--text)' }}>
-                        <input type="checkbox" checked={v.readOnly} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, readOnly: e.target.checked }; set({ volumes: n }) }} />只读
-                      </label>
-                      <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => set({ volumes: m.volumes.filter((_, j) => j !== i) })}>✕</button>
-                    </div>
-                  ))}
-                  <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ volumes: [...m.volumes, { type: 'configmap', name: '', mountPath: '', subPath: '', readOnly: true }] })}>+ 挂载卷</button>
-                </div>
+                <RowList rows={m.volumes}
+                  onDelete={(i) => set({ volumes: m.volumes.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ volumes: [...m.volumes, { type: 'configmap', name: '', mountPath: '', subPath: '', readOnly: true }] })} addLabel="+ 挂载卷">
+                  {(v, i) => (<>
+                    <select className={IN} value={v.type} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, type: e.target.value, name: '' }; set({ volumes: n }) }}>
+                      <option value="configmap">ConfigMap</option>
+                      <option value="secret">Secret</option>
+                      <option value="pvc">PVC</option>
+                    </select>
+                    <select className={IN} value={v.name}
+                      onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, name: e.target.value }; set({ volumes: n }) }}>
+                      <option value="" disabled>{v.type === 'configmap' ? (opts.cms.length ? '选择 ConfigMap' : '暂无 ConfigMap') : v.type === 'secret' ? (opts.secrets.length ? '选择 Secret' : '暂无 Secret') : (opts.scs.length ? '选择 PVC' : '暂无 PVC')}</option>
+                      {(v.type === 'configmap' ? opts.cms : v.type === 'secret' ? opts.secrets : []).map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <input className={IN} value={v.mountPath} placeholder="挂载路径 /app/conf" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, mountPath: e.target.value }; set({ volumes: n }) }} />
+                    <input className={IN} value={v.subPath} placeholder="subPath(可选)" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, subPath: e.target.value }; set({ volumes: n }) }} />
+                    <label style={{ display: 'flex', gap: 2, fontSize: '0.7rem', alignItems: 'center', color: 'var(--text)' }}>
+                      <input type="checkbox" checked={v.readOnly} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, readOnly: e.target.checked }; set({ volumes: n }) }} />只读
+                    </label>
+                  </>)}
+                </RowList>
               </Section>
               <Section title="环境变量">
-                <F label="envFrom(整批注入)" hint="从已有 ConfigMap/Secret">
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {m.envFrom.map((e, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr auto', gap: 4 }}>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <F label="envFrom(整批注入)" hint="从已有 ConfigMap/Secret">
+                    <RowList rows={m.envFrom}
+                      onDelete={(i) => set({ envFrom: m.envFrom.filter((_, j) => j !== i) })}
+                      onAdd={() => set({ envFrom: [...m.envFrom, { type: 'configmap', name: '' }] })} addLabel="+ 引用">
+                      {(e, i) => (<>
                         <select className={IN} value={e.type} onChange={(ev) => { const n = [...m.envFrom]; n[i] = { ...e, type: ev.target.value, name: '' }; set({ envFrom: n }) }}>
                           <option value="configmap">ConfigMap</option><option value="secret">Secret</option>
                         </select>
@@ -587,12 +612,10 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                           <option value="" disabled>{e.type === 'configmap' ? (opts.cms.length ? '选择' : '暂无') : (opts.secrets.length ? '选择' : '暂无')}</option>
                           {(e.type === 'configmap' ? opts.cms : opts.secrets).map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
-                        <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => set({ envFrom: m.envFrom.filter((_, j) => j !== i) })}>✕</button>
-                      </div>
-                    ))}
-                    <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ envFrom: [...m.envFrom, { type: 'configmap', name: '' }] })}>+ 引用</button>
-                  </div>
-                </F>
+                      </>)}
+                    </RowList>
+                  </F>
+                </div>
                 <F label="逐条 k/v"><KvRows items={m.env} onChange={(x) => set({ env: x })} kHint="NAME" vHint="value" /></F>
               </Section>
               <Section title="健康探针 (HTTP)">
@@ -620,20 +643,18 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                   <KvRows items={m.nodeSelector} onChange={(x) => set({ nodeSelector: x })} kHint="kubernetes.io/hostname" vHint="节点名" vOptions={opts.nodes} />
                 </F>
                 <F label="污点容忍" wide>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {m.tolerations.map((t, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.2fr 0.8fr auto', gap: 4 }}>
-                        <input className={IN} value={t.key} placeholder="key" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, key: e.target.value }; set({ tolerations: n }) }} />
-                        <select className={IN} value={t.op} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, op: e.target.value }; set({ tolerations: n }) }}><option>Equal</option><option>Exists</option></select>
-                        <select className={IN} value={t.effect} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, effect: e.target.value }; set({ tolerations: n }) }}>
-                          <option value="">任意</option><option>NoSchedule</option><option>PreferNoSchedule</option><option>NoExecute</option>
-                        </select>
-                        <input className={IN} value={t.seconds} placeholder="秒" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, seconds: e.target.value }; set({ tolerations: n }) }} />
-                        <button className="btn btn-sm k8s-del-cluster" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={() => set({ tolerations: m.tolerations.filter((_, j) => j !== i) })}>✕</button>
-                      </div>
-                    ))}
-                    <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ tolerations: [...m.tolerations, { key: '', op: 'Equal', effect: 'NoSchedule', seconds: '' }] })}>+ 容忍规则</button>
-                  </div>
+                  <RowList rows={m.tolerations}
+                    onDelete={(i) => set({ tolerations: m.tolerations.filter((_, j) => j !== i) })}
+                    onAdd={() => set({ tolerations: [...m.tolerations, { key: '', op: 'Equal', effect: 'NoSchedule', seconds: '' }] })} addLabel="+ 容忍规则">
+                    {(t, i) => (<>
+                      <input className={IN} value={t.key} placeholder="key" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, key: e.target.value }; set({ tolerations: n }) }} />
+                      <select className={IN} value={t.op} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, op: e.target.value }; set({ tolerations: n }) }}><option>Equal</option><option>Exists</option></select>
+                      <select className={IN} value={t.effect} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, effect: e.target.value }; set({ tolerations: n }) }}>
+                        <option value="">任意</option><option>NoSchedule</option><option>PreferNoSchedule</option><option>NoExecute</option>
+                      </select>
+                      <input className={IN} value={t.seconds} placeholder="秒" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, seconds: e.target.value }; set({ tolerations: n }) }} />
+                    </>)}
+                  </RowList>
                 </F>
               </Section>
               <Section title="标签与注解">

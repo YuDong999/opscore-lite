@@ -25,6 +25,7 @@ Thumbs.db
 /bin/opscore-server
 /agent-linux-amd64
 /bin/agent-linux-amd64
+/bin/agent-linux-loong64
 /bin/opscore-server*.exe~
 /bin/opscore-server.exe~
 /bin/dist-单机版勿用/

@@ -15,7 +15,17 @@ interface LvmData { hasLvm: boolean; pvs: PV[]; vgs: VG[]; lvs: LV[] }
 
 type Permission = 'root' | 'user'
 type Crontab = { content: string; error?: string; permission: Permission }
-type DeviceInfo = { name: string; size: string; type: string; fstype: string; mountpoint: string }
+type DeviceInfo = { name: string; size: string; type: string; fstype: string; mountpoint: string; children?: DeviceInfo[] }
+
+// flattenDevices 将 lsblk 设备树展开为带层级的扁平列表, 用于表格缩进渲染
+function flattenDevices(devs: DeviceInfo[], depth = 0): { d: DeviceInfo; depth: number }[] {
+  const out: { d: DeviceInfo; depth: number }[] = []
+  for (const d of devs) {
+    out.push({ d, depth })
+    if (d.children && d.children.length) out.push(...flattenDevices(d.children, depth + 1))
+  }
+  return out
+}
 type FreeSpace = { start: string; end: string; size: string }
 type Disks = { lsblk: string; mounts: string; df: string; devices: DeviceInfo[]; permission: Permission }
 type DiskActionResult = { ok?: boolean; error?: string; output?: string; newPartition?: string; permission: Permission }
@@ -363,6 +373,7 @@ function DisksSection() {
   const [allocResult, setAllocResult] = useState('')
   const [selectedFreeIdx, setSelectedFreeIdx] = useState(0)
   const [highlightDev, setHighlightDev] = useState('')
+  const [mpMap, setMpMap] = useState<Record<string, string>>({})
 
   const units: Record<string, number> = { k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }
   function parseSize(s: string): number {
@@ -389,6 +400,7 @@ function DisksSection() {
   const SYS_PATHS = ['/', '/boot', '/var', '/usr', '/etc', '/home', '/tmp', '/root', '/snap', '/opt']
 
   function isSysPath(p: string): boolean {
+    if (!p) return false
     const norm = p.replace(/\/+$/, '') || '/'
     return SYS_PATHS.includes(norm) || norm.startsWith('/usr/') || norm.startsWith('/var/') || norm.startsWith('/etc/') || norm.startsWith('/boot/')
   }
@@ -430,12 +442,6 @@ function DisksSection() {
 
   const mountAction = async (action: 'mount' | 'umount', device: string, mountpoint?: string) => {
     const mp = mountpoint || ''
-    if (action === 'mount' && isSysPath(mp)) {
-      if (!window.confirm(`警告：挂载到 "${mp}" 属于系统关键目录，可能影响系统运行。是否继续？`)) return
-    }
-    if (action === 'umount' && isSysPath(mp)) {
-      if (!window.confirm(`警告：卸载 "${mp}" 可能导致系统异常。是否继续？`)) return
-    }
     try {
       const body: Record<string, any> = { action, device, mountpoint: mp }
       if (selected?.id) body.host = selected.id
@@ -443,10 +449,14 @@ function DisksSection() {
       if (res.ok) {
         const label = action === 'mount' ? `挂载 ${device} → ${mp || '(无)'}` : `卸载 ${device}`
         toast.success(label)
+        setMountMsg(`✓ ${label}`)
         flash(device.replace(/^\/dev\//, ''))
         load()
       } else {
-        toast.error(fmtDiskErr(action, res.error))
+        const msg = fmtDiskErr(action, res.error)
+        toast.error(msg)
+        setMountMsg(`✗ ${msg}`)
+        setTimeout(() => setMountMsg(''), 8000)
       }
     } catch {
       toast.error('请求失败')
@@ -455,7 +465,6 @@ function DisksSection() {
 
   const doPartition = async () => {
     if (!allocDev.trim()) return
-    if (!window.confirm(`将在 ${allocDev.trim()} 上创建新分区，该操作不可逆。是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -491,7 +500,6 @@ function DisksSection() {
   }
 
   const doDelete = async (partition: string) => {
-    if (!window.confirm(`将删除分区 ${partition}，该操作不可逆。是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -518,7 +526,6 @@ function DisksSection() {
 
   const doFormat = async () => {
     if (!allocDev.trim()) return
-    if (!window.confirm(`将格式化 ${allocDev.trim()} 为 ${mountFstype || 'xfs'}，所有数据将丢失！是否继续？`)) return
     setAllocLoading(true)
     setAllocErr('')
     setAllocResult('')
@@ -567,37 +574,59 @@ function DisksSection() {
   if (!data) return <div className="loading">加载中…</div>
 
   const isRoot = data.permission === 'root'
+  const devErr = (data as any).error as string | undefined
 
   return (
     <>
       {mountMsg && <div className={`banner ${mountMsg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{mountMsg}</div>}
 
       <Card title="块设备" subtitle="lsblk">
+        {devErr && <div className="banner banner-err" style={{ marginBottom: 8 }}>{devErr}</div>}
         <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap' }}>{data.lsblk}</div>
       </Card>
 
+      {(!data.devices || data.devices.length === 0) && !devErr && (
+        <Card title="设备列表" subtitle="双击设备名复制路径">
+          <div className="banner banner-err">未检测到块设备（容器内可能无法访问 /sys）</div>
+        </Card>
+      )}
       {data.devices && data.devices.length > 0 && (
         <Card title="设备列表" subtitle="双击设备名复制路径">
-          <div className="device-list">
-            {data.devices.filter(d => d.type !== 'rom' && d.type !== 'lvm').map(d => {
-              const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
-              const devTag = d.name.replace(/^\/dev\//, '')
-              const mounted = !!d.mountpoint
-              return (
-                <div key={d.name}
-                  className={`device-row ${mounted ? 'device-mounted' : ''} ${highlightDev === devTag ? 'device-highlight' : ''}`}
-                  style={{ display: 'flex', alignItems: 'center', gap:'0.5rem', padding: '0.25rem 0.5rem', borderBottom: '1px solid var(--border)', transition: 'background .3s' }}>
-                  <code className={`device-tag ${d.type}`} style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(d.name, devPath)}>{devPath}</code>
-                  <span className="mono" style={{ fontSize:'0.7188rem', color: '#888' }}>{d.size}</span>
-                  <span className="mono" style={{ fontSize:'0.6875rem', color: '#666' }}>{d.fstype || '—'}</span>
-                  {mounted
-                    ? <span className="pill pill-ok" style={{ fontSize:'0.7188rem', color: '#30d158', borderColor: 'rgba(48,209,88,0.3)', background: 'rgba(48,209,88,0.08)' }}>↦ {d.mountpoint}</span>
-                    : <span className="pill" style={{ fontSize:'0.7188rem', color: 'var(--text-dim)' }}>未挂载</span>
-                  }
-                  {copied === d.name && <span style={{ fontSize:'0.6875rem', color: '#22c55e', marginLeft: 'auto' }}>✓ 已复制</span>}
-                </div>
-              )
-            })}
+          <div className="table-wrap">
+            <table className="table data-table">
+              <thead>
+                <tr><th>设备</th><th>大小</th><th>类型</th><th>挂载点</th><th style={{ width: '170px' }}>操作</th></tr>
+              </thead>
+              <tbody>
+                {flattenDevices(data.devices).map(({ d, depth }) => {
+                  const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
+                  const devTag = d.name.replace(/^\/dev\//, '')
+                  const mounted = !!d.mountpoint
+                  const mountable = (d.type === 'part' || d.type === 'lvm') && d.fstype && d.fstype !== 'LVM2_member' && d.fstype !== 'swap'
+                  return (
+                    <tr key={d.name + '@' + depth} className={`${mounted ? 'row-mounted' : ''} ${highlightDev === devTag ? 'row-highlight' : ''}`}>
+                      <td style={{ paddingLeft: depth * 22 + 12 }}>
+                        <code className="device-tag" style={{ cursor: 'copy' }} title="双击复制" onDoubleClick={() => copyPath(d.name, devPath)}>{devPath}</code>
+                      </td>
+                      <td className="mono small">{d.size}</td>
+                      <td className="mono small dim">{d.fstype || '—'}</td>
+                      <td className="mono small">
+                        {mounted ? d.mountpoint : (mountable ? (
+                          <input className="input input-sm" style={{ width: 150 }} placeholder="/mnt/data"
+                            value={mpMap[d.name] || ''}
+                            onChange={e => setMpMap(m => ({ ...m, [d.name]: e.target.value }))} />
+                        ) : <span className="dim">未挂载</span>)}
+                      </td>
+                      <td>
+                        {mountable && (mounted
+                          ? <button className="btn btn-sm btn-danger" onClick={() => mountAction('umount', devPath, d.mountpoint)}>卸载</button>
+                          : <button className="btn btn-sm btn-accent" disabled={!mpMap[d.name]} onClick={() => mountAction('mount', devPath, mpMap[d.name])}>挂载</button>)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </Card>
       )}
@@ -617,7 +646,7 @@ function DisksSection() {
             {isSysPath(mountPoint) && <span className="banner banner-err" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginBottom: 0 }}>⚠ 系统关键路径，挂载将覆盖原有内容</span>}
             <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
               onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
-            <button className="btn btn-danger" disabled={!mountDev || !mountPoint}
+            <button className="btn btn-danger" disabled={!mountDev}
               onClick={() => mountAction('umount', mountDev, mountPoint)}>卸载</button>
           </div>
         </Card>
@@ -629,7 +658,7 @@ function DisksSection() {
             <span className="field-label" style={{ margin: 0 }}>设备</span>
             <select className="sel" value={allocDev} onChange={e => setAllocDev(e.target.value)}>
               <option value="">选择设备</option>
-              {data.devices.filter(d => d.type === 'disk').map(d => {
+              {(data.devices || []).filter(d => d.type === 'disk').map(d => {
                 const devPath = d.name.startsWith('/dev/') ? d.name : '/dev/' + d.name
                 return <option key={d.name} value={devPath}>{devPath} ({d.size})</option>
               })}

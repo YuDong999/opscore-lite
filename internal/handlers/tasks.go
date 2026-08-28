@@ -22,13 +22,14 @@ type CronEntry struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-// DeviceInfo 描述单个块设备信息
+// DeviceInfo 描述单个块设备信息 (children 表示层级从属, 如 LVM 位于分区之下)
 type DeviceInfo struct {
-	Name       string `json:"name"`
-	Size       string `json:"size"`
-	Type       string `json:"type"`
-	Fstype     string `json:"fstype"`
-	Mountpoint string `json:"mountpoint"`
+	Name       string       `json:"name"`
+	Size       string       `json:"size"`
+	Type       string       `json:"type"`
+	Fstype     string       `json:"fstype"`
+	Mountpoint string       `json:"mountpoint"`
+	Children   []DeviceInfo `json:"children,omitempty"`
 }
 
 // DiskActionResult 磁盘操作返回结构
@@ -230,14 +231,22 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	lsblk := runCapture("lsblk", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL")
 	mounts := runCapture("mount")
 	df := runCapture("df", "-h")
-	devices := parseDevices(runCapture("lsblk", "-ln", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT"))
-	WriteJSON(w, map[string]any{
+	devicesOut := runCapture("lsblk", "-J", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT")
+	devices := parseDevices(devicesOut)
+	if isCmdError(devicesOut) {
+		devices = nil
+	}
+	resp := map[string]any{
 		"lsblk":      lsblk,
 		"mounts":     mounts,
 		"df":         df,
 		"devices":    devices,
 		"permission": permLabel(),
-	})
+	}
+	if isCmdError(lsblk) || isCmdError(mounts) || isCmdError(df) {
+		resp["error"] = "系统命令执行失败，可能缺少 /sys 或 /proc 访问权限"
+	}
+	WriteJSON(w, resp)
 }
 
 func remoteDisksHandler(w http.ResponseWriter, hostID string) {
@@ -251,7 +260,7 @@ func remoteDisksHandler(w http.ResponseWriter, hostID string) {
 		"lsblk":   `lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL 2>/dev/null`,
 		"mount":   `mount 2>/dev/null`,
 		"df":      `df -h 2>/dev/null`,
-		"devices": `lsblk -ln -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null`,
+		"devices": `lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null`,
 	}
 	res := remotePool.Exec(rmHost, cmds)
 	if res["lsblk"].Error != "" {
@@ -648,8 +657,23 @@ func isPartitionDev(dev string) bool {
 	return err == nil
 }
 
-// parseDevices 解析 lsblk -ln 输出为设备列表
+// parseDevices 解析 lsblk -J 输出为带层级的设备树; 兼容旧式 -ln 平铺输出作为回退
 func parseDevices(output string) []DeviceInfo {
+	out := strings.TrimSpace(output)
+	if out == "" {
+		return nil
+	}
+	var tree struct {
+		Blockdevices []DeviceInfo `json:"blockdevices"`
+	}
+	if err := json.Unmarshal([]byte(out), &tree); err == nil && len(tree.Blockdevices) > 0 {
+		return tree.Blockdevices
+	}
+	return parseDevicesFlat(out)
+}
+
+// parseDevicesFlat 解析 lsblk -ln 平铺输出 (回退兼容)
+func parseDevicesFlat(output string) []DeviceInfo {
 	lines := strings.Split(output, "\n")
 	var devices []DeviceInfo
 	for _, line := range lines {
@@ -763,6 +787,21 @@ func errMsg(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// isCmdError 判断命令输出是否为错误信息(以命令名+冒号开头或含典型错误词)
+func isCmdError(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+	if strings.HasPrefix(output, "lsblk:") || strings.HasPrefix(output, "mount:") || strings.HasPrefix(output, "df:") {
+		return true
+	}
+	if strings.Contains(output, "failed to access") || strings.Contains(output, "No such file or directory") {
+		return true
+	}
+	return false
 }
 
 // contains 检查字符串切片是否包含某元素
