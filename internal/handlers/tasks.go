@@ -720,6 +720,12 @@ func parseDevicesFlat(output string) []DeviceInfo {
 		if line == "" {
 			continue
 		}
+		// 防御: 老 lsblk 不支持 -J 时把 usage 文本喂进 -ln 分支也会逐行污染解析,
+		// 跳过含典型错误关键词或命令路径前缀的行(与 looksLikeLSBlkJSON 同理)。
+		if isCmdError(line) || strings.Contains(line, "无效选项") || strings.Contains(line, "invalid option") ||
+			strings.Contains(line, "用法") || strings.Contains(line, "Usage") {
+			continue
+		}
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
