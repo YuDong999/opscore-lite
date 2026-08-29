@@ -39,6 +39,13 @@ func TestDistroSmokeMatrix(t *testing.T) {
 			fwBackend: "firewalld", svcManager: "systemd",
 		},
 		{
+			name: "AlmaLinux 9",
+			probe: probeBlock("almalinux", "9", "rhel fedora", "x86_64", "systemd",
+				"1", "1", "1", "1", "0", "1", "1", "1", "1", "1", "1"),
+			fam: FamilyRedHat, pm: PkgDNF, init: InitSystemd, lsblkJSON: true,
+			fwBackend: "firewalld", svcManager: "systemd",
+		},
+		{
 			name: "银河麒麟 V10",
 			probe: probeBlock("kylin", "V10", "", "aarch64", "systemd",
 				"1", "0", "1", "1", "0", "1", "0", "1", "1", "1", "0"),
