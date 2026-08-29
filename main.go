@@ -357,6 +357,8 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/core/tasks/disks", Handler: handlers.DisksHandler},
 			{Path: "/api/core/tasks/disks/action", Handler: handlers.DiskActionHandler},
 			{Path: "/api/core/lvm", Handler: handlers.LvmHandler},
+			{Path: "/api/core/platform/inventory", Handler: handlers.PlatformInventoryHandler},
+			{Path: "/api/core/platform/profile", Handler: handlers.PlatformProfileHandler},
 		}},
 		{man("ansible", "Ansible 多机管理", "terminal", "/ansible", "core", "批量主机管理 / 库存清单 / Playbook / Ad-hoc"), []registry.Route{
 			{Path: "/api/ansible/hosts", Handler: handlers.AnsibleHostsList},

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"opscore/internal/platform"
 )
 
 func permLabel() string {
@@ -143,12 +145,26 @@ func UpdatesHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"error": "需要 root 权限", "permission": "user"})
 		return
 	}
-	updates := runCapture("dnf", "check-update", "--security", "-q")
-	nr := runCapture("needs-restarting", "-r")
+	p := platform.DetectLocal()
+	checkCmd, ok := platform.UpdateCheckCmd(p)
+	if !ok {
+		WriteJSON(w, map[string]any{
+			"error":      "当前发行版不支持自动更新检查",
+			"platform":   p,
+			"pkg_manager": string(p.PkgManager),
+			"permission": "root",
+		})
+		return
+	}
+	updates := runCapture("sh", "-c", checkCmd)
+	nr := runCapture("sh", "-c", platform.NeedsRestartCmd(p))
+	needsRestart := !strings.Contains(nr, "Reboot is not required") && !strings.Contains(nr, "No reboot required")
 	WriteJSON(w, map[string]any{
 		"updates":        updates,
-		"needs_restart":  !strings.Contains(nr, "Reboot is not required"),
+		"needs_restart":  needsRestart,
 		"restart_detail": nr,
+		"platform":       p,
+		"pkg_manager":    string(p.PkgManager),
 		"permission":     "root",
 	})
 }
@@ -162,8 +178,13 @@ func UpdatesInstallHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "需要 root 权限", "permission": "user"})
 		return
 	}
-	out, err := exec.Command("dnf", "upgrade", "--security", "-y").CombinedOutput()
-	resp := map[string]any{"output": string(out), "permission": "root"}
+	installCmd, ok := platform.UpdateInstallCmd(platform.DetectLocal())
+	if !ok {
+		WriteJSON(w, map[string]any{"ok": false, "error": "当前发行版不支持自动更新安装", "permission": "root"})
+		return
+	}
+	out, err := exec.Command("sh", "-c", installCmd).CombinedOutput()
+	resp := map[string]any{"output": string(out), "permission": "root", "pkg_manager": string(platform.DetectLocal().PkgManager)}
 	if err != nil {
 		resp["ok"] = false
 		resp["error"] = err.Error()

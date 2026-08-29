@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"opscore/internal/cmds"
+	"opscore/internal/platform"
 )
 
 // CrontabEntry 表示 cron 条目
@@ -237,6 +238,7 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 		"mounts":     mounts,
 		"df":         df,
 		"devices":    devices,
+		"platform":   platform.DetectLocal(),
 		"permission": permLabel(),
 	}
 	if isCmdError(lsblk) || isCmdError(mounts) || isCmdError(df) {
@@ -292,29 +294,24 @@ func remoteDisksHandler(w http.ResponseWriter, hostID string) {
 		return
 	}
 	rmHost := resolveRemoteHost(*h)
-	cmds := map[string]string{
-		"lsblk":   `lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL 2>/dev/null`,
-		"mount":   `mount 2>/dev/null`,
-		"df":      `df -h 2>/dev/null`,
-		"devices": `lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null`,
-	}
+	// 先探测(或读缓存)远端平台能力, 再据此路由 lsblk 命令版本
+	prof := remoteProfile(hostID, rmHost)
+	cmds := platform.DiskListCmds(prof)
+	cmds["lsblk"] = `lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL 2>/dev/null`
+	cmds["mount"] = `mount 2>/dev/null`
+	cmds["df"] = `df -h 2>/dev/null`
 	res := remotePool.Exec(rmHost, cmds)
 	if res["lsblk"].Error != "" {
 		writeErr(w, "SSH 命令执行失败: "+res["lsblk"].Error, http.StatusBadGateway)
 		return
 	}
-	devices := parseDevices(res["devices"].Output)
-	if !looksLikeLSBlkJSON(res["devices"].Output) {
-		// 远端老 lsblk → 再用 -ln 跑一次 (与本机 collectDevices 同样的回退策略)
-		if r2 := remotePool.Exec(rmHost, map[string]string{"devices": `lsblk -ln -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null`}); r2["devices"].Error == "" {
-			devices = parseDevicesFlat(r2["devices"].Output)
-		}
-	}
+	devices := resolveDiskDevices(res, prof)
 	WriteJSON(w, map[string]any{
 		"lsblk":      res["lsblk"].Output,
 		"mounts":     res["mount"].Output,
 		"df":         res["df"].Output,
 		"devices":    devices,
+		"platform":   prof,
 		"permission": "root",
 	})
 }
