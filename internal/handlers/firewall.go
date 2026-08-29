@@ -150,6 +150,16 @@ func firewalldRunningEx(ex fwExec) bool {
 //
 // 探测容错: 单条组合命令一次往返; 失败(传输抖动)最多重试3次;
 // 全部失败时回退到最近一次已知后端(fwBackendCache), 仍无才报 unknown。
+// backendFromProbeText 将防火墙探测命令的输出归一为后端名: ufw / firewalld / iptables / none。
+// 抽成纯函数便于单测; 任何非预期输出(空、带前缀、错误文本)一律归为 none。
+func backendFromProbeText(out string) string {
+	switch strings.TrimSpace(out) {
+	case "ufw", "firewalld", "iptables", "none":
+		return strings.TrimSpace(out)
+	}
+	return "none"
+}
+
 func detectBackendFor(hostID string) (backend string, running bool, manageable bool, msg string) {
 	if IsLocalTarget(hostID) {
 		return detectBackend()
@@ -176,11 +186,11 @@ func detectBackendFor(hostID string) (backend string, running bool, manageable b
 				time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
 			}
 			out, err := RunOnTarget(hostID, []string{"sh", "-c", probeCmd})
-			b := strings.TrimSpace(out)
-			if err != nil || b == "" {
+			if err != nil || strings.TrimSpace(out) == "" {
 				lastErr = fmt.Errorf("探测输出空(err=%v)", err)
 				continue // 传输抖动, 重试
 			}
+			b := backendFromProbeText(out)
 			fwSetBackendCache(hostID, b)
 			switch b {
 			case "ufw":

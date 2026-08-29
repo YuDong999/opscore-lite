@@ -730,6 +730,10 @@ func parseDevicesFlat(output string) []DeviceInfo {
 		if len(fields) < 3 {
 			continue
 		}
+		// 跳过表头行(某些 lsblk 版本/未带 -n 时会出现 NAME SIZE TYPE ...)
+		if fields[0] == "NAME" && fields[1] == "SIZE" {
+			continue
+		}
 		d := DeviceInfo{Name: fields[0], Size: fields[1], Type: fields[2]}
 		if len(fields) >= 4 && fields[3] != "" {
 			d.Fstype = fields[3]

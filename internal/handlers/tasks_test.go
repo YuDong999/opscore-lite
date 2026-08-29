@@ -1,6 +1,45 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"opscore/internal/platform"
+	"opscore/internal/remote"
+)
+
+// TestResolveDiskDevices_Routing 守护 resolveDiskDevices 的磁盘命令路由:
+// 优先 -J 合法 JSON, 否则回退 -ln, 再否则不产生假设备。
+func TestResolveDiskDevices_Routing(t *testing.T) {
+	goodJSON := `{"blockdevices":[{"name":"sda","size":"40G","type":"disk"}]}`
+	flat := "NAME SIZE TYPE FSTYPE MOUNTPOINT\nsda  40G disk\n"
+
+	// 1) -J 合法 JSON → 用 parseDevices
+	res1 := map[string]remote.Result{"devices": {Output: goodJSON}}
+	if devs := resolveDiskDevices(res1, platform.PlatformProfile{HasLSBlkJSON: true}); len(devs) != 1 || devs[0].Name != "sda" {
+		t.Errorf("case1 应解析出 sda, got %+v", devs)
+	}
+
+	// 2) -J 不支持(usage 文本) 但有 -ln 回退 → 用 parseDevicesFlat
+	res2 := map[string]remote.Result{
+		"devices":     {Output: "/usr/bin/lsblk: 无效选项 -- J\n"},
+		"devices_fb":  {Output: flat},
+	}
+	if devs := resolveDiskDevices(res2, platform.PlatformProfile{HasLSBlkJSON: false}); len(devs) != 1 || devs[0].Name != "sda" {
+		t.Errorf("case2 应回退解析出 sda, got %+v", devs)
+	}
+
+	// 3) -J 不支持且无回退 → 不产生假设备(0 个)
+	res3 := map[string]remote.Result{"devices": {Output: "/usr/bin/lsblk: 无效选项 -- J\n"}}
+	if devs := resolveDiskDevices(res3, platform.PlatformProfile{HasLSBlkJSON: false}); len(devs) != 0 {
+		t.Errorf("case3 不应产生假设备, got %d", len(devs))
+	}
+
+	// 4) 全空 → nil
+	res4 := map[string]remote.Result{}
+	if devs := resolveDiskDevices(res4, platform.PlatformProfile{}); devs != nil {
+		t.Errorf("case4 全空应返回 nil, got %+v", devs)
+	}
+}
 
 // TestLooksLikeLSBlkJSON_UsageText 复现并守护之前的假数据 bug:
 // 老版本 lsblk(<2.27) 不支持 -J 时把 usage 文本写进 stdout, 必须判定为非 JSON。
