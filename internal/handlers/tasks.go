@@ -42,6 +42,19 @@ type DiskActionResult struct {
 	NewPartition string `json:"newPartition,omitempty"`
 }
 
+// DiskActionBody 磁盘操作请求体（本机/远程共用）
+type DiskActionBody struct {
+	Action     string `json:"action"`
+	Device     string `json:"device"`
+	Partition  string `json:"partition"`
+	Mountpoint string `json:"mountpoint"`
+	Fstype     string `json:"fstype"`
+	Options    string `json:"options"`
+	Start      string `json:"start"`
+	End        string `json:"end"`
+	Host       string `json:"host"` // 目标主机ID(空=本机)
+}
+
 // freeSpace 记录 parted 输出的空闲区间
 type freeSpace struct {
 	start string
@@ -322,17 +335,7 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	var body struct {
-		Action     string `json:"action"`
-		Device     string `json:"device"`
-		Partition  string `json:"partition"`
-		Mountpoint string `json:"mountpoint"`
-		Fstype     string `json:"fstype"`
-		Options    string `json:"options"`
-		Start      string `json:"start"`
-		End        string `json:"end"`
-		Host       string `json:"host"` // 目标主机ID(空=本机)
-	}
+	var body DiskActionBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteJSON(w, map[string]any{"error": "请求格式错误", "permission": "root"})
 		return
@@ -395,11 +398,12 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"error": verr, "permission": "root"})
 			return
 		}
-		out, err := exec.Command("parted", "-s", dev, "rm", body.Partition).CombinedOutput()
-		if err == nil {
-			exec.Command("partprobe", dev).Run()
-		}
-		WriteJSON(w, map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)})
+		out, err := diskDelete(func(argv []string) (string, error) {
+			cmd := exec.Command(argv[0], argv[1:]...)
+			o, e := cmd.CombinedOutput()
+			return string(o), e
+		}, dev, body.Partition)
+		WriteJSON(w, map[string]any{"output": out, "permission": "root", "ok": err == nil, "error": errMsg(err)})
 		return
 	case "partition":
 		if body.Device == "" {
@@ -412,30 +416,14 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		start, end := body.Start, body.End
-		if start == "" || end == "" {
-			freeInfo := parseFreeSpace(runCapture("parted", "-s", dev, "print", "free"))
-			if freeInfo.start == "" || freeInfo.end == "" {
-				WriteJSON(w, map[string]any{"error": "未找到可用空闲空间", "permission": "root"})
-				return
-			}
-			start, end = freeInfo.start, freeInfo.end
-		}
-		beforeDevices := getDeviceNames(runCapture("lsblk", "-l", "-n", "-o", "NAME"))
-		out, err := exec.Command("parted", "-s", dev, "mkpart", "primary", "xfs", start, end).CombinedOutput()
-		if err == nil {
-			exec.Command("partprobe", dev).Run()
-		}
-		newPartition := ""
-		afterDevices := getDeviceNames(runCapture("lsblk", "-l", "-n", "-o", "NAME"))
-		for _, d := range afterDevices {
-			if !contains(beforeDevices, d) && strings.HasPrefix(d, filepath.Base(dev)) {
-				newPartition = "/dev/" + d
-				break
-			}
-		}
-		resp := map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)}
-		if newPartition != "" {
-			resp["newPartition"] = newPartition
+		out, newPart, err := diskPartition(func(argv []string) (string, error) {
+			cmd := exec.Command(argv[0], argv[1:]...)
+			o, e := cmd.CombinedOutput()
+			return string(o), e
+		}, dev, start, end)
+		resp := map[string]any{"output": out, "permission": "root", "ok": err == nil, "error": errMsg(err)}
+		if newPart != "" {
+			resp["newPartition"] = newPart
 		}
 		WriteJSON(w, resp)
 		return
@@ -453,18 +441,12 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 		if ft == "" {
 			ft = "xfs"
 		}
-		var fc *exec.Cmd
-		switch ft {
-		case "xfs":
-			fc = exec.Command("mkfs.xfs", "-f", dev)
-		case "ext4":
-			fc = exec.Command("mkfs.ext4", "-F", dev)
-		default:
-			WriteJSON(w, map[string]any{"error": "不支持的格式: " + ft, "permission": "root"})
-			return
-		}
-		out, err := fc.CombinedOutput()
-		WriteJSON(w, map[string]any{"output": string(out), "permission": "root", "ok": err == nil, "error": errMsg(err)})
+		out, err := diskFormat(func(argv []string) (string, error) {
+			cmd := exec.Command(argv[0], argv[1:]...)
+			o, e := cmd.CombinedOutput()
+			return string(o), e
+		}, dev, ft)
+		WriteJSON(w, map[string]any{"output": out, "permission": "root", "ok": err == nil, "error": errMsg(err)})
 		return
 	case "smart":
 		dev := body.Device
@@ -472,14 +454,11 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"error": "缺少 device", "permission": "user"})
 			return
 		}
-		if !strings.HasPrefix(dev, "/dev/") {
-			dev = "/dev/" + dev
-		}
-		if _, err := os.Stat(dev); os.IsNotExist(err) {
-			WriteJSON(w, map[string]any{"error": "设备不存在 " + dev, "permission": "user"})
-			return
-		}
-		out := runCapture("smartctl", "-a", dev)
+		out, _ := diskSmart(func(argv []string) (string, error) {
+			cmd := exec.Command(argv[0], argv[1:]...)
+			o, e := cmd.CombinedOutput()
+			return string(o), e
+		}, dev)
 		WriteJSON(w, map[string]any{"output": out, "permission": "root"})
 		return
 	default:
@@ -502,17 +481,7 @@ func DiskActionHandler(w http.ResponseWriter, r *http.Request) {
 // diskActionRemote 磁盘操作的远程分发: 与本机分支语义一致, 经 RunOnTarget 落到目标主机。
 // 只读类(smart/info)与写操作(mount/umount/delete/partition/format)统一处理;
 // partition 的空闲空间探测与新分区识别同样经 SSH 完成。
-func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
-	Action     string `json:"action"`
-	Device     string `json:"device"`
-	Partition  string `json:"partition"`
-	Mountpoint string `json:"mountpoint"`
-	Fstype     string `json:"fstype"`
-	Options    string `json:"options"`
-	Start      string `json:"start"`
-	End        string `json:"end"`
-	Host       string `json:"host"`
-}) {
+func diskActionRemote(w http.ResponseWriter, hostID string, body *DiskActionBody) {
 	target := displayTarget(hostID)
 	run := func(argv []string) (string, error) { return RunOnTarget(hostID, argv) }
 	resp := map[string]any{"permission": "root", "target": target}
@@ -551,10 +520,7 @@ func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
 			WriteJSON(w, map[string]any{"error": verr, "target": target})
 			return
 		}
-		out, err := run([]string{"parted", "-s", dev, "rm", body.Partition})
-		if err == nil {
-			run([]string{"partprobe", dev})
-		}
+		out, err := diskDelete(run, dev, body.Partition)
 		fillDiskResp(resp, out, err)
 
 	case "partition":
@@ -564,32 +530,10 @@ func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
 			return
 		}
 		start, end := body.Start, body.End
-		if start == "" || end == "" {
-			freeOut, _ := run([]string{"parted", "-s", dev, "print", "free"})
-			fs := parseFreeSpace(freeOut)
-			if fs.start == "" || fs.end == "" {
-				WriteJSON(w, map[string]any{"error": "未找到可用空闲空间", "target": target})
-				return
-			}
-			start, end = fs.start, fs.end
-		}
-		beforeOut, _ := run([]string{"lsblk", "-l", "-n", "-o", "NAME"})
-		before := getDeviceNames(beforeOut)
-		out, err := run([]string{"parted", "-s", dev, "mkpart", "primary", "xfs", start, end})
-		if err == nil {
-			run([]string{"partprobe", dev})
-		}
-		newPartition := ""
-		afterOut, _ := run([]string{"lsblk", "-l", "-n", "-o", "NAME"})
-		for _, d := range getDeviceNames(afterOut) {
-			if !contains(before, d) && strings.HasPrefix(d, filepath.Base(dev)) {
-				newPartition = "/dev/" + d
-				break
-			}
-		}
+		out, newPart, err := diskPartition(run, dev, start, end)
 		fillDiskResp(resp, out, err)
-		if newPartition != "" {
-			resp["newPartition"] = newPartition
+		if newPart != "" {
+			resp["newPartition"] = newPart
 		}
 
 	case "format":
@@ -602,17 +546,7 @@ func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
 		if ft == "" {
 			ft = "xfs"
 		}
-		var argv []string
-		switch ft {
-		case "xfs":
-			argv = []string{"mkfs.xfs", "-f", dev}
-		case "ext4":
-			argv = []string{"mkfs.ext4", "-F", dev}
-		default:
-			WriteJSON(w, map[string]any{"error": "不支持的格式: " + ft, "target": target})
-			return
-		}
-		out, err := run(argv)
+		out, err := diskFormat(run, dev, ft)
 		fillDiskResp(resp, out, err)
 
 	case "smart":
@@ -621,10 +555,7 @@ func diskActionRemote(w http.ResponseWriter, hostID string, body *struct {
 			WriteJSON(w, map[string]any{"error": "缺少 device", "target": target})
 			return
 		}
-		if !strings.HasPrefix(dev, "/dev/") {
-			dev = "/dev/" + dev
-		}
-		out, _ := run([]string{"smartctl", "-a", dev})
+		out, _ := diskSmart(run, dev)
 		resp["output"] = out
 
 	default:
@@ -642,6 +573,62 @@ func fillDiskResp(resp map[string]any, out string, err error) {
 	}
 	resp["ok"] = true
 	resp["output"] = out
+}
+
+// diskDelete 删除分区（本地/远程共用逻辑）。
+func diskDelete(executor func(argv []string) (string, error), dev, partition string) (string, error) {
+	out, err := executor([]string{"parted", "-s", dev, "rm", partition})
+	if err == nil {
+		executor([]string{"partprobe", dev})
+	}
+	return out, err
+}
+
+// diskFormat 格式化磁盘（本地/远程共用逻辑）。
+func diskFormat(executor func(argv []string) (string, error), dev, ft string) (string, error) {
+	var argv []string
+	switch ft {
+	case "xfs":
+		argv = []string{"mkfs.xfs", "-f", dev}
+	case "ext4":
+		argv = []string{"mkfs.ext4", "-F", dev}
+	default:
+		return "", fmt.Errorf("不支持的格式: %s", ft)
+	}
+	return executor(argv)
+}
+
+// diskSmart 读取 SMART 信息（本地/远程共用逻辑）。
+func diskSmart(executor func(argv []string) (string, error), dev string) (string, error) {
+	if !strings.HasPrefix(dev, "/dev/") {
+		dev = "/dev/" + dev
+	}
+	return executor([]string{"smartctl", "-a", dev})
+}
+
+// diskPartition 创建新分区（本地/远程共用逻辑），返回 (输出, 新分区路径, 错误)。
+func diskPartition(executor func(argv []string) (string, error), dev, start, end string) (string, string, error) {
+	if start == "" || end == "" {
+		freeOut, _ := executor([]string{"parted", "-s", dev, "print", "free"})
+		fs := parseFreeSpace(freeOut)
+		if fs.start == "" || fs.end == "" {
+			return "", "", fmt.Errorf("未找到可用空闲空间")
+		}
+		start, end = fs.start, fs.end
+	}
+	beforeOut, _ := executor([]string{"lsblk", "-l", "-n", "-o", "NAME"})
+	before := getDeviceNames(beforeOut)
+	out, err := executor([]string{"parted", "-s", dev, "mkpart", "primary", "xfs", start, end})
+	if err == nil {
+		executor([]string{"partprobe", dev})
+	}
+	afterOut, _ := executor([]string{"lsblk", "-l", "-n", "-o", "NAME"})
+	for _, d := range getDeviceNames(afterOut) {
+		if !contains(before, d) && strings.HasPrefix(d, filepath.Base(dev)) {
+			return out, "/dev/" + d, err
+		}
+	}
+	return out, "", err
 }
 
 // runCapture 执行命令并捕获输出

@@ -50,21 +50,21 @@ func ServicesList(w http.ResponseWriter, r *http.Request) {
 		if agentHub != nil {
 			if snap, ok := agentHub.GetSnapshot(hostID); ok && len(snap.Services) > 0 {
 				// agent 只回传原始数据,识别/日志命令等展示字段在 server 端对齐(深拷贝,不改动缓存快照)
-				svcs := make([]ServiceInfo, 0, len(snap.Services))
-				for _, s := range snap.Services {
-					si := ServiceInfo{
-						ID: s.ID, Name: s.Name, Status: s.Status, SubStatus: s.SubStatus,
-						Description: s.Description, UnitFile: s.UnitFile,
-						PID: s.PID, CPUPercent: s.CPUPercent, MemPercent: s.MemPercent,
-						LogHint: "journalctl -u " + s.Name, LogCommand: "journalctl -u " + s.Name, LogSource: "journalctl",
-					}
-					if meta, ok := recognizeProc(s.Name); ok {
-						si.Recognized = meta.Label
-						si.Category = meta.Category
-						si.Icon = meta.Icon
-					}
-					svcs = append(svcs, si)
+			svcs := make([]ServiceInfo, 0, len(snap.Services))
+			for _, s := range snap.Services {
+				si := ServiceInfo{
+					ID: s.ID, Name: s.Name, Status: s.Status, SubStatus: s.SubStatus,
+					Description: s.Description, UnitFile: s.UnitFile,
+					PID: s.PID, CPUPercent: s.CPUPercent, MemPercent: s.MemPercent,
 				}
+				if meta, ok := recognizeProc(s.Name); ok {
+					si.Recognized = meta.Label
+					si.Category = meta.Category
+					si.Icon = meta.Icon
+				}
+				enrichServiceLog(&si, s.Name)
+				svcs = append(svcs, si)
+			}
 				WriteJSON(w, map[string]any{"os": snap.Host.Platform, "managed": true, "services": svcs})
 				return
 			}
@@ -150,15 +150,11 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(metrics.NormUnitLine(line))
-		if len(fields) < 4 {
+		unit, _, _, _, ok := parseSystemdUnitLine(line)
+		if !ok {
 			continue
 		}
-		// LOAD=not-found: 悬空引用(被 wants 但单元文件已不存在), 无法操作, 不进列表
-		if fields[1] == "not-found" {
-			continue
-		}
-		units = append(units, fields[0])
+		units = append(units, unit)
 	}
 
 	// 一次批量 show 取所有 unit 的 Id/FragmentPath/MainPID。
@@ -168,16 +164,7 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		showRes := remotePool.Exec(rmHost, map[string]string{"show": `systemctl show -p Id -p FragmentPath -p MainPID ` + strings.Join(units, " ") + ` 2>/dev/null`})
 		if showRes["show"].Error == "" {
 			for _, block := range strings.Split(showRes["show"].Output, "\n\n") {
-				var id, fp, pid string
-				for _, l2 := range strings.Split(block, "\n") {
-					if v, ok := strings.CutPrefix(l2, "Id="); ok {
-						id = strings.TrimSpace(v)
-					} else if v, ok := strings.CutPrefix(l2, "FragmentPath="); ok {
-						fp = strings.TrimSpace(v)
-					} else if v, ok := strings.CutPrefix(l2, "MainPID="); ok {
-						pid = strings.TrimSpace(v)
-					}
-				}
+				id, fp, pid := parseSystemdShowBlock(block)
 				if id != "" {
 					props[id] = struct{ fp, pid string }{fp: fp, pid: pid}
 				}
@@ -189,15 +176,18 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(metrics.NormUnitLine(line))
-		if len(fields) < 4 {
+		unit, status, subStatus, desc, ok := parseSystemdUnitLine(line)
+		if !ok {
 			continue
 		}
-		if fields[1] == "not-found" {
-			continue // 悬空引用残影, 跳过
+		si := ServiceInfo{ID: unit, Name: unit, Status: status, SubStatus: subStatus, Description: desc}
+
+		if p, ok := props[unit]; ok {
+			si.UnitFile = p.fp
+			if n, perr := strconv.ParseInt(strings.TrimSpace(p.pid), 10, 32); perr == nil {
+				si.PID = int32(n)
+			}
 		}
-		unit := fields[0]
-		si := ServiceInfo{ID: unit, Name: unit, Status: fields[2], SubStatus: fields[3], Description: strings.Join(fields[4:], " ")}
 
 		if p, ok := props[unit]; ok {
 			si.UnitFile = p.fp
@@ -220,8 +210,7 @@ func remoteServicesList(hostID string) ([]ServiceInfo, error) {
 			si.Category = meta.Category
 			si.Icon = meta.Icon
 		}
-		si.LogCommand = "journalctl -u " + unit
-		si.LogSource = "journalctl"
+		enrichServiceLog(&si, unit)
 		svcs = append(svcs, si)
 	}
 	have := map[string]bool{}
@@ -274,6 +263,36 @@ func fetchPsStats() (map[int32]float64, map[int32]float32) {
 	return cpuMap, memMap
 }
 
+// parseSystemdUnitLine 解析 systemctl list-units 的单行输出。
+func parseSystemdUnitLine(line string) (unit, status, subStatus, desc string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	fields := strings.Fields(metrics.NormUnitLine(line))
+	if len(fields) < 4 {
+		return
+	}
+	if fields[1] == "not-found" {
+		return
+	}
+	return fields[0], fields[2], fields[3], strings.Join(fields[4:], " "), true
+}
+
+// parseSystemdShowBlock 解析 systemctl show 的单个 unit 块（Id/FragmentPath/MainPID）。
+func parseSystemdShowBlock(block string) (id, fp, pid string) {
+	for _, l2 := range strings.Split(block, "\n") {
+		if v, ok := strings.CutPrefix(l2, "Id="); ok {
+			id = strings.TrimSpace(v)
+		} else if v, ok := strings.CutPrefix(l2, "FragmentPath="); ok {
+			fp = strings.TrimSpace(v)
+		} else if v, ok := strings.CutPrefix(l2, "MainPID="); ok {
+			pid = strings.TrimSpace(v)
+		}
+	}
+	return
+}
+
 // listSystemd 解析 systemd 单元(--all 含已停止的), 转为结构化数据; 不可用时降级为进程列表。
 func listSystemd() []ServiceInfo {
 	out, err := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager").Output()
@@ -287,28 +306,17 @@ func listSystemd() []ServiceInfo {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(metrics.NormUnitLine(line))
-		if len(fields) < 4 {
+		unit, active, sub, desc, ok := parseSystemdUnitLine(line)
+		if !ok {
 			continue
 		}
-		if fields[1] == "not-found" {
-			continue // 悬空引用残影, 跳过
-		}
-		unit := fields[0]
-		active := fields[2]
-		sub := fields[3]
-		desc := strings.Join(fields[4:], " ")
 		si := ServiceInfo{ID: unit, Name: unit, Status: active, SubStatus: sub, Description: desc}
 		// 一次 exec 取 FragmentPath + MainPID(兼容 systemd 219,它不支持 --value)
 		if out, e := exec.Command("systemctl", "show", "-p", "FragmentPath", "-p", "MainPID", unit).Output(); e == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if v, ok := strings.CutPrefix(line, "FragmentPath="); ok {
-					si.UnitFile = strings.TrimSpace(v)
-				} else if v, ok := strings.CutPrefix(line, "MainPID="); ok {
-					if n, perr := strconv.ParseInt(strings.TrimSpace(v), 10, 32); perr == nil {
-						si.PID = int32(n)
-					}
-				}
+			_, fp, pid := parseSystemdShowBlock(unit + "\n" + strings.TrimSpace(string(out)))
+			si.UnitFile = fp
+			if n, perr := strconv.ParseInt(strings.TrimSpace(pid), 10, 32); perr == nil {
+				si.PID = int32(n)
 			}
 		}
 		// 运行中且有主进程:从 ps 批量结果查 CPU/内存占用（保留 2 位小数）
@@ -326,12 +334,7 @@ func listSystemd() []ServiceInfo {
 			si.Category = meta.Category
 			si.Icon = meta.Icon
 		}
-		si.LogCommand = "journalctl -u " + unit
-		si.LogSource = "journalctl"
-		if paths := detectLogPaths(unit); len(paths) > 0 {
-			si.LogPaths = paths
-			si.LogSource = "both"
-		}
+		enrichServiceLog(&si, unit)
 		res = append(res, si)
 	}
 	have := map[string]bool{}
@@ -346,6 +349,17 @@ func listSystemd() []ServiceInfo {
 		})
 	}
 	return res
+}
+
+// enrichServiceLog 为 ServiceInfo 补充日志相关字段（LogHint/LogCommand/LogSource/LogPaths）。
+func enrichServiceLog(si *ServiceInfo, unit string) {
+	si.LogHint = "journalctl -u " + unit
+	si.LogCommand = "journalctl -u " + unit
+	si.LogSource = "journalctl"
+	if paths := detectLogPaths(unit); len(paths) > 0 {
+		si.LogPaths = paths
+		si.LogSource = "both"
+	}
 }
 
 // listProcesses 非 Linux 平台的降级:用 gopsutil 列进程,但 CPU/MEM 用 ps 批量查。
