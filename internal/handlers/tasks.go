@@ -231,11 +231,7 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 	lsblk := runCapture("lsblk", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL")
 	mounts := runCapture("mount")
 	df := runCapture("df", "-h")
-	devicesOut := runCapture("lsblk", "-J", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT")
-	devices := parseDevices(devicesOut)
-	if isCmdError(devicesOut) {
-		devices = nil
-	}
+	devices := collectDevices()
 	resp := map[string]any{
 		"lsblk":      lsblk,
 		"mounts":     mounts,
@@ -247,6 +243,46 @@ func DisksHandler(w http.ResponseWriter, r *http.Request) {
 		resp["error"] = "系统命令执行失败，可能缺少 /sys 或 /proc 访问权限"
 	}
 	WriteJSON(w, resp)
+}
+
+// collectDevices 探测本机 lsblk 能力: 优先用 JSON(-J) 拿层级, 老版本
+// util-linux(< 2.27) 不支持 -J, 直接把 usage 文本写进 stdout, 旧的
+// parseDevicesFlat 会把 usage 逐行当成设备, 产生 56 个假设备. 因此
+// 必须根据输出是否合法 JSON 决定是否回退到 -ln.
+func collectDevices() []DeviceInfo {
+	out := runCapture("lsblk", "-J", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT")
+	if looksLikeLSBlkJSON(out) {
+		return parseDevices(out)
+	}
+	// -J 失败/不支持 → 退回 -ln, parseDevicesFlat 直接消化平铺格式
+	fallback := runCapture("lsblk", "-ln", "-o", "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT")
+	return parseDevicesFlat(fallback)
+}
+
+// looksLikeLSBlkJSON 判定输出是 lsblk -J 的合法 JSON 而不是 usage 文本.
+// 报错时输出形如 "/usr/bin/lsblk:无效选项 -- J\n用法:...", 兼容中英文
+// 提示关键词以防不同 locale.
+func looksLikeLSBlkJSON(out string) bool {
+	s := strings.TrimSpace(out)
+	if s == "" {
+		return false
+	}
+	if !strings.HasPrefix(s, "{") {
+		return false
+	}
+	var probe struct {
+		Blockdevices []json.RawMessage `json:"blockdevices"`
+	}
+	if err := json.Unmarshal([]byte(s), &probe); err != nil {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, "invalid option") ||
+		strings.Contains(s, "无效选项") ||
+		strings.Contains(s, "用法") {
+		return false
+	}
+	return true
 }
 
 func remoteDisksHandler(w http.ResponseWriter, hostID string) {
@@ -268,6 +304,12 @@ func remoteDisksHandler(w http.ResponseWriter, hostID string) {
 		return
 	}
 	devices := parseDevices(res["devices"].Output)
+	if !looksLikeLSBlkJSON(res["devices"].Output) {
+		// 远端老 lsblk → 再用 -ln 跑一次 (与本机 collectDevices 同样的回退策略)
+		if r2 := remotePool.Exec(rmHost, map[string]string{"devices": `lsblk -ln -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null`}); r2["devices"].Error == "" {
+			devices = parseDevicesFlat(r2["devices"].Output)
+		}
+	}
 	WriteJSON(w, map[string]any{
 		"lsblk":      res["lsblk"].Output,
 		"mounts":     res["mount"].Output,
@@ -795,10 +837,20 @@ func isCmdError(output string) bool {
 	if output == "" {
 		return false
 	}
-	if strings.HasPrefix(output, "lsblk:") || strings.HasPrefix(output, "mount:") || strings.HasPrefix(output, "df:") {
+	// 兼容绝对路径(centos/rhel 系 lsblk 报错前缀是 /usr/bin/lsblk:)
+	if strings.HasPrefix(output, "lsblk:") || strings.HasPrefix(output, "mount:") || strings.HasPrefix(output, "df:") ||
+		strings.HasPrefix(output, "/usr/bin/lsblk:") || strings.HasPrefix(output, "/usr/sbin/lsblk:") {
 		return true
 	}
 	if strings.Contains(output, "failed to access") || strings.Contains(output, "No such file or directory") {
+		return true
+	}
+	// usage 帮助文本关键词 (中英文 locale 都覆盖), 防止 parseDevicesFlat
+	// 把 "用法: lsblk [选项]..." 当成设备逐行解析.
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "invalid option") ||
+		strings.Contains(output, "无效选项") ||
+		strings.Contains(output, "用法") {
 		return true
 	}
 	return false

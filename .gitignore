@@ -1,32 +1,12 @@
-# 前端构建产物(已 go:embed 打包进二进制, 无需入库)
-/web/dist/
-/web/node_modules/
-
-# 本地构建产物
-/opscore
-/opscore-*
-!opscore-install.sh
-*.exe
-opscore.exe~
-
-# 编辑器 / 系统
-.DS_Store
-*.swp
-Thumbs.db
-
-# 敏感数据: 主机凭据 / SSH 密钥 / 本地 DB(绝不入库)
-/data/
-/bin/data/
-
-# 运行时日志
+# 运行期生成的敏感数据/数据库/日志, 切勿提交
+testdata/
+*.db
 *.log
+known_hosts.json
+ssh_keys.json
+opscore.log
 
-# 本地构建产物与备份
-/bin/opscore-server
-/agent-linux-amd64
-/bin/agent-linux-amd64
-/bin/agent-linux-loong64
-/bin/opscore-server*.exe~
-/bin/opscore-server.exe~
-/bin/dist-单机版勿用/
-/bin/web/
+# 构建产物
+bin/
+web/dist
+node_modules/
