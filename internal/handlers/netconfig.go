@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 
+	"opscore/internal/platform"
 	"opscore/internal/remote"
 )
 
@@ -28,6 +29,27 @@ func validDNSList(s string) bool {
 		}
 	}
 	return true
+}
+
+// netconfigCollectCmds 按平台能力生成远程网络采集命令集: NetworkManager 存在才采
+// nmcli 连接/WiFi, systemd-resolved 存在才采 resolvectl, 否则回退 ip/resolv.conf。
+func netconfigCollectCmds(prof platform.PlatformProfile) map[string]string {
+	cmds := map[string]string{
+		"interfaces": "ip addr show 2>/dev/null",
+		"routes":     "ip route show 2>/dev/null",
+		"resolv":     "cat /etc/resolv.conf 2>/dev/null",
+	}
+	if prof.HasNM {
+		cmds["connections"] = "nmcli -t con show 2>/dev/null"
+		cmds["wifi"] = "nmcli -t dev wifi 2>/dev/null"
+		cmds["nm"] = "nmcli -t dev status 2>/dev/null"
+	} else {
+		cmds["nm"] = "NetworkManager 未安装, 网络由 ip/系统配置管理"
+	}
+	if prof.HasResolvectl {
+		cmds["dns_resolvectl"] = "resolvectl status 2>/dev/null"
+	}
+	return cmds
 }
 
 // remoteNmcliGet 多条命令合并为单条脚本一次 SSH 往返(哨兵分段),
@@ -124,9 +146,16 @@ func NetConnections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rmHost := resolveRemoteHost(*h)
+		prof := remoteProfile(hostID, rmHost)
+		connsCmd := "nmcli -t con show 2>/dev/null"
+		wifiCmd := "nmcli -t dev wifi 2>/dev/null"
+		if !prof.HasNM {
+			connsCmd = "ip -o addr show 2>/dev/null"
+			wifiCmd = "echo 'NetworkManager 未安装, 无 WiFi 列表'"
+		}
 		out := remoteNmcliGet(rmHost, map[string]string{
-			"connections": "nmcli -t con show 2>/dev/null",
-			"wifi":        "nmcli -t dev wifi 2>/dev/null",
+			"connections": connsCmd,
+			"wifi":        wifiCmd,
 		})
 		WriteJSON(w, out)
 		return
@@ -238,13 +267,8 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			rmHost := resolveRemoteHost(*h)
-			out := remoteNmcliGet(rmHost, map[string]string{
-				"interfaces":     "ip addr show 2>/dev/null",
-				"routes":         "ip route show 2>/dev/null",
-				"dns_resolvectl": "resolvectl status 2>/dev/null",
-				"resolv":         "cat /etc/resolv.conf 2>/dev/null",
-				"nm":             "nmcli -t dev status 2>/dev/null",
-			})
+			prof := remoteProfile(hostID, rmHost)
+			out := remoteNmcliGet(rmHost, netconfigCollectCmds(prof))
 			dns := out["dns_resolvectl"]
 			if dns == "" || !strings.Contains(dns, "DNS") {
 				dns = out["resolv"]
@@ -254,6 +278,7 @@ func NetConfigHandler(w http.ResponseWriter, r *http.Request) {
 				"routes":     out["routes"],
 				"dns":        dns,
 				"nm":         out["nm"],
+				"platform":   prof,
 				"permission": "root",
 			})
 			return

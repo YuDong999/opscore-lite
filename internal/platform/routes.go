@@ -109,3 +109,22 @@ func NetConnCmd(p PlatformProfile) string {
 	}
 	return "ip -o addr show 2>/dev/null"
 }
+
+// PkgInstallCmd 按包管理器返回安装指定软件包的命令(agent 安装依赖时用).
+func PkgInstallCmd(p PlatformProfile, pkg string) (string, bool) {
+	switch p.PkgManager {
+	case PkgDNF:
+		return "dnf install -y " + pkg, true
+	case PkgYUM:
+		return "yum install -y " + pkg, true
+	case PkgAPT:
+		return "apt-get install -y " + pkg, true
+	case PkgZypper:
+		return "zypper --non-interactive install " + pkg, true
+	case PkgPacman:
+		return "pacman -S --noconfirm " + pkg, true
+	case PkgAPK:
+		return "apk add " + pkg, true
+	}
+	return "", false
+}

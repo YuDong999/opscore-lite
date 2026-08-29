@@ -486,6 +486,19 @@ func serviceStatusCmd(prof platform.PlatformProfile, unit string) []string {
 	return []string{"systemctl", "is-active", unit}
 }
 
+// serviceEnableCmd 按初始化系统返回开机自启 + 启动命令(lldp 等复用).
+func serviceEnableCmd(prof platform.PlatformProfile, unit string) string {
+	switch prof.Init {
+	case platform.InitSystemd:
+		return "systemctl enable --now " + unit
+	case platform.InitOpenRC:
+		return "rc-update add " + unit + " && rc-service " + unit + " start"
+	case platform.InitSysV:
+		return "chkconfig " + unit + " on && service " + unit + " start"
+	}
+	return "systemctl enable --now " + unit
+}
+
 // verifyServiceState 服务操作后回读 systemctl is-active, 最长等待 8s(过渡态)。
 func verifyServiceState(hostID, unit string, wantActive bool) bool {
 	check := func() string {

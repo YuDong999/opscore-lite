@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+
+	"opscore/internal/platform"
 )
 
 type LldpNeighbor struct {
@@ -28,8 +30,17 @@ func LldpHandler(w http.ResponseWriter, r *http.Request) {
 			lldpdRunning = strings.Contains(string(out), "LLDP")
 		} else if _, err := exec.LookPath("lldpd"); err == nil {
 			lldpdInstalled = true
-			out, _ := exec.Command("systemctl", "is-active", "lldpd").Output()
-			lldpdRunning = strings.TrimSpace(string(out)) == "active"
+			switch platform.DetectLocal().Init {
+			case platform.InitSystemd:
+				out, _ := exec.Command("systemctl", "is-active", "lldpd").Output()
+				lldpdRunning = strings.TrimSpace(string(out)) == "active"
+			case platform.InitOpenRC:
+				out, _ := exec.Command("rc-service", "lldpd", "status").Output()
+				lldpdRunning = strings.Contains(string(out), "started") || strings.Contains(string(out), "active")
+			default:
+				out, _ := exec.Command("pgrep", "-x", "lldpd").Output()
+				lldpdRunning = strings.TrimSpace(string(out)) != ""
+			}
 		}
 
 		neighbors := parseLldpctl()
@@ -55,17 +66,24 @@ func LldpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cmd *exec.Cmd
+	prof := platform.DetectLocal()
 	switch body.Action {
 	case "install":
-		cmd = exec.Command("sh", "-c", "yum install -y lldpd || apt-get install -y lldpd")
-	case "start":
-		cmd = exec.Command("systemctl", "start", "lldpd")
-	case "stop":
-		cmd = exec.Command("systemctl", "stop", "lldpd")
-	case "restart":
-		cmd = exec.Command("systemctl", "restart", "lldpd")
+		instCmd, ok := platform.PkgInstallCmd(prof, "lldpd")
+		if !ok {
+			WriteJSON(w, map[string]any{"ok": false, "error": "当前发行版不支持自动安装 lldpd"})
+			return
+		}
+		cmd = exec.Command("sh", "-c", instCmd)
+	case "start", "stop", "restart":
+		argv := serviceActionCmd(prof, body.Action, "lldpd")
+		if argv == nil {
+			WriteJSON(w, map[string]any{"ok": false, "error": "当前初始化系统不支持服务管理"})
+			return
+		}
+		cmd = exec.Command(argv[0], argv[1:]...)
 	case "enable":
-		cmd = exec.Command("systemctl", "enable", "--now", "lldpd")
+		cmd = exec.Command("sh", "-c", serviceEnableCmd(prof, "lldpd"))
 	default:
 		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + body.Action})
 		return
