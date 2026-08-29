@@ -7,6 +7,40 @@ import (
 	"opscore/internal/remote"
 )
 
+// TestDiskParseDistroReplay 跨发行版 lsblk 输出回放: 验证不同发行版的 -ln 平铺输出
+// (含 CentOS 7 老 lsblk 与 Alpine/BusyBox 风格) 都能正确解析, 不产生表头/假设备。
+func TestDiskParseDistroReplay(t *testing.T) {
+	samples := map[string]struct {
+		out  string
+		want []string // 期望解析出的设备名(顺序)
+	}{
+		"CentOS7_lsblk_ln": {
+			out:  "sda   40G   disk\nsda1  1G    part\nsda2  39G   part  LVM2_member\ncentos-root 35.1G lvm xfs /\n",
+			want: []string{"sda", "sda1", "sda2", "centos-root"},
+		},
+		"Alpine_busybox_ln": {
+			out:  "sda 40G disk\n  sda1 1G part\n  sda2 39G part\n",
+			want: []string{"sda", "sda1", "sda2"},
+		},
+		"Ubuntu_lsblk_ln": {
+			out:  "sda   40G   disk\nsda1  1G    part  ext4 /boot\n",
+			want: []string{"sda", "sda1"},
+		},
+	}
+	for name, s := range samples {
+		devs := parseDevicesFlat(s.out)
+		if len(devs) != len(s.want) {
+			t.Errorf("%s: 解析出 %d 个设备, 期望 %d (got=%v)", name, len(devs), len(s.want), devs)
+			continue
+		}
+		for i, w := range s.want {
+			if devs[i].Name != w {
+				t.Errorf("%s[%d]: Name=%q 期望 %q", name, i, devs[i].Name, w)
+			}
+		}
+	}
+}
+
 // TestResolveDiskDevices_Routing 守护 resolveDiskDevices 的磁盘命令路由:
 // 优先 -J 合法 JSON, 否则回退 -ln, 再否则不产生假设备。
 func TestResolveDiskDevices_Routing(t *testing.T) {
