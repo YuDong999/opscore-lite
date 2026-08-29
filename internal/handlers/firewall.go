@@ -156,39 +156,43 @@ func detectBackendFor(hostID string) (backend string, running bool, manageable b
 	}
 	ex := newFwExec(hostID)
 
-	if b := fwCachedBackend(hostID); b != "" {
+		if b := fwCachedBackend(hostID); b != "" {
 		switch b {
 		case "ufw":
 			return b, ufwActiveEx(ex), true, ""
 		case "firewalld":
 			return b, firewalldRunningEx(ex), true, ""
+		case "iptables":
+			return b, true, false, "目标主机使用裸 iptables, 当前 API 不管理裸 iptables(仅只读识别)"
 		case "none":
 			return "none", false, false, "目标主机未安装 ufw / firewalld"
 		}
 	}
 
-	const probeCmd = `if command -v ufw >/dev/null 2>&1; then echo ufw; elif command -v firewall-cmd >/dev/null 2>&1; then echo firewalld; else echo none; fi`
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+		const probeCmd = `if command -v ufw >/dev/null 2>&1; then echo ufw; elif command -v firewall-cmd >/dev/null 2>&1; then echo firewalld; elif command -v iptables >/dev/null 2>&1; then echo iptables; else echo none; fi`
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+			}
+			out, err := RunOnTarget(hostID, []string{"sh", "-c", probeCmd})
+			b := strings.TrimSpace(out)
+			if err != nil || b == "" {
+				lastErr = fmt.Errorf("探测输出空(err=%v)", err)
+				continue // 传输抖动, 重试
+			}
+			fwSetBackendCache(hostID, b)
+			switch b {
+			case "ufw":
+				return b, ufwActiveEx(ex), true, ""
+			case "firewalld":
+				return b, firewalldRunningEx(ex), true, ""
+			case "iptables":
+				return b, true, false, "目标主机使用裸 iptables, 当前 API 不管理裸 iptables(仅只读识别)"
+			default: // none: 目标确实没装
+				return "none", false, false, "目标主机未检测到 ufw / firewalld"
+			}
 		}
-		out, err := RunOnTarget(hostID, []string{"sh", "-c", probeCmd})
-		b := strings.TrimSpace(out)
-		if err != nil || b == "" {
-			lastErr = fmt.Errorf("探测输出空(err=%v)", err)
-			continue // 传输抖动, 重试
-		}
-		fwSetBackendCache(hostID, b)
-		switch b {
-		case "ufw":
-			return b, ufwActiveEx(ex), true, ""
-		case "firewalld":
-			return b, firewalldRunningEx(ex), true, ""
-		default: // none: 目标确实没装
-			return "none", false, false, "目标主机未检测到 ufw / firewalld"
-		}
-	}
 	// 三次探测全失败
 	if c := fwCachedBackend(hostID); c == "none" {
 		return "none", false, false, "目标主机未检测到 ufw / firewalld"

@@ -15,6 +15,7 @@ import (
 
 	"opscore/internal/ansible"
 	"opscore/internal/metrics"
+	"opscore/internal/platform"
 
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -425,7 +426,12 @@ func ServiceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	argv := []string{"systemctl", body.Action, body.ID}
+	prof := targetProfile(body.Host)
+	argv := serviceActionCmd(prof, body.Action, body.ID)
+	if argv == nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": "当前主机初始化系统(" + string(prof.Init) + ")不支持服务管理", "target": displayTarget(body.Host)})
+		return
+	}
 	out, err := RunOnTarget(body.Host, argv)
 	if err != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": strings.TrimSpace(out), "target": displayTarget(body.Host)})
@@ -443,10 +449,47 @@ func ServiceAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// targetProfile 取得目标主机的平台能力: 本机直接探测, 远程读缓存/探测.
+func targetProfile(hostID string) platform.PlatformProfile {
+	if hostID == "" {
+		return platform.DetectLocal()
+	}
+	if h := resolveAnsibleHost(hostID); h != nil {
+		return remoteProfile(hostID, resolveRemoteHost(*h))
+	}
+	return platform.PlatformProfile{}
+}
+
+// serviceActionCmd 按初始化系统返回服务启停命令(systemd/openrc/sysv).
+func serviceActionCmd(prof platform.PlatformProfile, action, unit string) []string {
+	switch prof.Init {
+	case platform.InitSystemd:
+		return []string{"systemctl", action, unit}
+	case platform.InitOpenRC:
+		return []string{"rc-service", unit, action}
+	case platform.InitSysV:
+		return []string{"service", unit, action}
+	}
+	return nil
+}
+
+// serviceStatusCmd 按初始化系统返回服务状态查询命令.
+func serviceStatusCmd(prof platform.PlatformProfile, unit string) []string {
+	switch prof.Init {
+	case platform.InitSystemd:
+		return []string{"systemctl", "is-active", unit}
+	case platform.InitOpenRC:
+		return []string{"rc-service", unit, "status"}
+	case platform.InitSysV:
+		return []string{"service", unit, "status"}
+	}
+	return []string{"systemctl", "is-active", unit}
+}
+
 // verifyServiceState 服务操作后回读 systemctl is-active, 最长等待 8s(过渡态)。
 func verifyServiceState(hostID, unit string, wantActive bool) bool {
 	check := func() string {
-		out, _ := RunOnTarget(hostID, []string{"systemctl", "is-active", unit})
+		out, _ := RunOnTarget(hostID, serviceStatusCmd(targetProfile(hostID), unit))
 		return strings.TrimSpace(out)
 	}
 	deadline := time.Now().Add(8 * time.Second)
