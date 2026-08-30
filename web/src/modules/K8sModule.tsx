@@ -234,6 +234,12 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   }
   useEffect(loadClusters, [])
 
+  // 30s 自动刷新集群状态（离线恢复后自动变绿）
+  useEffect(() => {
+    const t = setInterval(loadClusters, 30000)
+    return () => clearInterval(t)
+  }, [loadClusters])
+
   // 概览页 TOP 榜点击 → 打开 Pod 详情(跨组件事件)
   useEffect(() => {
     const h = (e: Event) => {
@@ -273,10 +279,11 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     <div className="k8s-shell">
       {/* ── 内嵌侧栏(固定高度独立滚动, 不随右侧内容移动) ── */}
       <aside className="k8s-side">
-        <div className="k8s-side-label">集群</div>
-        {(clusters || []).map((c) => (
-          <div key={c.id} className={`k8s-side-item ${c.id === clusterID ? 'active' : ''}`}
-            onClick={() => setClusterID(c.id)} title={c.apiServer}>
+        <div className="k8s-side-clusters">
+          <div className="k8s-side-label">集群</div>
+          {(clusters || []).map((c) => (
+            <div key={c.id} className={`k8s-side-item k8s-cluster-item ${c.id === clusterID ? 'active' : ''}`}
+              onClick={() => setClusterID(c.id)} title={c.apiServer}>
             <span className={`k8s-dot ${c.status === 'ready' ? 'k8s-dot-ok' : 'k8s-dot-bad'}`} />
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
             <span style={{ fontSize: '0.625rem', opacity: 0.7, marginRight: 4 }}>{c.status === 'ready' ? c.version.replace(/^v/, '') : '离线'}</span>

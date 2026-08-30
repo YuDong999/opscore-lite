@@ -1030,18 +1030,30 @@ body {
 .k8s-side-label { font-size: 0.6875rem; font-weight: 700; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.25rem 0.5rem; }
 .k8s-side-group {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 0.6875rem; font-weight: 600; opacity: 0.7;
-  padding: 0.5rem 0.5rem 0.125rem; cursor: pointer; user-select: none;
+  font-size: 0.625rem; font-weight: 700; opacity: 0.6;
+  padding: 0.5rem 0.5rem 0.125rem 1rem; cursor: pointer; user-select: none;
 }
 .k8s-side-group:hover { opacity: 1; }
 .k8s-fold-arrow { font-size: 0.5625rem; opacity: 0.6; }
 .k8s-side-item {
   display: flex; align-items: center; gap: 0.375rem;
-  padding: 0.3125rem 0.5rem; border-radius: 0.5rem; cursor: pointer;
-  font-size: 0.8125rem; color: inherit;
+  padding: 0.3125rem 0.5rem 0.3125rem 1.25rem; border-radius: 0.5rem; cursor: pointer;
+  font-size: 0.75rem; color: inherit;
 }
 .k8s-side-item:hover { background: rgba(127,127,127,0.10); }
 .k8s-side-item.active { background: var(--accent, #7c6cf6); color: #fff; }
+
+/* 集群区域：独立视觉区块 */
+.k8s-side-clusters {
+  font-size: 0.8125rem; font-weight: 600;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+.k8s-cluster-item {
+  font-size: 0.8125rem; font-weight: 600;
+  padding: 0.375rem 0.5rem;
+}
 
 /* 集群移除按钮: 精致图标按钮, 行 hover 时显形, hover 变危险红 */
 .k8s-del-cluster {
