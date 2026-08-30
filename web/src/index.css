@@ -1030,7 +1030,7 @@ body {
 .k8s-side-label { font-size: 0.6875rem; font-weight: 700; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.25rem 0.5rem; }
 .k8s-side-group {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 0.625rem; font-weight: 700; opacity: 0.6;
+  font-size: 0.75rem; font-weight: 700; opacity: 0.6;
   padding: 0.5rem 0.5rem 0.125rem 1rem; cursor: pointer; user-select: none;
 }
 .k8s-side-group:hover { opacity: 1; }
