@@ -155,7 +155,7 @@ export default function NetworkModule() {
                 </table>
               </div>
               {data.listeners.length > 40 && (
-                <button className="btn btn-sm" style={{marginTop:8}} onClick={() => setShowAllListeners(!showAllListeners)}>
+                <button className="btn-glass-soft btn-glass-soft-sm" style={{marginTop:8}} onClick={() => setShowAllListeners(!showAllListeners)}>
                   {showAllListeners ? '收起' : `显示全部 (${data.listeners.length})`}
                 </button>
               )}
@@ -202,11 +202,11 @@ function LldpSection() {
         <div className="status-row">
           <span className={`badge ${data?.installed ? 'badge-ok' : 'badge-off'}`}>{data?.installed ? 'lldpd 已安装' : '未安装'}</span>
           <span className={`badge ${data?.running ? 'badge-ok' : 'badge-danger'}`}>{data?.running ? '运行中' : '已停止'}</span>
-          {(!data?.installed) && <button className="btn btn-sm btn-accent" onClick={() => act('install')}>安装 lldpd</button>}
+          {(!data?.installed) && <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => act('install')}>安装 lldpd</button>}
           {data?.installed && <>
-            <button className="btn btn-sm" onClick={() => act('start')}>启动</button>
-            <button className="btn btn-sm btn-danger" onClick={() => act('stop')}>停止</button>
-            <button className="btn btn-sm" onClick={() => act('restart')}>重启</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => act('start')}>启动</button>
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => act('stop')}>停止</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => act('restart')}>重启</button>
           </>}
         </div>
       </Card>
@@ -263,9 +263,9 @@ function NmcliSection() {
       <Card title="NetworkManager 连接" subtitle="nmcli con show">
         <div className="status-row">
           <input className="input" placeholder="连接名" value={actName} onChange={e => setActName(e.target.value)} style={{width:180}} />
-          <button className="btn btn-sm btn-accent" disabled={!actName} onClick={() => act('up')}>启用</button>
-          <button className="btn btn-sm" disabled={!actName} onClick={() => act('down')}>停用</button>
-          <button className="btn btn-sm btn-danger" disabled={!actName} onClick={() => { if (confirm('确认删除连接 '+actName+'？')) act('delete') }}>删除</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!actName} onClick={() => act('up')}>启用</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" disabled={!actName} onClick={() => act('down')}>停用</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={!actName} onClick={() => { if (confirm('确认删除连接 '+actName+'？')) act('delete') }}>删除</button>
         </div>
         <div className="code-block" style={{fontSize:'0.7812rem',whiteSpace:'pre-wrap',maxHeight:'25rem',overflowY:'auto',marginTop:8}}>{data?.connections || '(无 nmcli 或加载中)'}</div>
       </Card>
@@ -274,8 +274,8 @@ function NmcliSection() {
           <input className="input" placeholder="SSID" value={ssid} onChange={e => setSsid(e.target.value)} />
           <input className="input" placeholder="密码(可选)" value={psk} onChange={e => setPsk(e.target.value)} type="password" />
           <input className="input" placeholder="网卡(可选)" value={wifiDev} onChange={e => setWifiDev(e.target.value)} style={{width:120}} />
-          <button className="btn btn-accent" disabled={!ssid} onClick={() => act('wifi-connect')}>连接</button>
-          <button className="btn btn-sm" onClick={() => setShowWifi(!showWifi)}>{showWifi ? '隐藏' : '扫描 WiFi'}</button>
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={!ssid} onClick={() => act('wifi-connect')}>连接</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowWifi(!showWifi)}>{showWifi ? '隐藏' : '扫描 WiFi'}</button>
         </div>
         {showWifi && <div className="code-block" style={{fontSize:'0.7812rem',whiteSpace:'pre-wrap',maxHeight:'18.75rem',overflowY:'auto',marginTop:8}}>{data?.wifi || '扫描中…'}</div>}
       </Card>
@@ -342,8 +342,8 @@ function NetConfigSection() {
               <div className="field-label">网卡重启 / DHCP</div>
               <div className="form-inline">
                 <input className="input" placeholder="设备名 (如 ens160)" value={restartDev} onChange={e => setRestartDev(e.target.value)} style={{width:120}} />
-                <button className="btn btn-danger" disabled={!restartDev} onClick={() => { if (confirm('确认重启 ' + restartDev + '？连接将断开')) runAction('restart', restartDev); setRestartDev('') }}>重启</button>
-                <button className="btn btn-accent" disabled={!restartDev} onClick={() => { runAction('dhcp', restartDev); setRestartDev('') }}>DHCP 续租</button>
+                <button className="btn-glass-soft btn-glass-soft-danger" disabled={!restartDev} onClick={() => { if (confirm('确认重启 ' + restartDev + '？连接将断开')) runAction('restart', restartDev); setRestartDev('') }}>重启</button>
+                <button className="btn-glass-soft btn-glass-soft-accent" disabled={!restartDev} onClick={() => { runAction('dhcp', restartDev); setRestartDev('') }}>DHCP 续租</button>
               </div>
             </div>
             <div>
@@ -353,7 +353,7 @@ function NetConfigSection() {
                 <input className="input" placeholder="IP" value={editIP} onChange={e => setEditIP(e.target.value)} />
                 <span className="dim">/</span>
                 <input className="input" type="number" min={1} max={32} value={editMask} onChange={e => setEditMask(Number(e.target.value))} style={{ width: 60 }} />
-                <button className="btn btn-accent" disabled={!editIPDev || !editIP} onClick={() => { runAction('set-ip', editIPDev, { ip: editIP, mask: editMask }); setEditIPDev(''); setEditIP(''); setEditMask(24) }}>设置</button>
+                <button className="btn-glass-soft btn-glass-soft-accent" disabled={!editIPDev || !editIP} onClick={() => { runAction('set-ip', editIPDev, { ip: editIP, mask: editMask }); setEditIPDev(''); setEditIP(''); setEditMask(24) }}>设置</button>
               </div>
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
@@ -361,7 +361,7 @@ function NetConfigSection() {
               <div className="form-inline">
                 <input className="input" placeholder="设备" value={editDNSDev} onChange={e => setEditDNSDev(e.target.value)} style={{ width: 100 }} />
                 <input className="input" placeholder="DNS 服务器 (空格分隔多个)" value={editDNS} onChange={e => setEditDNS(e.target.value)} />
-                <button className="btn btn-accent" disabled={!editDNSDev || !editDNS} onClick={() => { runAction('set-dns', editDNSDev, { dns: editDNS }); setEditDNSDev(''); setEditDNS('') }}>设置</button>
+                <button className="btn-glass-soft btn-glass-soft-accent" disabled={!editDNSDev || !editDNS} onClick={() => { runAction('set-dns', editDNSDev, { dns: editDNS }); setEditDNSDev(''); setEditDNS('') }}>设置</button>
               </div>
             </div>
           </div>

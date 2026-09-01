@@ -34,6 +34,7 @@ export default function TasksModule() {
   const { selected } = useHost()
   const h = selected?.id ? `?host=${selected.id}` : ''
   const [tab, setTab] = useState('crontab')
+  const [lvmInitialDevice, setLvmInitialDevice] = useState('')
   const [perm, setPerm] = useState<Permission>('user')
 
   useEffect(() => {
@@ -61,8 +62,8 @@ export default function TasksModule() {
       </div>
 
       {tab === 'crontab' && <CrontabSection />}
-      {tab === 'disks' && <DisksSection />}
-      {tab === 'lvm' && <LvmSection />}
+      {tab === 'disks' && <DisksSection onSwitchToLvm={(dev) => { setLvmInitialDevice(dev); setTab('lvm'); }} />}
+      {tab === 'lvm' && <LvmSection initialDevice={lvmInitialDevice} onClearInitialDevice={() => setLvmInitialDevice('')} />}
       {tab === 'smart' && <SmartSection />}
     </div>
   )
@@ -248,9 +249,9 @@ function CrontabSection() {
           <option value="root">root</option>
         </select>
         <div style={{ flex: 1 }} />
-        <button className="btn btn-accent" onClick={addTask}>+ 新增任务</button>
-        <button className="btn" onClick={() => setShowRaw(!showRaw)}>{showRaw ? '可视化' : '原始文本'}</button>
-        <button className="btn btn-accent" onClick={save}>保存</button>
+        <button className="btn-glass-soft btn-glass-soft-accent" onClick={addTask}>+ 新增任务</button>
+        <button className="btn-glass-soft" onClick={() => setShowRaw(!showRaw)}>{showRaw ? '可视化' : '原始文本'}</button>
+        <button className="btn-glass-soft btn-glass-soft-accent" onClick={save}>保存</button>
       </div>
 
       {msg && <div className={`banner ${msg.startsWith('✓') ? 'banner-ok' : 'banner-err'}`}>{msg}</div>}
@@ -316,8 +317,8 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
             <input className="input" value={form!.comment} onChange={e => onChange('comment', e.target.value)} placeholder="备注说明（可选）" style={{ fontSize: 12.5 }} />
           </div>
           <div className="form-inline" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-            <button className="btn" onClick={onCancel}>取消</button>
-            <button className="btn btn-accent" onClick={onSubmit}>保存</button>
+            <button className="btn-glass-soft" onClick={onCancel}>取消</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" onClick={onSubmit}>保存</button>
           </div>
         </div>
       ) : (
@@ -331,8 +332,8 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
               )}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button className="btn btn-sm" onClick={() => onEdit(task)}>编辑</button>
-              <button className="btn btn-sm btn-danger" onClick={() => onDelete(task.id)}>删除</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => onEdit(task)}>编辑</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => onDelete(task.id)}>删除</button>
             </div>
           </div>
         </div>
@@ -356,7 +357,7 @@ function SelectField({ label, value, onChange, options }: { label: string; value
 
 // ── 磁盘挂载子组件: lsblk / mount / df ──
 
-function DisksSection() {
+function DisksSection({ onSwitchToLvm }: { onSwitchToLvm?: (device: string) => void }) {
   const { selected } = useHost()
   const h = selected?.id ? `?host=${selected.id}` : ''
   const toast = useToast()
@@ -610,17 +611,29 @@ function DisksSection() {
                       </td>
                       <td className="mono small">{d.size}</td>
                       <td className="mono small dim">{d.fstype || '—'}</td>
-                      <td className="mono small">
+                       <td className="mono small">
                         {mounted ? d.mountpoint : (mountable ? (
                           <input className="input input-sm" style={{ width: 150 }} placeholder="/mnt/data"
                             value={mpMap[d.name] || ''}
                             onChange={e => setMpMap(m => ({ ...m, [d.name]: e.target.value }))} />
-                        ) : <span className="dim">未挂载</span>)}
+                        ) : (
+                          <span className="dim">
+                            {d.fstype === 'swap' ? 'swap' :
+                             d.fstype === 'LVM2_member' ? 'PV 成员' :
+                             d.type === 'rom' ? '光驱' :
+                             d.type === 'disk' ? '需分区' :
+                             d.type === 'loop' ? 'loop' :
+                             '—'}
+                          </span>
+                        ))}
                       </td>
                       <td>
                         {mountable && (mounted
-                          ? <button className="btn btn-sm btn-danger" onClick={() => mountAction('umount', devPath, d.mountpoint)}>卸载</button>
-                          : <button className="btn btn-sm btn-accent" disabled={!mpMap[d.name]} onClick={() => mountAction('mount', devPath, mpMap[d.name])}>挂载</button>)}
+                          ? <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => mountAction('umount', devPath, d.mountpoint)}>卸载</button>
+                          : <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!mpMap[d.name]} onClick={() => mountAction('mount', devPath, mpMap[d.name])}>挂载</button>)}
+                        {d.fstype === 'LVM2_member' && onSwitchToLvm && (
+                          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" style={{ marginLeft: 4 }} onClick={() => onSwitchToLvm(devPath)} title="跳转到 LVM 面板进行扩容">LVM 扩容</button>
+                        )}
                       </td>
                     </tr>
                   )
@@ -643,10 +656,15 @@ function DisksSection() {
               <option value="ntfs">ntfs</option>
               <option value="vfat">vfat</option>
             </select>
-            {isSysPath(mountPoint) && <span className="banner banner-err" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginBottom: 0 }}>⚠ 系统关键路径，挂载将覆盖原有内容</span>}
-            <button className="btn btn-accent" disabled={!mountDev || !mountPoint}
+            {isSysPath(mountPoint) && (
+              <span className="banner banner-err" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginBottom: 0 }}>
+                ⚠ 系统关键路径，挂载将覆盖原有内容
+                {mountPoint === '/' && ' · 建议使用 LVM 扩容（lvextend）而非直接挂载'}
+              </span>
+            )}
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!mountDev || !mountPoint}
               onClick={() => mountAction('mount', mountDev, mountPoint)}>挂载</button>
-            <button className="btn btn-danger" disabled={!mountDev}
+            <button className="btn-glass-soft btn-glass-soft-danger" disabled={!mountDev}
               onClick={() => mountAction('umount', mountDev, mountPoint)}>卸载</button>
           </div>
         </Card>
@@ -689,15 +707,15 @@ function DisksSection() {
           {allocErr && <div className="banner banner-err">{allocErr}</div>}
           {allocResult && <div className="banner banner-ok">{allocResult}</div>}
           <div className="form-inline" style={{ gap:'0.5rem', flexWrap: 'wrap', marginTop: 8 }}>
-            <button className="btn btn-accent" disabled={allocLoading || !allocDev} onClick={doPartition}>创建分区</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={allocLoading || !allocDev} onClick={doPartition}>创建分区</button>
             <span className="field-label" style={{ margin: 0 }}>格式</span>
             <select className="sel" value={mountFstype} onChange={e => setMountFstype(e.target.value)}>
               <option value="xfs">xfs</option>
               <option value="ext4">ext4</option>
             </select>
-            <button className="btn btn-warn" disabled={allocLoading || !allocDev} onClick={doFormat}>格式化</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={allocLoading || !allocDev} onClick={doFormat}>格式化</button>
             {allocDev && !allocDev.match(/^\/dev\/[a-z]+$/i) && (
-              <button className="btn btn-danger" disabled={allocLoading}
+              <button className="btn-glass-soft btn-glass-soft-danger" disabled={allocLoading}
                 onClick={() => doDelete(allocDev.replace(/^\/dev\/[a-z]+\/?/, '').replace(/p/, ''))}>删除分区</button>
             )}
           </div>
@@ -720,7 +738,7 @@ function DisksSection() {
 
 // ── LVM 存储子组件 ──
 
-function LvmSection() {
+function LvmSection({ initialDevice, onClearInitialDevice }: { initialDevice?: string; onClearInitialDevice?: () => void }) {
   const { selected } = useHost()
   const h = selected?.id ? `?host=${selected.id}` : ''
   const [data, setData] = useState<LvmData | null>(null)
@@ -734,6 +752,7 @@ function LvmSection() {
   const [lvSize, setLvSize] = useState('')
   const [extLv, setExtLv] = useState('')
   const [extSize, setExtSize] = useState('')
+  const [extAllFree, setExtAllFree] = useState(false)
   const [mountLv, setMountLv] = useState('')
   const [mountPoint, setMountPoint] = useState('')
 
@@ -743,6 +762,15 @@ function LvmSection() {
 
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) }, [load])
 
+  // 从磁盘列表跳转过来时，自动填充 VG 扩展表单并切换到 VG tab
+  useEffect(() => {
+    if (initialDevice) {
+      setVgPv(initialDevice)
+      setTab('vgs')
+      onClearInitialDevice?.()
+    }
+  }, [initialDevice])
+
   const act = async (action: string, extra?: Record<string, any>) => {
     try {
       const body: Record<string, any> = { action, device: pvDev, vg: vgName || lvVg, lv: lvName || extLv || mountLv, size: lvSize || extSize, mount: mountPoint, ...extra }
@@ -751,6 +779,22 @@ function LvmSection() {
       setMsg(r.ok ? '✓ '+action : '✗ '+(r.error||'失败'))
     } catch { setMsg('✗ 请求失败') }
     setTimeout(() => setMsg(''), 5000)
+    load()
+  }
+
+  // 一键扩容：lvextend + fsresize
+  const oneClickExpand = async (lvPath: string, size: string, allFree: boolean) => {
+    try {
+      setMsg('⏳ 扩容中...')
+      // Step 1: lvextend
+      const extendSize = allFree ? '+100%FREE' : '+' + size
+      const r1 = await postJSON<any>('/api/core/lvm', { action: 'lvextend', lv: lvPath, size: extendSize, ...(selected?.id ? { host: selected.id } : {}) })
+      if (!r1.ok) { setMsg('✗ 扩容失败: ' + (r1.error || '未知错误')); return }
+      // Step 2: fsresize
+      const r2 = await postJSON<any>('/api/core/lvm', { action: 'fsresize', lv: lvPath, ...(selected?.id ? { host: selected.id } : {}) })
+      setMsg(r2.ok ? '✓ 扩容完成（LV + 文件系统）' : '✗ LV 已扩容但文件系统调整失败: ' + (r2.error || '未知错误'))
+    } catch { setMsg('✗ 请求失败') }
+    setTimeout(() => setMsg(''), 8000)
     load()
   }
 
@@ -778,7 +822,7 @@ function LvmSection() {
         <Card title="物理卷" subtitle="pvcreate / pvs">
           <div className="form-inline" style={{marginBottom:8}}>
             <input className="input" placeholder="设备 /dev/sdb" value={pvDev} onChange={e => setPvDev(e.target.value)} />
-            <button className="btn btn-accent" disabled={!pvDev} onClick={() => act('pvcreate')}>创建 PV</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!pvDev} onClick={() => act('pvcreate')}>创建 PV</button>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -795,11 +839,12 @@ function LvmSection() {
       )}
 
       {tab === 'vgs' && (
-        <Card title="卷组" subtitle="vgcreate">
+        <Card title="卷组" subtitle="vgcreate / vgextend">
           <div className="form-inline" style={{marginBottom:8}}>
             <input className="input" placeholder="VG 名" value={vgName} onChange={e => setVgName(e.target.value)} style={{width:120}} />
             <input className="input" placeholder="PV 设备" value={vgPv} onChange={e => setVgPv(e.target.value)} />
-            <button className="btn btn-accent" disabled={!vgName || !vgPv} onClick={() => act('vgcreate', { device: vgPv })}>创建 VG</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!vgName || !vgPv} onClick={() => act('vgcreate', { device: vgPv })}>创建 VG</button>
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!vgName || !vgPv} onClick={() => act('vgextend', { device: vgPv })} style={{marginLeft:4}}>扩展 VG</button>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -822,25 +867,30 @@ function LvmSection() {
               <input className="input" placeholder="VG 名" value={lvVg} onChange={e => setLvVg(e.target.value)} style={{width:120}} />
               <input className="input" placeholder="LV 名" value={lvName} onChange={e => setLvName(e.target.value)} style={{width:120}} />
               <input className="input" placeholder="大小, 如 10G" value={lvSize} onChange={e => setLvSize(e.target.value)} style={{width:100}} />
-              <button className="btn btn-accent" disabled={!lvVg || !lvName || !lvSize} onClick={() => act('lvcreate')}>创建 LV</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" disabled={!lvVg || !lvName || !lvSize} onClick={() => act('lvcreate')}>创建 LV</button>
             </div>
           </Card>
-          <Card title="扩展/挂载" subtitle="lvextend + mount">
+          <Card title="扩展/挂载" subtitle="lvextend + fsresize">
             <div className="form-inline" style={{marginBottom:8}}>
-              <input className="input" placeholder="LV 路径 /dev/vg0/data" value={extLv} onChange={e => setExtLv(e.target.value)} style={{width:200}} />
-              <input className="input" placeholder="扩展 +5G" value={extSize} onChange={e => setExtSize(e.target.value)} style={{width:100}} />
-              <button className="btn btn-accent" disabled={!extLv || !extSize} onClick={() => act('lvextend')}>扩展</button>
+              <input className="input" placeholder="LV 路径 /dev/vg0/data" value={extLv} onChange={(e) => { setExtLv(e.target.value); setExtAllFree(false); }} style={{width:200}} />
+              <input className="input" placeholder="扩展 +5G" value={extSize} onChange={(e) => { setExtSize(e.target.value); setExtAllFree(false); }} style={{width:100}} disabled={extAllFree} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={extAllFree} onChange={(e) => setExtAllFree(e.target.checked)} />
+                全部空闲
+              </label>
+              <button className="btn-glass-soft btn-glass-soft-accent" disabled={!extLv || (!extSize && !extAllFree)} onClick={() => act('lvextend', { size: extAllFree ? '+100%FREE' : '+'+extSize })}>扩展 LV</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!extLv || (!extSize && !extAllFree)} onClick={() => oneClickExpand(extLv, extSize, extAllFree)} style={{marginLeft:4}} title="自动执行 lvextend + 文件系统扩容">一键扩容</button>
             </div>
             <div className="form-inline">
-              <input className="input" placeholder="LV 路径 /dev/vg0/data" value={mountLv} onChange={e => setMountLv(e.target.value)} style={{width:200}} />
-              <input className="input" placeholder="挂载点 /mnt/data" value={mountPoint} onChange={e => setMountPoint(e.target.value)} style={{width:200}} />
-              <button className="btn btn-sm" disabled={!mountLv || !mountPoint} onClick={() => act('mount')}>挂载</button>
+              <input className="input" placeholder="LV 路径 /dev/vg0/data" value={mountLv} onChange={(e) => setMountLv(e.target.value)} style={{width:200}} />
+              <input className="input" placeholder="挂载点 /mnt/data" value={mountPoint} onChange={(e) => setMountPoint(e.target.value)} style={{width:200}} />
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!mountLv || !mountPoint} onClick={() => act('mount')}>挂载</button>
             </div>
           </Card>
           <Card title="逻辑卷列表" subtitle="lvs">
             <div className="table-wrap">
               <table className="data-table">
-                <thead><tr><th>LV</th><th>大小</th><th>所属 VG</th><th>路径</th><th>挂载点</th></tr></thead>
+                <thead><tr><th>LV</th><th>大小</th><th>所属 VG</th><th>路径</th><th>挂载点</th><th>操作</th></tr></thead>
                 <tbody>
                   {(data.lvs || []).map((l: LV, i: number) => (
                     <tr key={i}>
@@ -849,9 +899,12 @@ function LvmSection() {
                       <td className="mono small">{l.vg}</td>
                       <td className="mono small">{l.path}</td>
                       <td className="mono small">{l.mounted || <span className="dim">未挂载</span>}</td>
+                      <td>
+                        <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => { setExtLv(l.path); setExtAllFree(true); }} title="自动填充到扩展表单">扩容</button>
+                      </td>
                     </tr>
                   ))}
-                  {(data.lvs || []).length === 0 && <tr><td colSpan={5} className="dim">无逻辑卷</td></tr>}
+                  {(data.lvs || []).length === 0 && <tr><td colSpan={6} className="dim">无逻辑卷</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -900,7 +953,7 @@ function SmartSection() {
         <select className="sel" value={device} onChange={e => setDevice(e.target.value)}>
           {['sda', 'sdb', 'sdc', 'sdd', 'nvme0n1', 'nvme1n1'].map(d => <option key={d} value={d}>{d}</option>)}
         </select>
-        <button className="btn btn-accent" disabled={loading || perm === 'user'} onClick={load}>{loading ? '读取中…' : '读取 SMART'}</button>
+        <button className="btn-glass-soft btn-glass-soft-accent" disabled={loading || perm === 'user'} onClick={load}>{loading ? '读取中…' : '读取 SMART'}</button>
       </div>
       {err && <div className="banner banner-err">{err}</div>}
       {output && <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'31.25rem', overflowY: 'auto' }}>{output}</div>}

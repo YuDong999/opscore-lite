@@ -2,7 +2,7 @@
 // 容器 / 镜像(含 pull/rmi) / 镜像源(daemon.json) / 构建镜像(Dockerfile) / Compose / Swarm(只读)
 // 全部操作走既有 RunOnTarget 分发体系, 写操作带回读验证/审计
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Card from '../components/Card'
 import { useHost } from '../components/HostContext'
 import { getJSON, postJSON } from '../api/client'
@@ -153,15 +153,15 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       <Card title={`容器列表 (${containers.length})`}
         subtitle={canWrite ? `${rt} · 支持批量操作与创建/重建(端口/卷挂载/环境变量)` : '当前运行时只读(K8s 托管或未检测到 docker/podman)'}>
         <div className="toolbar-strip">
-          <button className="btn btn-sm btn-accent" disabled={!canWrite}
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!canWrite}
             onClick={() => setRunModal({})}>+ 创建容器</button>
           <span className="dim">已选 {sel.size}</span>
-          <button className="btn btn-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
-          <button className="btn btn-sm" onClick={toggleInvert}>反选</button>
-          <button className="btn btn-sm" disabled={busy || !sel.size} onClick={() => batchAction('start')}>批量启动</button>
-          <button className="btn btn-sm" disabled={busy || !sel.size} onClick={() => batchAction('stop')}>批量停止</button>
-          <button className="btn btn-sm" disabled={busy || !sel.size} onClick={() => batchAction('restart')}>批量重启</button>
-          <button className="btn btn-sm btn-danger" disabled={busy || !sel.size} onClick={() => batchAction('remove')}>批量删除</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleInvert}>反选</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('start')}>批量启动</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('stop')}>批量停止</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('restart')}>批量重启</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={() => batchAction('remove')}>批量删除</button>
         </div>
         {list?.note && <div className="banner banner-warn">{list.note}</div>}
         <div className="table-wrap">
@@ -189,12 +189,12 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="mono dim">{(c.ports || []).join(', ') || '—'}</td>
                   <td onClick={(e) => e.stopPropagation()}>
                     <div className="btn-row k8s-row-actions">
-                      <button className="btn btn-sm" disabled={busy || !canWrite || c.state !== 'exited'} onClick={() => runAction(c.name, 'start')}>启动</button>
-                      <button className="btn btn-sm btn-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => runAction(c.name, 'stop')}>停止</button>
-                      <button className="btn btn-sm btn-accent" disabled={busy || !canWrite} onClick={() => runAction(c.name, 'restart')}>重启</button>
-                      <button className="btn btn-sm" disabled={!canWrite} title="编辑配置并重建(端口/卷/环境变量)" onClick={() => openEdit(c)}>编辑</button>
-                      <button className="btn btn-sm" disabled={!canWrite} onClick={() => setExecView({ name: c.name })}>命令</button>
-                      <button className="btn btn-sm btn-ghost" disabled={!canWrite} onClick={() => openLogs(c)}>日志</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !canWrite || c.state !== 'exited'} onClick={() => runAction(c.name, 'start')}>启动</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => runAction(c.name, 'stop')}>停止</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy || !canWrite} onClick={() => runAction(c.name, 'restart')}>重启</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="编辑配置并重建(端口/卷/环境变量)" onClick={() => openEdit(c)}>编辑</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} onClick={() => setExecView({ name: c.name })}>命令</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} onClick={() => openLogs(c)}>日志</button>
                     </div>
                   </td>
                 </tr>
@@ -210,7 +210,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
             <h3>确认执行: {confirmAct.action === 'remove' ? '删除容器(高危)' : confirmAct.action}</h3>
             <p>目标主机 <b>{selected?.label || '本机'}</b>, 容器 <b className="mono">{confirmAct.name}</b></p>
             <div className="modal-actions">
-              <button className="btn" onClick={() => setConfirmAct(null)}>取消</button>
+              <button className="btn-glass-soft" onClick={() => setConfirmAct(null)}>取消</button>
               <button className={`btn ${confirmAct.action === 'remove' || confirmAct.action === 'stop' ? 'btn-danger' : 'btn-accent'}`} disabled={busy}
                 onClick={() => runAction(confirmAct.name, confirmAct.action)}>确认{confirmAct.action}</button>
             </div>
@@ -223,7 +223,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 860 }}>
             <div className="modal-head">
               <div className="modal-title">日志: {logView.name} <span className="pill pill-sub">@ {logView.target} · 最近300行</span></div>
-              <button className="btn btn-sm" onClick={() => setLogView(null)}>关闭</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setLogView(null)}>关闭</button>
             </div>
             <pre className="code-block" style={{ margin: 0, maxHeight: 480, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: '0.6875rem' }}>{logView.logs}</pre>
           </div>
@@ -299,7 +299,7 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
             {isRecreate ? `重建容器: ${initial.recreateOf}` : '创建容器'}
             {isRecreate && <span className="pill pill-sub">将先删除旧容器再按新配置运行</span>}
           </div>
-          <button className="btn btn-sm" onClick={onClose}>关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
         </div>
         <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: '0.875rem', maxHeight: '70vh', overflowY: 'auto' }}>
           <div className="form-row2">
@@ -319,10 +319,10 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
               <select className="input" value={p.proto} onChange={(e) => setPorts(ports.map((x, j) => j === i ? { ...x, proto: e.target.value as 'tcp' | 'udp' } : x))} style={{ width: 76 }}>
                 <option value="tcp">tcp</option><option value="udp">udp</option>
               </select>
-              <button className="btn btn-sm btn-danger" onClick={() => setPorts(ports.filter((_, j) => j !== i))}>×</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => setPorts(ports.filter((_, j) => j !== i))}>×</button>
             </div>
           ))}
-          <button className="btn btn-sm" style={{ justifySelf: 'start' }} onClick={() => setPorts([...ports, { hostPort: '', ctrlPort: '', proto: 'tcp' }])}>+ 端口</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{ justifySelf: 'start' }} onClick={() => setPorts([...ports, { hostPort: '', ctrlPort: '', proto: 'tcp' }])}>+ 端口</button>
 
           <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.04em' }}>卷挂载 / 文件挂载(宿主绝对路径)</div>
           {vols.map((v, i) => (
@@ -332,20 +332,20 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
               <label style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap', display: 'flex', gap: 4, alignItems: 'center' }}>
                 <input type="checkbox" checked={v.readOnly} onChange={(e) => setVols(vols.map((x, j) => j === i ? { ...x, readOnly: e.target.checked } : x))} />只读
               </label>
-              <button className="btn btn-sm btn-danger" onClick={() => setVols(vols.filter((_, j) => j !== i))}>×</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => setVols(vols.filter((_, j) => j !== i))}>×</button>
             </div>
           ))}
-          <button className="btn btn-sm" style={{ justifySelf: 'start' }} onClick={() => setVols([...vols, { hostPath: '', ctrlPath: '', readOnly: false }])}>+ 挂载</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{ justifySelf: 'start' }} onClick={() => setVols([...vols, { hostPath: '', ctrlPath: '', readOnly: false }])}>+ 挂载</button>
 
           <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.04em' }}>环境变量</div>
           {envs.map((en, i) => (
             <div key={i} className="form-grid-row" style={{ gridTemplateColumns: '1fr 2fr auto' }}>
               <input className="input mono" placeholder="KEY" value={en.key} onChange={(e) => setEnvs(envs.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
               <input className="input mono" placeholder="value" value={en.value} onChange={(e) => setEnvs(envs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
-              <button className="btn btn-sm btn-danger" onClick={() => setEnvs(envs.filter((_, j) => j !== i))}>×</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => setEnvs(envs.filter((_, j) => j !== i))}>×</button>
             </div>
           ))}
-          <button className="btn btn-sm" style={{ justifySelf: 'start' }} onClick={() => setEnvs([...envs, { key: '', value: '' }])}>+ 环境变量</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{ justifySelf: 'start' }} onClick={() => setEnvs([...envs, { key: '', value: '' }])}>+ 环境变量</button>
 
           <div className="form-row2">
             <label className="form-field"><span>重启策略</span>
@@ -362,8 +362,8 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
           </div>
 
           <div className="modal-actions">
-            <button className="btn" onClick={onClose}>取消</button>
-            <button className="btn btn-accent" disabled={busy || !name.trim() || !image.trim()}
+            <button className="btn-glass-soft" onClick={onClose}>取消</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !name.trim() || !image.trim()}
               onClick={submit}>{busy ? '执行中…' : isRecreate ? '确认重建' : '创建'}</button>
           </div>
         </div>
@@ -476,7 +476,7 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           <input className="input" style={{ flex: 1, minWidth: 260 }} value={pullImage} onChange={(e) => setPullImage(e.target.value)}
             placeholder="镜像名, 如 nginx:1.27-alpine 或 registry.example.com/app:v1"
             onKeyDown={(e) => e.key === 'Enter' && !busy && startPull()} disabled={!!job && !job.done} />
-          <button className="btn btn-accent" disabled={busy || !pullImage.trim() || (!!job && !job.done)} onClick={startPull}>拉取</button>
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !pullImage.trim() || (!!job && !job.done)} onClick={startPull}>拉取</button>
         </div>
         {job && (
           <div style={{ marginTop: '0.625rem' }}>
@@ -504,10 +504,10 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
 
       <Card title={`镜像列表 (${images.length})`} subtitle={`已选 ${sel.size} · 支持全选/反选/批量删除`}>
         <div className="toolbar-strip">
-          <button className="btn btn-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
-          <button className="btn btn-sm" onClick={toggleInvert}>反选</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleInvert}>反选</button>
           <span className="dim">已选 {sel.size}</span>
-          <button className="btn btn-sm btn-danger" disabled={busy || !sel.size} onClick={batchRemove}>删除选中</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={batchRemove}>删除选中</button>
         </div>
         <div className="table-wrap">
           <table className="data-table">
@@ -526,7 +526,7 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="mono dim">{im.id}</td>
                   <td>{im.size}</td>
                   <td><div className="btn-row k8s-row-actions">
-                    <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => removeOne(im.key)}>删除</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy} onClick={() => removeOne(im.key)}>删除</button>
                   </div></td>
                 </tr>
               ))}
@@ -587,7 +587,7 @@ function RegistriesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
             <input type="checkbox" checked={restart} onChange={(e) => setRestart(e.target.checked)} />
             保存后立即重启 docker（会中断该主机容器）
           </label>
-          <button className="btn btn-accent" disabled={busy} onClick={save}>{busy ? '写入中…' : '保存配置'}</button>
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy} onClick={save}>{busy ? '写入中…' : '保存配置'}</button>
         </div>
         {info && <div className="banner banner-ok" style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.6875rem' }}>{info}</div>}
       </Card>
@@ -607,17 +607,159 @@ COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]`
 
+const BASIC_TEMPLATE = `# 基础 Dockerfile 模板
+FROM <image>:<tag>
+WORKDIR /app
+
+# 复制依赖并安装
+COPY package*.json ./
+RUN npm ci --only=production
+
+# 复制源码
+COPY . .
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动命令
+CMD ["node", "server.js"]`
+
+// ── Dockerfile 生成 + 构建面板 ──
+type Kv = { k: string; v: string }
+type CopyItem = { src: string; dest: string }
+
+type DfModel = {
+  from: string; maintainer: string; workdir: string; user: string
+  args: Kv[]; envs: Kv[]; copies: CopyItem[]; adds: CopyItem[]
+  exposes: string[]; volumes: string[]; runs: string[]
+  cmd: string; entrypoint: string
+  healthcheck: { cmd: string; interval: string; timeout: string; retries: string } | null
+}
+
+const blank = (): DfModel => ({
+  from: '', maintainer: '', workdir: '', user: '',
+  args: [], envs: [], copies: [], adds: [],
+  exposes: [], volumes: [], runs: [],
+  cmd: '', entrypoint: '', healthcheck: null,
+})
+
+function buildDockerfile(m: DfModel): string {
+  if (!m.from.trim()) return ''
+  const lines: string[] = []
+  lines.push(`FROM ${m.from.trim()}`)
+  if (m.maintainer.trim()) lines.push(`LABEL maintainer="${m.maintainer.trim()}"`)
+  m.args.forEach((a) => { if (a.k.trim()) lines.push(`ARG ${a.k}${a.v.trim() ? `=${a.v.trim()}` : ''}`) })
+  if (m.user.trim()) lines.push(`USER ${m.user.trim()}`)
+  if (m.workdir.trim()) lines.push(`WORKDIR ${m.workdir.trim()}`)
+  m.envs.forEach((e) => { if (e.k.trim()) lines.push(`ENV ${e.k}=${e.v}`) })
+  m.copies.forEach((c) => { if (c.src.trim() && c.dest.trim()) lines.push(`COPY ${c.src} ${c.dest}`) })
+  m.adds.forEach((a) => { if (a.src.trim() && a.dest.trim()) lines.push(`ADD ${a.src} ${a.dest}`) })
+  m.runs.forEach((r) => { if (r.trim()) lines.push(`RUN ${r.trim()}`) })
+  m.exposes.forEach((p) => { if (p.trim()) lines.push(`EXPOSE ${p.trim()}`) })
+  m.volumes.forEach((v) => { if (v.trim()) lines.push(`VOLUME ${v.trim()}`) })
+  if (m.healthcheck) {
+    const hc = m.healthcheck
+    if (hc.cmd.trim()) {
+      const parts = [`CMD=${hc.cmd.trim()}`]
+      if (hc.interval.trim()) parts.push(`--interval=${hc.interval.trim()}`)
+      if (hc.timeout.trim()) parts.push(`--timeout=${hc.timeout.trim()}`)
+      if (hc.retries.trim()) parts.push(`--retries=${hc.retries.trim()}`)
+      lines.push(`HEALTHCHECK ${parts.join(' ')}`)
+    }
+  }
+  if (m.cmd.trim()) lines.push(`CMD ${m.cmd.trim()}`)
+  if (m.entrypoint.trim()) lines.push(`ENTRYPOINT ${m.entrypoint.trim()}`)
+  return lines.join('\n') + '\n'
+}
+
+const IN = 'input'
+
+function F({ label, children, hint, required, wide }: { label: string; children: any; hint?: string; required?: boolean; wide?: boolean }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', minWidth: 0, ...(wide ? { gridColumn: '1 / -1' } : {}) }}>
+      <span>{label}{required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}{hint && <i style={{ fontStyle: 'normal', opacity: 0.7 }}> · {hint}</i>}</span>
+      {children}
+    </div>
+  )
+}
+
+function Grid({ cols = 2, children }: { cols?: number; children: any }) {
+  return <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: '0.5rem' }}>{children}</div>
+}
+
+function Section({ title, children, defaultOpen, badge }: { title: string; children: any; defaultOpen?: boolean; badge?: string }) {
+  const [open, setOpen] = useState(!!defaultOpen)
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.5rem 0.75rem' }}>
+      <div onClick={() => setOpen(!open)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem', fontWeight: 600, userSelect: 'none' }}>
+        <span>{open ? '▾' : '▸'} {title}</span>
+        {badge && <span className="dim" style={{ fontSize: '0.6875rem' }}>{badge}</span>}
+      </div>
+      {open && <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>{children}</div>}
+    </div>
+  )
+}
+
+function KvRows({ items, onChange, kHint, vHint, addLabel }: { items: Kv[]; onChange: (x: Kv[]) => void; kHint: string; vHint: string; addLabel?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {items.map((it, i) => (
+        <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input className={IN} value={it.k} placeholder={kHint} onChange={(e) => { const n = [...items]; n[i] = { ...it, k: e.target.value }; onChange(n) }} style={{ flex: 1, minWidth: 0 }} />
+          <input className={IN} value={it.v} placeholder={vHint} onChange={(e) => { const n = [...items]; n[i] = { ...it, v: e.target.value }; onChange(n) }} style={{ flex: 1, minWidth: 0 }} />
+          <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ width: '1.75rem', height: '1.75rem', opacity: 1, flexShrink: 0 }} onClick={() => onChange(items.filter((_, j) => j !== i))} title="删除">✕</button>
+        </div>
+      ))}
+      <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={() => onChange([...items, { k: '', v: '' }])}>{addLabel || '+ 添加'}</button>
+    </div>
+  )
+}
+
+function RowList({ items, onChange, placeholder, addLabel }: { items: string[]; onChange: (x: string[]) => void; placeholder: string; addLabel?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {items.map((it, i) => (
+        <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input className={IN} value={it} placeholder={placeholder} onChange={(e) => { const n = [...items]; n[i] = e.target.value; onChange(n) }} style={{ flex: 1, minWidth: 0 }} />
+          <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ width: '1.75rem', height: '1.75rem', opacity: 1, flexShrink: 0 }} onClick={() => onChange(items.filter((_, j) => j !== i))} title="删除">✕</button>
+        </div>
+      ))}
+      <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={() => onChange([...items, ''])}>{addLabel || '+ 添加'}</button>
+    </div>
+  )
+}
+
 function BuildPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const { selected } = useHost()
   const [tag, setTag] = useState('')
-  const [df, setDf] = useState(SAMPLE_DOCKERFILE)
   const [busy, setBusy] = useState(false)
   const [out, setOut] = useState('')
+  const [mode, setMode] = useState<'form' | 'raw'>('form')
 
-  const build = () => {
-    if (!tag.trim() || !df.trim()) return
+  const [m, setM] = useState<DfModel>(blank())
+  const [copied, setCopied] = useState(false)
+  const [rawDf, setRawDf] = useState(SAMPLE_DOCKERFILE)
+
+  const generated = useMemo(() => buildDockerfile(m), [m])
+  const canGenerate = m.from.trim().length > 0
+  const set = (patch: Partial<DfModel>) => setM((x) => ({ ...x, ...patch }))
+
+  const copy = async () => {
+    if (!generated) return
+    try {
+      await navigator.clipboard.writeText(generated)
+      setCopied(true)
+      onMsg?.('✓ 已复制到剪贴板')
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      onMsg?.('✗ 复制失败')
+    }
+  }
+
+  const build = (dockerfile: string) => {
+    if (!tag.trim() || !dockerfile.trim()) return
     setBusy(true); setOut('构建中…')
-    postJSON('/api/plugins/containers/docker/build', { host: selected?.id || '', tag: tag.trim(), dockerfile: df })
+    postJSON('/api/plugins/containers/docker/build', { host: selected?.id || '', tag: tag.trim(), dockerfile })
       .then((d: any) => {
         setOut(d.output || d.error || '')
         onMsg?.(d.ok ? `✓ 构建成功: ${tag}` : '✗ 构建失败')
@@ -627,17 +769,128 @@ function BuildPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   }
 
   return (
-    <Card title="Dockerfile 构建" subtitle="在目标主机临时目录构建 · 超时 10 分钟">
-      <div className="btn-row" style={{ alignItems: 'center' }}>
+    <>
+      <div className="btn-row" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
         <span className="dim" style={{ fontSize: '0.8125rem' }}>镜像 Tag:</span>
         <input className="input" style={{ width: 280 }} value={tag} onChange={(e) => setTag(e.target.value)}
-          placeholder="如 myapp:v1 或 registry.local:5000/myapp:v1" />
-        <button className="btn btn-accent" disabled={busy || !tag.trim()} onClick={build}>{busy ? '构建中…' : '开始构建'}</button>
+          placeholder="如 myapp:v1" />
+        <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !tag.trim()} onClick={() => build(mode === 'form' ? generated : rawDf)}>
+          {busy ? '构建中…' : '开始构建'}
+        </button>
+        <div style={{ display: 'flex', gap: '0.375rem', marginLeft: 'auto' }}>
+          <button type="button" className={`btn-glass-soft btn-glass-soft-sm ${mode === 'form' ? 'btn-accent' : ''}`} onClick={() => setMode('form')}>可视化表单</button>
+          <button type="button" className={`btn-glass-soft btn-glass-soft-sm ${mode === 'raw' ? 'btn-accent' : ''}`} onClick={() => setMode('raw')}>手动编辑</button>
+        </div>
       </div>
-      <textarea className="input" rows={14} value={df} onChange={(e) => setDf(e.target.value)}
-        style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem', marginTop: '0.625rem' }} />
+
+      {mode === 'form' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'start' }}>
+          {/* 左栏: 基础 + 可选指令 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="card" style={{ minWidth: 0 }}>
+              <div className="card-head"><h3>基础指令</h3><span className="card-sub">必填项已标红</span></div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                <Grid cols={2}>
+                  <F label="FROM (基础镜像)" required hint="如 nginx:1.27-alpine">
+                    <input className={IN} value={m.from} placeholder="nginx:1.27-alpine" onChange={(e) => set({ from: e.target.value })} />
+                  </F>
+                  <F label="MAINTAINER (维护者)">
+                    <input className={IN} value={m.maintainer} placeholder="可选" onChange={(e) => set({ maintainer: e.target.value })} />
+                  </F>
+                </Grid>
+                <Grid cols={2}>
+                  <F label="WORKDIR (工作目录)" hint="如 /app">
+                    <input className={IN} value={m.workdir} placeholder="/app" onChange={(e) => set({ workdir: e.target.value })} />
+                  </F>
+                  <F label="USER (运行用户)" hint="如 node">
+                    <input className={IN} value={m.user} placeholder="root" onChange={(e) => set({ user: e.target.value })} />
+                  </F>
+                </Grid>
+              </div>
+            </div>
+
+            <div className="card" style={{ minWidth: 0 }}>
+              <div className="card-head"><h3>可选指令</h3><span className="card-sub">按需添加</span></div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <Section title="ARG (构建参数)" badge="变量替换">
+                  <KvRows items={m.args} onChange={(x) => set({ args: x })} kHint="KEY" vHint="默认值" addLabel="+ ARG" />
+                </Section>
+                <Section title="ENV (环境变量)">
+                  <KvRows items={m.envs} onChange={(x) => set({ envs: x })} kHint="KEY" vHint="value" addLabel="+ ENV" />
+                </Section>
+                <Section title="COPY (复制文件)">
+                  <KvRows items={m.copies.map(c => ({ k: c.src, v: c.dest }))} onChange={(x) => set({ copies: x.map(i => ({ src: i.k, dest: i.v })) })} kHint="源路径" vHint="目标路径" addLabel="+ COPY" />
+                </Section>
+                <Section title="ADD (添加文件/URL)">
+                  <KvRows items={m.adds.map(c => ({ k: c.src, v: c.dest }))} onChange={(x) => set({ adds: x.map(i => ({ src: i.k, dest: i.v })) })} kHint="源路径/URL" vHint="目标路径" addLabel="+ ADD" />
+                </Section>
+                <Section title="RUN (执行命令)">
+                  <RowList items={m.runs} onChange={(x) => set({ runs: x })} placeholder="如 apt-get update && apt-get install -y curl" addLabel="+ RUN" />
+                </Section>
+                <Section title="EXPOSE (暴露端口)">
+                  <RowList items={m.exposes} onChange={(x) => set({ exposes: x })} placeholder="如 8080" addLabel="+ EXPOSE" />
+                </Section>
+                <Section title="VOLUME (数据卷)">
+                  <RowList items={m.volumes} onChange={(x) => set({ volumes: x })} placeholder="如 /data" addLabel="+ VOLUME" />
+                </Section>
+                <Section title="CMD (默认命令)">
+                  <F label="CMD" hint="容器启动时执行的命令">
+                    <input className={IN} value={m.cmd} placeholder='如 ["nginx", "-g", "daemon off;"] 或 nginx -g daemon off;' onChange={(e) => set({ cmd: e.target.value })} />
+                  </F>
+                </Section>
+                <Section title="ENTRYPOINT (入口点)">
+                  <F label="ENTRYPOINT" hint="容器的固定入口">
+                    <input className={IN} value={m.entrypoint} placeholder='如 ["nginx"]' onChange={(e) => set({ entrypoint: e.target.value })} />
+                  </F>
+                </Section>
+                <Section title="HEALTHCHECK (健康检查)">
+                  {!m.healthcheck ? (
+                    <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={() => set({ healthcheck: { cmd: 'curl -f http://localhost/ || exit 1', interval: '30s', timeout: '10s', retries: '3' } })}>
+                      + 添加健康检查
+                    </button>
+                  ) : (
+                    <>
+                      <F label="检查命令" hint="如 curl -f http://localhost/ || exit 1">
+                        <input className={IN} value={m.healthcheck.cmd} onChange={(e) => set({ healthcheck: m.healthcheck ? { ...m.healthcheck, cmd: e.target.value } : null })} />
+                      </F>
+                      <Grid cols={3}>
+                        <F label="间隔"><input className={IN} value={m.healthcheck.interval} onChange={(e) => set({ healthcheck: m.healthcheck ? { ...m.healthcheck, interval: e.target.value } : null })} /></F>
+                        <F label="超时"><input className={IN} value={m.healthcheck.timeout} onChange={(e) => set({ healthcheck: m.healthcheck ? { ...m.healthcheck, timeout: e.target.value } : null })} /></F>
+                        <F label="重试次数"><input className={IN} value={m.healthcheck.retries} onChange={(e) => set({ healthcheck: m.healthcheck ? { ...m.healthcheck, retries: e.target.value } : null })} /></F>
+                      </Grid>
+                      <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ color: '#ef4444' }} onClick={() => set({ healthcheck: null })}>移除健康检查</button>
+                    </>
+                  )}
+                </Section>
+              </div>
+            </div>
+          </div>
+
+          {/* 右栏: 预览 */}
+          <div className="card" style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div className="card-head">
+              <h3>Dockerfile 预览</h3>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!canGenerate || copied} onClick={copy}>
+                {copied ? '✓ 已复制' : '复制'}
+              </button>
+            </div>
+            <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <pre className="code-block mono" style={{ flex: 1, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: '0.6875rem', lineHeight: 1.6, minHeight: 400 }}>
+                {generated || BASIC_TEMPLATE}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card" style={{ minWidth: 0 }}>
+          <div className="card-head"><h3>Dockerfile 编辑</h3><span className="card-sub">手动编写</span></div>
+          <textarea className="input" rows={14} value={rawDf} onChange={(e) => setRawDf(e.target.value)}
+            style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem' }} />
+        </div>
+      )}
+
       {out && <pre className="code-block" style={{ maxHeight: 260, overflow: 'auto', marginTop: '0.625rem', fontSize: '0.6875rem', whiteSpace: 'pre-wrap' }}>{out}</pre>}
-    </Card>
+    </>
   )
 }
 
@@ -651,20 +904,99 @@ const SAMPLE_COMPOSE = `services:
   redis:
     image: redis:7-alpine`
 
+// ── Compose 表单模型 ──
+type ComposeService = {
+  name: string; image: string
+  ports: string[]; environment: { key: string; value: string }[]
+  volumes: string[]; command: string; restart: string
+}
+type ComposeModel = {
+  project: string
+  services: ComposeService[]
+  activeIdx: number
+}
+
+const blankSvc = (): ComposeService => ({
+  name: '', image: '',
+  ports: [], environment: [], volumes: [],
+  command: '', restart: 'no',
+})
+
+function buildComposeYaml(m: ComposeModel): string {
+  if (!m.project.trim()) return ''
+  const lines: string[] = [`services:`]
+  m.services.forEach((svc) => {
+    if (!svc.name.trim() || !svc.image.trim()) return
+    lines.push(`  ${svc.name.trim()}:`)
+    lines.push(`    image: ${svc.image.trim()}`)
+    if (svc.ports.length) {
+      const validPorts = svc.ports.filter((p) => p.trim())
+      if (validPorts.length) lines.push(`    ports:\n${validPorts.map((p) => `      - "${p.trim()}"`).join('\n')}`)
+    }
+    const validEnv = svc.environment.filter((e) => e.key.trim())
+    if (validEnv.length) {
+      lines.push(`    environment:`)
+      validEnv.forEach((e) => { lines.push(`      ${e.key.trim()}: ${e.value.trim()}`) })
+    }
+    if (svc.volumes.length) {
+      const validVols = svc.volumes.filter((v) => v.trim())
+      if (validVols.length) lines.push(`    volumes:\n${validVols.map((v) => `      - ${v.trim()}`).join('\n')}`)
+    }
+    if (svc.command.trim()) lines.push(`    command: ${svc.command.trim()}`)
+    if (svc.restart && svc.restart !== 'no') lines.push(`    restart: ${svc.restart}`)
+  })
+  return lines.join('\n') + '\n'
+}
+
+// ── Compose 可视化面板 ──
 function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const { selected } = useHost()
   const [project, setProject] = useState('')
-  const [yaml, setYaml] = useState(SAMPLE_COMPOSE)
+  const [mode, setMode] = useState<'form' | 'yaml'>('form')
+  const [m, setM] = useState<ComposeModel>({ project: '', services: [blankSvc()], activeIdx: 0 })
+  const [rawYaml, setRawYaml] = useState(SAMPLE_COMPOSE)
   const [busy, setBusy] = useState(false)
   const [out, setOut] = useState('')
   const [projHint, setProjHint] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const generated = useMemo(() => buildComposeYaml(m), [m])
+  const active = m.services[m.activeIdx] || blankSvc()
+  const set = (patch: Partial<ComposeModel>) => setM((x) => ({ ...x, ...patch }))
+  const setActive = (patch: Partial<ComposeService>) => {
+    const services = [...m.services]
+    services[m.activeIdx] = { ...services[m.activeIdx], ...patch }
+    set({ services })
+  }
+
+  const addService = () => {
+    const services = [...m.services, blankSvc()]
+    set({ services, activeIdx: services.length - 1 })
+  }
+  const removeService = (idx: number) => {
+    if (m.services.length <= 1) return
+    const services = m.services.filter((_, i) => i !== idx)
+    const activeIdx = idx === m.activeIdx ? 0 : (idx < m.activeIdx ? m.activeIdx - 1 : m.activeIdx)
+    set({ services, activeIdx })
+  }
+
+  const copy = async () => {
+    const text = mode === 'form' ? generated : rawYaml
+    if (!text.trim()) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true); onMsg?.('✓ 已复制到剪贴板'); setTimeout(() => setCopied(false), 1500)
+    } catch { onMsg?.('✗ 复制失败') }
+  }
 
   const act = (action: 'up' | 'down' | 'restart' | 'ps') => {
     if (!project.trim()) { setProjHint('请先填写项目名'); return }
+    const compose = mode === 'form' ? generated : rawYaml
+    if (action === 'up' && !compose.trim()) return
     setBusy(true); setOut(action.toUpperCase() + ' …')
     postJSON('/api/plugins/containers/docker/compose', {
       host: selected?.id || '', project: project.trim(), action,
-      compose: action === 'up' ? yaml : undefined,
+      compose: action === 'up' ? compose : undefined,
     })
       .then((d: any) => {
         setOut(typeof d.output === 'string' ? prettyCompose(d.output) : JSON.stringify(d.output, null, 2))
@@ -676,7 +1008,7 @@ function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
 
   return (
     <Card title="Compose 项目编排" subtitle="配置保存在目标主机 /tmp/.opscore-compose/<project>/ · 后续操作无需重复粘贴">
-      <div className="btn-row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="btn-row" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
           <span className="dim">项目名:</span>
           <input className="input" style={{ width: 200 }} value={project}
@@ -684,14 +1016,97 @@ function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
             placeholder="小写字母/数字/_-" />
           {projHint && <span style={{ color: '#ef4444', fontSize: '0.6875rem' }}>{projHint}</span>}
         </label>
-        <button className="btn btn-accent" disabled={busy} onClick={() => act('up')}>up -d 部署</button>
-        <button className="btn" disabled={busy} onClick={() => act('ps')}>查看状态</button>
-        <button className="btn" disabled={busy} onClick={() => act('restart')}>重启</button>
-        <button className="btn btn-danger" disabled={busy} onClick={() => act('down')}>down 销毁</button>
+        <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy} onClick={() => act('up')}>up -d 部署</button>
+        <button className="btn-glass-soft" disabled={busy} onClick={() => act('ps')}>查看状态</button>
+        <button className="btn-glass-soft" disabled={busy} onClick={() => act('restart')}>重启</button>
+        <button className="btn-glass-soft btn-glass-soft-danger" disabled={busy} onClick={() => act('down')}>down 销毁</button>
+        <div style={{ display: 'flex', gap: '0.375rem', marginLeft: 'auto' }}>
+          <button type="button" className={`btn-glass-soft btn-glass-soft-sm ${mode === 'form' ? 'btn-accent' : ''}`} onClick={() => setMode('form')}>可视化表单</button>
+          <button type="button" className={`btn-glass-soft btn-glass-soft-sm ${mode === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setMode('yaml')}>手动编辑</button>
+        </div>
       </div>
-      <textarea className="input" rows={12} value={yaml} onChange={(e) => setYaml(e.target.value)}
-        style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem', marginTop: '0.625rem' }}
-        placeholder="docker-compose.yaml 内容(up 时使用)" />
+
+      {mode === 'form' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'start' }}>
+          {/* 左栏: 服务列表 + 编辑 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="card" style={{ minWidth: 0 }}>
+              <div className="card-head"><h3>服务列表</h3><span className="card-sub">{m.services.length} 个服务</span></div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {m.services.map((svc, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <button type="button" className={`btn-glass-soft btn-glass-soft-sm ${i === m.activeIdx ? 'btn-accent' : ''}`}
+                      style={{ flex: 1, justifyContent: 'flex-start' }}
+                      onClick={() => set({ activeIdx: i })}>
+                      <span className="mono">{svc.name.trim() || '(未命名)'}</span>
+                      <span className="dim" style={{ marginLeft: 6, fontSize: '0.6875rem' }}>{svc.image.trim() || '无镜像'}</span>
+                    </button>
+                    <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ color: '#ef4444' }} onClick={() => removeService(i)} title="删除服务">✕</button>
+                  </div>
+                ))}
+                <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={addService}>+ 添加服务</button>
+              </div>
+            </div>
+
+            {active && (
+              <div className="card" style={{ minWidth: 0 }}>
+                <div className="card-head"><h3>编辑服务</h3><span className="card-sub">{active.name.trim() || '新服务'}</span></div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
+                    <F label="服务名 *" required hint="如 web">
+                      <input className={IN} value={active.name} placeholder="web" onChange={(e) => setActive({ name: e.target.value })} />
+                    </F>
+                    <F label="镜像 *" required hint="如 nginx:1.27-alpine">
+                      <input className={IN} value={active.image} placeholder="nginx:1.27-alpine" onChange={(e) => setActive({ image: e.target.value })} />
+                    </F>
+                  </div>
+                  <F label="端口映射" hint="如 8080:80">
+                    <RowList items={active.ports} onChange={(x) => setActive({ ports: x })} placeholder="8080:80" addLabel="+ 端口" />
+                  </F>
+                  <F label="环境变量">
+                    <KvRows items={active.environment} onChange={(x) => setActive({ environment: x })} kHint="KEY" vHint="value" addLabel="+ ENV" />
+                  </F>
+                  <F label="卷挂载" hint="如 ./data:/app/data">
+                    <RowList items={active.volumes} onChange={(x) => setActive({ volumes: x })} placeholder="./data:/app/data" addLabel="+ 卷" />
+                  </F>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
+                    <F label="启动命令" hint="如 npm start">
+                      <input className={IN} value={active.command} placeholder="npm start" onChange={(e) => setActive({ command: e.target.value })} />
+                    </F>
+                    <F label="重启策略">
+                      <select className={`${IN} sel`} value={active.restart} onChange={(e) => setActive({ restart: e.target.value })}>
+                        {['no', 'on-failure', 'always', 'unless-stopped'].map((r) => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </F>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 右栏: YAML 预览 */}
+          <div className="card" style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div className="card-head">
+              <h3>Compose YAML</h3>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!generated || copied} onClick={copy}>
+                {copied ? '✓ 已复制' : '复制'}
+              </button>
+            </div>
+            <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <pre className="code-block mono" style={{ flex: 1, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: '0.6875rem', lineHeight: 1.6, minHeight: 400 }}>
+                {generated || '# 请填写项目名和服务信息'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card" style={{ minWidth: 0 }}>
+          <div className="card-head"><h3>Compose YAML 编辑</h3><span className="card-sub">手动编写</span></div>
+          <textarea className="input" rows={14} value={rawYaml} onChange={(e) => setRawYaml(e.target.value)}
+            style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: '0.75rem' }} />
+        </div>
+      )}
+
       {out && <pre className="code-block" style={{ maxHeight: 300, overflow: 'auto', marginTop: '0.625rem', fontSize: '0.6875rem', whiteSpace: 'pre-wrap' }}>{out}</pre>}
     </Card>
   )
@@ -772,18 +1187,18 @@ function SwarmPanel() {
               {!active ? (
                 <>
                   <input className="input" style={{ width: 170 }} value={advIP} onChange={(e) => setAdvIP(e.target.value)} placeholder="advertise-ip(可选)" />
-                  <button className="btn btn-accent btn-sm" disabled={busy}
+                  <button className="btn-glass-soft btn-glass-soft-accent btn-sm" disabled={busy}
                     onClick={() => swarmAct({ action: 'init', advertiseIp: advIP.trim() }, '在该主机初始化 Swarm 集群?')}>swarm init</button>
                 </>
               ) : (
                 <>
-                  <button className="btn btn-sm" disabled={busy} onClick={() => swarmAct({ action: 'token', role: 'worker' })}>查看 worker token</button>
-                  <button className="btn btn-sm" disabled={busy} onClick={() => swarmAct({ action: 'token', role: 'manager' })}>查看 manager token</button>
-                  <button className="btn btn-sm btn-danger" disabled={busy}
+                  <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} onClick={() => swarmAct({ action: 'token', role: 'worker' })}>查看 worker token</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} onClick={() => swarmAct({ action: 'token', role: 'manager' })}>查看 manager token</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy}
                     onClick={() => swarmAct({ action: 'leave', force: true }, '强制脱离 Swarm(高危, 会中断该节点上的服务)?')}>脱离集群</button>
                 </>
               )}
-              <button className="btn btn-sm" onClick={load}>刷新</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={load}>刷新</button>
             </div>
             {!active && (
               <p className="dim" style={{ fontSize: '0.6875rem', marginTop: '0.5rem' }}>
@@ -824,7 +1239,7 @@ function SwarmPanel() {
                 <td className="mono dim">{sv.Image}</td>
                 <td><div className="btn-row k8s-row-actions">
                   {sv.Mode !== 'global' && (
-                    <button className="btn btn-sm" disabled={busy} onClick={() => scaleService(sv.Name)}>scale</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} onClick={() => scaleService(sv.Name)}>scale</button>
                   )}
                 </div></td>
               </tr>
@@ -872,7 +1287,7 @@ function ExecModal({ name, host, onClose }: { name: string; host: string; onClos
       <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 780 }}>
         <div className="modal-head">
           <div className="modal-title">容器内执行: <span className="mono">{name}</span> <span className="pill pill-sub">docker exec · sh -c</span></div>
-          <button className="btn btn-sm" onClick={onClose}>关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
         </div>
         <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: '0.625rem' }}>
           <div className="btn-row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
@@ -880,12 +1295,12 @@ function ExecModal({ name, host, onClose }: { name: string; host: string; onClos
               onChange={(e) => setCmd(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !busy && run()}
               placeholder="如 ps aux / env / df -h / cat /path/file" />
-            <button className="btn btn-accent" disabled={busy || !cmd.trim()} onClick={run}>{busy ? '执行中…' : '执行'}</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !cmd.trim()} onClick={run}>{busy ? '执行中…' : '执行'}</button>
           </div>
           {history.length > 0 && (
             <div className="btn-row k8s-row-actions">
               {history.map((h, i) => (
-                <button key={i} className="btn btn-sm btn-ghost mono" style={{ fontSize: '0.6875rem' }}
+                <button key={i} className="btn-glass-soft btn-glass-soft-sm btn-ghost mono" style={{ fontSize: '0.6875rem' }}
                   onClick={() => setCmd(h)}>{h}</button>
               ))}
             </div>

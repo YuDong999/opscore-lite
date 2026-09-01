@@ -47,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
       return (
         <div className="banner banner-err" style={{ margin: 16 }}>
           模块渲染出错: {this.state.error.message}
-          <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => this.setState({ error: null })}>
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 8 }} onClick={() => this.setState({ error: null })}>
             重试
           </button>
         </div>

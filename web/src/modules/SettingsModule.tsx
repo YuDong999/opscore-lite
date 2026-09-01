@@ -125,7 +125,7 @@ export default function SettingsModule() {
             placeholder="输入 Token..."
             style={{ flex: 1, maxWidth: 400 }}
           />
-          <button className="btn btn-accent" onClick={saveToken}>
+          <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveToken}>
             {saved ? '✓ 已保存' : '保存'}
           </button>
         </div>
@@ -152,7 +152,7 @@ export default function SettingsModule() {
                 placeholder="postgres://user:pass@host:5432/opscore"
                 style={{ flex: 1, maxWidth:'31.25rem', fontFamily: 'monospace', fontSize: 12 }}
               />
-              <button className="btn btn-accent" onClick={doMigrate} disabled={migrating || !pgDSN}>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={doMigrate} disabled={migrating || !pgDSN}>
                 {migrating ? '迁移中...' : '开始迁移'}
               </button>
             </div>

@@ -126,14 +126,14 @@ function NetworkSection() {
             <option value={10}>10 次</option>
           </select>
         )}
-        <button className="btn btn-accent" onClick={run} disabled={loading || (cur.needsTarget && !target.trim())}>
+        <button className="btn-glass-soft btn-glass-soft-accent" onClick={run} disabled={loading || (cur.needsTarget && !target.trim())}>
           {loading ? `诊断中… ${elapsed}s` : '执行'}
         </button>
       </div>
 
       {result && (
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize:'0.7812rem', position:'relative' }}>
-          <button className="btn btn-sm" style={{position:'absolute',top:'0.25rem',right:'0.25rem',fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => copyResult(result.output || result.error || '')}>复制</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{position:'absolute',top:'0.25rem',right:'0.25rem',fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => copyResult(result.output || result.error || '')}>复制</button>
           {result.error && <div className="banner banner-err">{result.error}</div>}
           {result.output}
         </div>
@@ -217,7 +217,7 @@ function UpdatesSection() {
       <Card title="安全更新" subtitle="dnf check-update --security">
         <div className="flex-between" style={{marginBottom:8}}>
           <span>{data.updates ? '以下更新可用' : '无待安装安全更新'}</span>
-          {data.updates && <button className="btn btn-accent" onClick={installUpdates} disabled={installing}>{installing ? '安装中…' : '安装安全更新'}</button>}
+          {data.updates && <button className="btn-glass-soft btn-glass-soft-accent" onClick={installUpdates} disabled={installing}>{installing ? '安装中…' : '安装安全更新'}</button>}
         </div>
         {installResult && <div className={`banner ${installResult.startsWith('✓') ? 'banner-ok' : 'banner-err'}`} style={{whiteSpace:'pre-wrap'}}>{installResult}</div>}
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>{data.updates || '（无）'}</div>

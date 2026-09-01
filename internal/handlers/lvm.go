@@ -123,6 +123,18 @@ func LvmHandler(w http.ResponseWriter, r *http.Request) {
 		if body.Device != "" {
 			cmd = exec.Command("lvextend", "-L", "+"+body.Size, body.LV, body.Device)
 		}
+	case "vgextend":
+		if body.VG == "" || body.Device == "" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"})
+			return
+		}
+		cmd = exec.Command("vgextend", body.VG, body.Device)
+	case "fsresize":
+		if body.LV == "" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv"})
+			return
+		}
+		cmd = exec.Command("sh", "-c", `fstype=$(blkid -o value -s TYPE "`+body.LV+`" 2>/dev/null); if [ "$fstype" = "xfs" ]; then mp=$(findmnt -n -o TARGET -S "`+body.LV+`" 2>/dev/null); xfs_growfs "${mp:-/}" 2>&1; elif [ "$fstype" = "ext4" ]; then resize2fs "`+body.LV+`" 2>&1; else echo "unsupported fs: $fstype" >&2; exit 1; fi`)
 	case "mount":
 		if body.LV == "" || body.Mount == "" {
 			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"})
@@ -231,6 +243,26 @@ func lvmRemoteAction(w http.ResponseWriter, body lvmActionBody) {
 			cmd += " " + body.Device
 		}
 		cmd += " 2>&1"
+	case "vgextend":
+		if body.VG == "" || body.Device == "" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 vg 或 device"})
+			return
+		}
+		if !validLVMName(body.VG) || !validLVMDev(body.Device) {
+			WriteJSON(w, map[string]any{"ok": false, "error": "vg 或 device 格式非法"})
+			return
+		}
+		cmd = "vgextend " + body.VG + " " + body.Device + " 2>&1"
+	case "fsresize":
+		if body.LV == "" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv"})
+			return
+		}
+		if !strings.HasPrefix(body.LV, "/dev/") {
+			WriteJSON(w, map[string]any{"ok": false, "error": "lv 格式非法"})
+			return
+		}
+		cmd = `fstype=$(blkid -o value -s TYPE "` + body.LV + `" 2>/dev/null); if [ "$fstype" = "xfs" ]; then mp=$(findmnt -n -o TARGET -S "` + body.LV + `" 2>/dev/null); xfs_growfs "${mp:-/}" 2>&1; elif [ "$fstype" = "ext4" ]; then resize2fs "` + body.LV + `" 2>&1; else echo "unsupported fs: $fstype" >&2; exit 1; fi`
 	case "mount":
 		if body.LV == "" || body.Mount == "" {
 			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 lv/mount"})

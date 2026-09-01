@@ -277,7 +277,7 @@ function KvRows({ items, onChange, kHint, vHint, vOptions }: { items: Kv[]; onCh
 // 统一删除按钮(所有列表行共用, 避免每个字段重复写一样的 ✕)
 function Del({ onClick, title }: { onClick: () => void; title?: string }) {
   return (
-    <button type="button" className="btn btn-sm k8s-del-cluster cr-del" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={onClick} title={title}>✕</button>
+    <button type="button" className="btn-glass-soft btn-glass-soft-sm k8s-del-cluster cr-del" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={onClick} title={title}>✕</button>
   )
 }
 
@@ -299,7 +299,7 @@ function RowList({ rows, onDelete, onAdd, addLabel, children }: {
         </div>
       ))}
       {(onAdd != null) && (
-        <button type="button" className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={onAdd}>{addLabel || '+ 添加'}</button>
+        <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={onAdd}>{addLabel || '+ 添加'}</button>
       )}
     </div>
   )
@@ -404,7 +404,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
 
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         {KINDS.map((x) => (
-          <button key={x.k} className={`btn btn-sm ${m.kind === x.k ? 'btn-accent' : ''}`} title={x.desc}
+          <button key={x.k} className={`btn-glass-soft btn-glass-soft-sm ${m.kind === x.k ? 'btn-accent' : ''}`} title={x.desc}
             onClick={() => { setM(blank(x.k)); setYamlText(''); setMode('form') }}>
             <KindIcon kind={x.k} /> {x.k}
           </button>
@@ -430,7 +430,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                 <div style={{ display: 'flex', gap: 4 }}>
                   <input className={IN} autoFocus value={m.ns} placeholder="新命名空间(需已存在, 否则创建时报错)"
                     onChange={(e) => set({ ns: e.target.value })} />
-                  <button className="btn btn-sm" title="返回选择列表" onClick={() => setNsManual(false)}>↺</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" title="返回选择列表" onClick={() => setNsManual(false)}>↺</button>
                 </div>
               )}
             </F>
@@ -513,7 +513,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                       </RowList>
                     </div>
                   ))}
-                  <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ ingressRules: [...m.ingressRules, { host: '', paths: [{ path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }] })}>+ 路由规则</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ ingressRules: [...m.ingressRules, { host: '', paths: [{ path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }] })}>+ 路由规则</button>
                 </div>
               </F>
               <Strict label="TLS 证书 Secret(引用已有)" value={m.tlsSecret} onChange={(v) => set({ tlsSecret: v })}
@@ -671,8 +671,8 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
         <div className="card-head">
           <h3>YAML</h3>
           <div style={{ display: 'flex', gap: '0.375rem' }}>
-            <button className={`btn btn-sm ${mode === 'form' ? 'btn-accent' : ''}`} onClick={() => { setMode('form'); setYamlText('') }}>表单生成</button>
-            <button className={`btn btn-sm ${mode === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setMode('yaml')}>手改模式</button>
+            <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'form' ? 'btn-accent' : ''}`} onClick={() => { setMode('form'); setYamlText('') }}>表单生成</button>
+            <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setMode('yaml')}>手改模式</button>
           </div>
         </div>
         <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>

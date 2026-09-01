@@ -65,7 +65,7 @@ export default function LoginPage({ onLogin }: Props) {
             <div className="lockout-warn" style={{ marginBottom: 12 }}>{error}</div>
           )}
           <button
-            className="btn btn-accent"
+            className="btn-glass-soft btn-glass-soft-accent"
             type="submit"
             disabled={loading || !token.trim()}
             style={{ width: '100%' }}

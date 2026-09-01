@@ -231,7 +231,7 @@ export default function AppsSection() {
                       {healthBadge(s.health, s.healthNote)}
                     </td>
                     <td>
-                      <button className="btn btn-sm btn-log" onClick={() => { setStatsSite(s); setTab('stats') }}>统计</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-log" onClick={() => { setStatsSite(s); setTab('stats') }}>统计</button>
                     </td>
                   </tr>
                 ))}
@@ -396,7 +396,7 @@ function ContainerDetail({ container: c, onClose }: { container: AppContainer; o
             <b className="mono">{c.name}</b>
             <span className="dim small"> · {shortID(c.id)} · {c.runtime}</span>
           </div>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>✕ 关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" onClick={onClose}>✕ 关闭</button>
         </div>
 
         <div style={{ padding: 16, maxHeight: '70vh', overflow: 'auto' }}>

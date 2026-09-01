@@ -228,14 +228,14 @@ export default function ServicesModule() {
                   <td className="mono small">{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
                   <td className="mono small dim">
                     {s.logCommand
-                      ? <><button className="btn btn-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft:'0.375rem', cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
+                      ? <><button className="btn-glass-soft btn-glass-soft-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft:'0.375rem', cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
                       : '—'}
                   </td>
                   <td>
                     <div className="btn-row">
-                      <button className="btn btn-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'start')}>启动</button>
-                      <button className="btn btn-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'stop')}>停止</button>
-                      <button className="btn btn-sm btn-accent" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'restart')}>重启</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'start')}>启动</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'stop')}>停止</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'restart')}>重启</button>
                       {busy === `${s.id}:start` || busy === `${s.id}:stop` || busy === `${s.id}:restart` ? <span className="spinner" /> : null}
                     </div>
                   </td>
@@ -358,7 +358,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
             <b>{service.recognized || service.name}</b>
             <span className="dim small"> · {service.name}</span>
           </div>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>✕ 关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" onClick={onClose}>✕ 关闭</button>
         </div>
 
         <div className="log-panel-head">
@@ -382,7 +382,7 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
             )}
             <input className="ipt ipt-sm" placeholder="过滤关键词…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <label className="chk"><input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} /> 自动刷新</label>
-            <button className="btn btn-sm btn-ghost" onClick={() => { followBottom.current = true; fetchLog() }}>刷新</button>
+            <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" onClick={() => { followBottom.current = true; fetchLog() }}>刷新</button>
           </div>
         </div>
 

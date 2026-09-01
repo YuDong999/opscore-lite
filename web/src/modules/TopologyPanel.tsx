@@ -255,9 +255,9 @@ export default function TopologyPanel() {
     <div>
       <div className="flex-between" style={{ marginBottom: 8 }}>
         <div className="btn-row">
-          <button className="btn btn-sm" onClick={rescan}>重新扫描</button>
-          <button className={`btn btn-sm ${view === 'graph' ? 'btn-active' : ''}`} onClick={() => setView('graph')}>图</button>
-          <button className={`btn btn-sm ${view === 'dir' ? 'btn-active' : ''}`} onClick={() => setView('dir')}>目录树</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={rescan}>重新扫描</button>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${view === 'graph' ? 'btn-active' : ''}`} onClick={() => setView('graph')}>图</button>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${view === 'dir' ? 'btn-active' : ''}`} onClick={() => setView('dir')}>目录树</button>
           {loading && <span className="dim" style={{ fontSize: 12 }}>扫描中…</span>}
           {data && <span className="dim" style={{ fontSize: 12 }}>{selected?.label ? `视角: ${selected.label} · ` : ''}耗时 {data.elapsed} · {data.devices.length} 设备 · {data.links.length} 连接</span>}
         </div>

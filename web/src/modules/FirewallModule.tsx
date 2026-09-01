@@ -139,9 +139,9 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
             {status.manageable ? '可写入' : '只读演示'}
           </span>
           <div className="btn-row" style={{ marginLeft: 'auto' }}>
-            <button className="btn btn-sm" disabled={busy} onClick={() => openConfirm({ action: 'start' })}>启动</button>
-            <button className="btn btn-sm" disabled={busy} onClick={() => openConfirm({ action: 'stop' })}>停止</button>
-            <button className="btn btn-sm btn-accent" disabled={busy} onClick={() => openConfirm({ action: 'restart' })}>重启</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} onClick={() => openConfirm({ action: 'start' })}>启动</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} onClick={() => openConfirm({ action: 'stop' })}>停止</button>
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy} onClick={() => openConfirm({ action: 'restart' })}>重启</button>
           </div>
         </div>
       </Card>
@@ -169,7 +169,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
               <option value="allow">允许</option>
               <option value="deny">拒绝</option>
             </select>
-            <button className="btn btn-accent" disabled={!port}
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!port}
               onClick={() => openConfirm({ action: portAct + '-port', port, proto })}>
               {portAct === 'allow' ? '开放端口' : '关闭端口'}
             </button>
@@ -186,7 +186,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
               <option value="allow">白名单(放行)</option>
               <option value="deny">黑名单(封禁)</option>
             </select>
-            <button className="btn btn-accent" disabled={!cidr}
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!cidr}
               onClick={() => openConfirm({ action: ipAct + '-ip', cidr })}>
               {ipAct === 'allow' ? '加入白名单' : '加入黑名单'}
             </button>
@@ -214,7 +214,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                     <td className="dim">{r.protocol || '—'}</td>
                     <td className="mono small">{r.localPort || '—'}</td>
                     <td className="mono small">{r.remoteIP || '—'}</td>
-                    <td><button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.375rem'}} onClick={() => openConfirm({ action: 'delete-rule', source: r.name })}>删除</button></td>
+                    <td><button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.375rem'}} onClick={() => openConfirm({ action: 'delete-rule', source: r.name })}>删除</button></td>
                   </tr>
                 ))}
                 {rules.length === 0 && <tr><td colSpan={7} className="dim">无规则或当前环境不支持读取</td></tr>}
@@ -238,7 +238,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                 <option value="">选择区域…</option>
                 {zones.all.map(z => <option key={z} value={z}>{z}</option>)}
               </select>
-              <button className="btn btn-accent" disabled={!zoneSelect}
+              <button className="btn-glass-soft btn-glass-soft-accent" disabled={!zoneSelect}
                 onClick={() => openConfirm({ action: 'set-default-zone', zone: zoneSelect })}>
                 设为默认区域
               </button>
@@ -254,7 +254,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
           <div className="form-inline">
             <input className="input" placeholder="rule family=ipv4 source address=10.0.0.0/24 port port=8080 protocol=tcp reject" value={richInput}
               onChange={e => setRichInput(e.target.value)} />
-            <button className="btn btn-accent" disabled={!richInput}
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!richInput}
               onClick={() => openConfirm({ action: 'add-rich-rule', richRule: richInput })}>
               添加
             </button>
@@ -266,7 +266,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                 {richRules.map((r, i) => (
                   <tr key={i}>
                     <td className="mono small" style={{wordBreak:'break-all'}}>{r}</td>
-                    <td><button className="btn btn-sm btn-danger" onClick={() => openConfirm({ action: 'remove-rich-rule', richRule: r })}>删除</button></td>
+                    <td><button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => openConfirm({ action: 'remove-rich-rule', richRule: r })}>删除</button></td>
                   </tr>
                 ))}
                 {richRules.length === 0 && <tr><td colSpan={2} className="dim">无 rich-rule 或非 firewalld 环境</td></tr>}
@@ -287,7 +287,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
             <select className="input" value={fwdProto} onChange={e => setFwdProto(e.target.value)}>
               <option value="tcp">TCP</option><option value="udp">UDP</option>
             </select>
-            <button className="btn btn-accent" disabled={!fwdSrcPort || !fwdDest}
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={!fwdSrcPort || !fwdDest}
               onClick={() => openConfirm({ action: 'add-forward-port', fwdSrcPort, fwdDest, proto: fwdProto })}>
               添加转发
             </button>
@@ -299,7 +299,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
                 {forwardPorts.map((p, i) => (
                   <tr key={i}>
                     <td className="mono small" style={{wordBreak:'break-all'}}>{p}</td>
-                    <td><button className="btn btn-sm btn-danger" onClick={() => {
+                    <td><button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => {
                       // 从现有转发规则反向解析参数
                       const m = p.match(/port=(\d+):proto=(\w+):toaddr=([\w.]+):toport=(\d+)/)
                       if (m) openConfirm({ action: 'remove-forward-port', fwdSrcPort: m[1], proto: m[2], fwdDest: m[3]+':'+m[4] })
@@ -351,8 +351,8 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
               placeholder="例如:为应用 A 开放 3306 端口"
               onKeyDown={e => e.key === 'Enter' && !busy && doConfirm()} />
             <div className="modal-actions">
-              <button className="btn" disabled={busy} onClick={() => setConfirm({ ...confirm, open: false })}>取消</button>
-              <button className="btn btn-danger" disabled={busy} onClick={doConfirm}>
+              <button className="btn-glass-soft" disabled={busy} onClick={() => setConfirm({ ...confirm, open: false })}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-danger" disabled={busy} onClick={doConfirm}>
                 {busy ? '执行中…' : '确认执行'}
               </button>
             </div>

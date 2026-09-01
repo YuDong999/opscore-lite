@@ -529,6 +529,58 @@ body {
 }
 .btn-glass.btn-sm { padding: 0.3125rem 0.85rem; font-size: 0.75rem; }
 
+.btn-glass-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1.1rem;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(25px) saturate(150%) contrast(100%) brightness(100%);
+  -webkit-backdrop-filter: blur(25px) saturate(150%) contrast(100%) brightness(100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0px 8px 50px 0px rgba(0, 0, 0, 0.2);
+  color: #333333;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  transform: perspective(1200px) translateZ(0);
+  transition: transform .55s cubic-bezier(.34, 1.56, .64, 1), box-shadow .3s ease;
+}
+.btn-glass-soft:hover:not(:disabled) {
+  transform: perspective(1200px) translateZ(0) translateY(-2px) scale(1.02);
+  transition: transform .2s ease-out, box-shadow .3s ease;
+  box-shadow: 0px 12px 60px 2px rgba(0, 0, 0, 0.3);
+}
+.btn-glass-soft:active:not(:disabled) {
+  transform: perspective(1200px) translateZ(-22px) scale(0.96);
+  box-shadow: 0px 3px 15px 0px rgba(0, 0, 0, 0.32);
+  transition: transform .05s ease-out, box-shadow .05s ease;
+}
+.btn-glass-soft:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-glass-soft-sm { padding: 0.3125rem 0.85rem; font-size: 0.75rem; }
+
+.btn-glass-soft-accent {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  box-shadow: 0px 8px 50px 0px rgba(0, 0, 0, 0.2);
+}
+.btn-glass-soft-accent:hover:not(:disabled) {
+  box-shadow: 0px 12px 60px 2px rgba(0, 0, 0, 0.3);
+}
+
+.btn-glass-soft-danger {
+  color: #fff;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  border-color: transparent;
+  box-shadow: 0px 8px 50px 0px rgba(0, 0, 0, 0.2);
+}
+.btn-glass-soft-danger:hover:not(:disabled) {
+  box-shadow: 0px 12px 60px 2px rgba(0, 0, 0, 0.3);
+}
+
 /* 拓扑目录树 (tree /F 制表符连线) */
 .topo-dirtree { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .topo-dirtree .tree-row {

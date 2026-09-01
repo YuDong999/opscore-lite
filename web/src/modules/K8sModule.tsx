@@ -301,7 +301,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
               }}>✕</button>
           </div>
         ))}
-        <button className="btn btn-sm k8s-add-cluster" onClick={() => setShowReg(true)}>+ 注册集群</button>
+        <button className="btn-glass-soft btn-glass-soft-sm k8s-add-cluster" onClick={() => setShowReg(true)}>+ 注册集群</button>
         <div className="k8s-side-divider" />
 
         <nav className="k8s-side-nav">
@@ -327,6 +327,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             </div>
           ))}
         </nav>
+        </div>
       </aside>
 
       {/* ── 主内容区 ── */}
@@ -358,7 +359,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 </select>
               )}
               <span className="pill pill-sub">{loading ? '加载中…' : `${rows.length} 条`}</span>
-              <button className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={loadRows}>刷新</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={loadRows}>刷新</button>
               {CREATE_KIND_OF[res] && (
                 <button className="btn-glass is-accent btn-sm" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
               )}
@@ -393,28 +394,28 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           {res === 'pods' && (
-                            <button className="btn btn-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
+                            <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
                               onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete' }, `优雅删除 Pod ${r.name}? (30s 优雅期)`) }}>删除</button>
                           )}
                           {(res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') && (
                             <>
-                              <button className="btn btn-sm" title="回滚到上一版本"
+                              <button className="btn-glass-soft btn-glass-soft-sm" title="回滚到上一版本"
                                 onClick={(e) => { e.stopPropagation(); act({ res, ns: r.namespace || ns, name: r.name, action: 'rollback', revision: 0 }, `回滚 ${r.name} 到上一版本?`) }}>回滚</button>
-                              <button className="btn btn-sm btn-danger" title="优雅删除"
+                              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" title="优雅删除"
                                 onClick={(e) => { e.stopPropagation(); act({ res, ns: r.namespace || ns, name: r.name, action: 'delete' }, `删除 ${res} ${r.name}?`) }}>删除</button>
                             </>
                           )}
                           {(res === 'jobs' || res === 'cronjobs' || res === 'services' || res === 'ingresses' || res === 'configmaps' || res === 'secrets' || res === 'persistentvolumeclaims') && (
-                            <button className="btn btn-sm btn-danger"
+                            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
                               onClick={(e) => { e.stopPropagation(); const prompt = res === 'jobs' ? `重跑 Job ${r.name}?` : res === 'cronjobs' ? `立即触发 ${r.name}?` : `删除 ${res} ${r.name}?`; const action = res === 'cronjobs' ? 'trigger' : res === 'jobs' ? 'rerun' : 'delete'; act({ res, ns: r.namespace || ns, name: r.name, action }, prompt) }}>
                               {res === 'jobs' ? '重跑' : res === 'cronjobs' ? '触发' : '删除'}
                             </button>
                           )}
                           {res === 'nodes' && (
-                            <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); dblRow(r) }}>管理</button>
+                            <button className="btn-glass-soft btn-glass-soft-sm" onClick={(e) => { e.stopPropagation(); dblRow(r) }}>管理</button>
                           )}
                           {!['pods','deployments','statefulsets','daemonsets','jobs','cronjobs','services','ingresses','configmaps','secrets','persistentvolumeclaims','nodes'].includes(res) && (
-                            <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); act({ res, ns: r.namespace || ns, name: r.name, action: 'delete' }, `删除 ${r.name}?`) }}>删除</button>
+                            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={(e) => { e.stopPropagation(); act({ res, ns: r.namespace || ns, name: r.name, action: 'delete' }, `删除 ${r.name}?`) }}>删除</button>
                           )}
                         </div>
                       </td>
@@ -610,7 +611,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
         {!!ov.version && <span className="pill pill-sub">{String(ov.version)}</span>}
         <span className="pill pill-sub">{num(ov.nodesReady)}/{num(ov.nodesTotal)} 节点在线</span>
         <span className="pill pill-sub">{num(ov.podsTotal)} pods</span>
-        <button className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={loadAll}>刷新</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={loadAll}>刷新</button>
       </div>
 
       {/* 趋势 + 节点真实用量 */}
@@ -618,7 +619,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
         <Card title="集群资源趋势" subtitle="CPU / 内存 · 历史采样持久化">
           <div className="btn-row" style={{ marginBottom: '0.375rem' }}>
             {(Object.keys(WIN_LABELS)).map((w) => (
-              <button key={w} className={`btn btn-sm ${win === w ? 'btn-accent' : ''}`} onClick={() => setWin(w as any)}>{WIN_LABELS[w]}</button>
+              <button key={w} className={`btn-glass-soft btn-glass-soft-sm ${win === w ? 'btn-accent' : ''}`} onClick={() => setWin(w as any)}>{WIN_LABELS[w]}</button>
             ))}
             <span className="dim" style={{ fontSize: '0.6875rem', marginLeft: 'auto' }}>
               {hist.length ? `共 ${hist.length} 个采样点` : '采样积累中…'}
@@ -747,7 +748,7 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
       <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modal-head">
           <div className="modal-title">注册集群</div>
-          <button className="btn btn-sm" onClick={onClose}>关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
         </div>
         <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: '0.75rem' }}>
           <label style={{ fontSize: '0.8125rem' }}>
@@ -758,7 +759,7 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
           <label style={{ fontSize: '0.8125rem' }}>
             kubeconfig
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
-              <button className="btn" onClick={loadDefault} disabled={scanBusy}>
+              <button className="btn-glass-soft" onClick={loadDefault} disabled={scanBusy}>
                 {scanBusy ? '读取中…' : '读取服务器默认配置'}
               </button>
               <input type="file" accept=".yaml,.yml,.conf,.txt" onChange={(e) => pickFile(e.target.files?.[0] || null)}
@@ -770,8 +771,8 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
               rows={10} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.6875rem' }} />
           </label>
           <div className="modal-actions">
-            <button className="btn" onClick={onClose}>取消</button>
-            <button className="btn btn-accent" disabled={busy || !name.trim() || !kubeconfig.trim()} onClick={submit}>
+            <button className="btn-glass-soft" onClick={onClose}>取消</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !name.trim() || !kubeconfig.trim()} onClick={submit}>
               {busy ? '探测中…' : '注册并探测'}
             </button>
           </div>
@@ -875,21 +876,21 @@ function ResourceModal({ info, onClose, act, onMsg }: {
             {info.ns && <span className="pill pill-sub">{info.ns}</span>}
             <span className="dim" style={{ fontSize: '0.625rem', marginLeft: 6 }}>双击行打开本页</span>
           </div>
-          <button className="btn btn-sm" onClick={onClose}>关闭</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
         </div>
 
         <div style={{ padding: '0.5rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
           {(info.kind === 'pod') && (
             <>
-              <button className={`btn btn-sm ${tab === 'detail' ? 'btn-accent' : ''}`} onClick={() => setTab('detail')}>概览</button>
-              <button className={`btn btn-sm ${tab === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setTab('yaml')}>YAML</button>
+              <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'detail' ? 'btn-accent' : ''}`} onClick={() => setTab('detail')}>概览</button>
+              <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setTab('yaml')}>YAML</button>
               <span style={{ marginLeft: 'auto' }} />
-              <button type="button" className="btn btn-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '日志加载中…' : '日志'}</button>
-              <button type="button" className="btn btn-sm" onClick={(e) => { e.preventDefault(); document.getElementById('cr-exec-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>执行</button>
-              <button className="btn btn-sm btn-danger"
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '日志加载中…' : '日志'}</button>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={(e) => { e.preventDefault(); document.getElementById('cr-exec-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>执行</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
                 onClick={() => act({ res: 'pods', ns: info.ns, name: info.name, action: 'delete' },
                   `优雅删除 Pod ${info.name}? (30s 优雅期, SIGTERM)`)}>删除</button>
-              <button className="btn btn-sm" title="卡住 Terminating 时使用(grace=0 立即)"
+              <button className="btn-glass-soft btn-glass-soft-sm" title="卡住 Terminating 时使用(grace=0 立即)"
                 onClick={() => act({ res: 'pods', ns: info.ns, name: info.name, action: 'delete', force: true },
                   `强制删除 Pod ${info.name}? (立即, 不等待)`)}>强制</button>
             </>
@@ -899,15 +900,15 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               <span className="pill pill-sub">scale / 回滚 / 暂停发布 / 滚动重启 / YAML 编辑</span>
               <span style={{ marginLeft: 'auto' }} />
               {info.res === 'deployments' && (
-                <button className="btn btn-sm" disabled={!!detail}
+                <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
                   onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'pause' },
                     `暂停 ${info.name} 的滚动更新流程?`)}>暂停发布</button>
               )}
               {info.res === 'deployments' && (
-                <button className="btn btn-sm" disabled={!!detail}
+                <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
                   onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'resume' })}>恢复发布</button>
               )}
-              <button className="btn btn-sm btn-danger" disabled={!!detail}
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={!!detail}
                 onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'delete' },
                   `删除 ${titleOf(info.res)} ${info.name}? 其 Pod 将一并删除!`)}>删除该负载</button>
             </>
@@ -916,12 +917,12 @@ function ResourceModal({ info, onClose, act, onMsg }: {
             <>
               <span className="pill pill-sub">节点管理</span>
               <span style={{ marginLeft: 'auto' }} />
-              <button className="btn btn-sm" disabled={!!detail}
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
                 onClick={() => act({ res: 'nodes', name: info.name, action: 'cordon' },
                   `封锁节点 ${info.name}(不再调度新 Pod)?`)}>cordon 封锁</button>
-              <button className="btn btn-sm" disabled={!!detail}
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
                 onClick={() => act({ res: 'nodes', name: info.name, action: 'uncordon' })}>uncordon 解除</button>
-              <button className="btn btn-sm btn-danger" disabled={!!detail}
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={!!detail}
                 onClick={() => {
                   if (!confirm(`排空节点 ${info.name}?\n将驱逐其上所有业务 Pod(自动跳过 DaemonSet/static pod)。`)) return
                   if (!confirm('再次确认: 这是高危操作, 业务会短暂中断。继续?')) return
@@ -1042,7 +1043,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                     <option value="">(默认容器)</option>
                     {(detail.containers || []).map((c: any) => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
-                  <button type="button" className="btn btn-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '加载中' : '拉取'}</button>
+                  <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '加载中' : '拉取'}</button>
                 </div>
                 {logOut && <pre ref={logRef} className="code-block" style={{ maxHeight: 240, overflow: 'auto', fontSize: '0.6875rem', whiteSpace: 'pre-wrap' }}>{logOut}</pre>}
               </div>
@@ -1054,7 +1055,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                     {(detail.containers || []).map((c: any) => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
                   <input className="input" value={execCmd} onChange={(e) => setExecCmd(e.target.value)} placeholder="如 env | sort 或 cat /etc/hosts" style={{ flex: 1 }} />
-                  <button type="button" className="btn btn-sm btn-accent" onClick={runExec} disabled={execBusy}>{execBusy ? '执行中' : '执行'}</button>
+                  <button type="button" className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={runExec} disabled={execBusy}>{execBusy ? '执行中' : '执行'}</button>
                 </div>
                 {execOut && <pre className="code-block" style={{ maxHeight: 240, overflow: 'auto', fontSize: '0.6875rem', whiteSpace: 'pre-wrap', marginTop: 6 }}>{execOut}</pre>}
               </div>
@@ -1066,9 +1067,9 @@ function ResourceModal({ info, onClose, act, onMsg }: {
             <>
               <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, margin: '0.625rem 0 0.375rem', display: 'flex', alignItems: 'center', gap: 8 }}>
                 YAML
-                {!yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
-                {yamlEditing && <button className="btn btn-sm btn-accent" onClick={saveYaml}>保存修改</button>}
-                {yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(false)}>取消</button>}
+                {!yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
+                {yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveYaml}>保存修改</button>}
+                {yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(false)}>取消</button>}
                 {yamlEditing && <span style={{ color: 'var(--warn)', fontSize: '0.625rem' }}>保存即下发到集群(API Server 校验)</span>}
               </div>
               <textarea className="input mono" rows={16} value={yaml} readOnly={!yamlEditing}
@@ -1085,17 +1086,17 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                 <input className="input" type="number" min={0} max={1000} value={replicas}
                   onChange={(e) => setReplicas(e.target.value === '' ? '' : Number(e.target.value))} style={{ width: 100 }} />
                 <span className="dim">副本</span>
-                <button className="btn btn-sm btn-accent" disabled={replicas === ''}
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={replicas === ''}
                   onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'scale', replicas })}>应用副本数</button>
                 <span style={{ width: 12 }} />
-                <button className="btn btn-sm"
+                <button className="btn-glass-soft btn-glass-soft-sm"
                   onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'restart' },
                     `滚动重启 ${info.name}?`)}>滚动重启</button>
               </div>
               <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, margin: '0.625rem 0 0.375rem' }}>镜像更新</div>
               <div className="toolbar-strip">
                 <input className="input" value={imageDraft} onChange={(e) => setImageDraft(e.target.value)} placeholder="如 nginx:1.27-alpine" style={{ flex: 1 }} />
-                <button className="btn btn-sm btn-accent" disabled={!imageDraft.trim()}
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!imageDraft.trim()}
                   onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'setImage', image: imageDraft.trim() },
                     `将 ${info.name} 镜像更新为 ${imageDraft.trim()}?`)}>更新镜像</button>
               </div>
@@ -1125,7 +1126,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                           </option>
                         ))}
                       </select>
-                      <button className="btn btn-sm btn-accent"
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                         onClick={() => act({ res: info.res, ns: info.ns, name: info.name, action: 'rollback', revision: rollTo },
                           rollTo === 0 ? `回滚 ${info.name} 到上一版本?` : `回滚 ${info.name} 到 rev ${rollTo}?`)}>执行回滚</button>
                     </div>
@@ -1137,9 +1138,9 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                 <>
                   <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, margin: '0.625rem 0 0.375rem', display: 'flex', alignItems: 'center', gap: 8 }}>
                     YAML
-                    {!yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
-                    {yamlEditing && <button className="btn btn-sm btn-accent" onClick={saveYaml}>保存修改</button>}
-                    {yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(false)}>取消</button>}
+                    {!yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
+                    {yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveYaml}>保存修改</button>}
+                    {yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(false)}>取消</button>}
                     {yamlEditing && <span style={{ color: 'var(--warn)', fontSize: '0.625rem' }}>保存即下发到集群(API Server 校验)</span>}
                   </div>
                   <textarea className="input mono" rows={14} value={yaml} readOnly={!yamlEditing}
@@ -1169,17 +1170,17 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               {info.res === 'cronjobs' && (
                 <div className="toolbar-strip">
                   <span className="dim">CronJob 操作:</span>
-                  <button className="btn btn-sm btn-accent"
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                     onClick={() => act({ res: 'cronjobs', ns: info.ns, name: info.name, action: 'trigger' },
                       `立即触发一次 ${info.name}?`)}>立即触发一次</button>
-                  <button className="btn btn-sm" onClick={() => act({ res: 'cronjobs', ns: info.ns, name: info.name, action: 'suspend', suspend: true })}>suspend 挂起</button>
-                  <button className="btn btn-sm" onClick={() => act({ res: 'cronjobs', ns: info.ns, name: info.name, action: 'suspend', suspend: false })}>resume 恢复</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => act({ res: 'cronjobs', ns: info.ns, name: info.name, action: 'suspend', suspend: true })}>suspend 挂起</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => act({ res: 'cronjobs', ns: info.ns, name: info.name, action: 'suspend', suspend: false })}>resume 恢复</button>
                 </div>
               )}
               {info.res === 'jobs' && (
                 <div className="toolbar-strip">
                   <span className="dim">Job 操作:</span>
-                  <button className="btn btn-sm btn-accent"
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                     onClick={() => act({ res: 'jobs', ns: info.ns, name: info.name, action: 'rerun' },
                       `按当前配置重跑 Job ${info.name}(创建新 Job)?`)}>重跑(新 Job)</button>
                 </div>
@@ -1188,7 +1189,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                 <div className="toolbar-strip">
                   <span className="dim">PVC 扩容:</span>
                   <input className="input" style={{ width: 130 }} value={expandTo} onChange={(e) => setExpandTo(e.target.value)} placeholder="如 20Gi" />
-                  <button className="btn btn-sm btn-accent" disabled={!expandTo.trim()}
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!expandTo.trim()}
                     onClick={() => act({ res: 'persistentvolumeclaims', ns: info.ns, name: info.name, action: 'expand', storage: expandTo.trim() },
                       `将 ${info.name} 扩容到 ${expandTo}? (只能扩大不能缩小)`)}>应用容量</button>
                 </div>
@@ -1231,9 +1232,9 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               )}
               <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, margin: '0.5rem 0 0.375rem', display: 'flex', alignItems: 'center', gap: 8 }}>
                 YAML
-                {!yamlReadonly && !yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
-                {!yamlReadonly && yamlEditing && <button className="btn btn-sm btn-accent" onClick={saveYaml}>保存修改</button>}
-                {!yamlReadonly && yamlEditing && <button className="btn btn-sm" onClick={() => setYamlEditing(false)}>取消</button>}
+                {!yamlReadonly && !yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(true)}>编辑</button>}
+                {!yamlReadonly && yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveYaml}>保存修改</button>}
+                {!yamlReadonly && yamlEditing && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setYamlEditing(false)}>取消</button>}
                 {yamlReadonly && <span style={{ color: 'var(--warn)' }}>数据已脱敏, 禁止在线编辑</span>}
               </div>
               <textarea className="input mono" rows={16} value={yaml} readOnly={!yamlEditing || yamlReadonly}

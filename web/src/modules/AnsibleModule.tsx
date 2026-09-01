@@ -140,7 +140,7 @@ function Dashboard() {
       <div className="section">
         <h3>快速操作</h3>
         <div className="btn-row">
-          <button className="btn" onClick={pingAll} disabled={loading}>Ping 全部主机</button>
+          <button className="btn-glass-soft" onClick={pingAll} disabled={loading}>Ping 全部主机</button>
         </div>
       </div>
       {err && <div className="error-box">{err}</div>}
@@ -287,8 +287,8 @@ function HostsPanel() {
           <input placeholder="别名" value={form.alias} onChange={e => setForm(p => ({...p, alias: e.target.value}))} style={{width:70}} />
           <input type="password" placeholder="密码" value={form.password} onChange={e => setForm(p => ({...p, password: e.target.value}))} style={{width:100}} />
           <input placeholder="SSH 私钥路径" value={form.sshKey} onChange={e => setForm(p => ({...p, sshKey: e.target.value}))} style={{width:120}} />
-          <button className="btn" onClick={testHost} style={{fontSize:12}}>测试连接</button>
-          <button className="btn" onClick={addHost}>添加</button>
+          <button className="btn-glass-soft" onClick={testHost} style={{fontSize:12}}>测试连接</button>
+          <button className="btn-glass-soft" onClick={addHost}>添加</button>
         </div>
         {testResult !== null && (
           <div className={`banner ${testResult.ok ? 'banner-ok' : 'banner-err'}`} style={{marginTop:8}}>
@@ -308,7 +308,7 @@ function HostsPanel() {
             <input placeholder="用户名" value={batchUser} onChange={e => setBatchUser(e.target.value)} style={{width:120}} />
             <input type="number" placeholder="端口" value={batchPort} onChange={e => setBatchPort(+e.target.value)} style={{width:80}} />
             <input placeholder="ID 前缀(可选)" value={batchPrefix} onChange={e => setBatchPrefix(e.target.value)} style={{width:120}} />
-            <button className="btn" onClick={batchAdd}>批量导入</button>
+            <button className="btn-glass-soft" onClick={batchAdd}>批量导入</button>
           </div>
         </div>
       </div>
@@ -320,12 +320,12 @@ function HostsPanel() {
         <div className="flex-between">
           <h3>主机列表 ({hosts.length})</h3>
           <div className="btn-row">
-            {selected.size > 0 && <button className="btn btn-sm" onClick={() => setGroupModal({ group: '' })}>加入主机组 ({selected.size})</button>}
-            {selected.size > 0 && <button className="btn btn-sm btn-danger" onClick={removeSelected}>删除选中 ({selected.size})</button>}
-            {hosts.length > 0 && <button className="btn btn-sm" onClick={selectAll}>全选</button>}
-            {hosts.length > 0 && <button className="btn btn-sm" onClick={invertSelect}>反选</button>}
-            {selected.size > 0 && <button className="btn btn-sm" onClick={clearSelect}>清空选择</button>}
-            {hosts.length > 0 && <button className="btn btn-sm" onClick={removeAll}>清空全部</button>}
+            {selected.size > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setGroupModal({ group: '' })}>加入主机组 ({selected.size})</button>}
+            {selected.size > 0 && <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={removeSelected}>删除选中 ({selected.size})</button>}
+            {hosts.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={selectAll}>全选</button>}
+            {hosts.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={invertSelect}>反选</button>}
+            {selected.size > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={clearSelect}>清空选择</button>}
+            {hosts.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={removeAll}>清空全部</button>}
           </div>
         </div>
         <div className="table-wrap">
@@ -366,7 +366,7 @@ function HostsPanel() {
                   <td>{isLocal ? '-' : h.port}</td>
                   <td title={h.user || '本机无需用户'}>{h.hostname || h.user || '-'}</td>
                   <td style={{fontSize:'0.75rem',color:'var(--text-dim)'}}>{h.sshKey || h.password ? '*' : '-'}</td>
-                  <td>{!isLocal && <span className="btn btn-sm btn-ghost" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); setEditHost({...h}) }}>编辑</span>}</td>
+                  <td>{!isLocal && <span className="btn-glass-soft btn-glass-soft-sm btn-ghost" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); setEditHost({...h}) }}>编辑</span>}</td>
                 </tr>
                 )
               })}
@@ -388,8 +388,8 @@ function HostsPanel() {
               </datalist>
             </div>
             <div className="btn-row" style={{marginTop:12}}>
-              <button className="btn" onClick={addToGroup} disabled={!groupModal.group.trim()}>加入</button>
-              <button className="btn" onClick={() => setGroupModal(null)}>取消</button>
+              <button className="btn-glass-soft" onClick={addToGroup} disabled={!groupModal.group.trim()}>加入</button>
+              <button className="btn-glass-soft" onClick={() => setGroupModal(null)}>取消</button>
             </div>
           </div>
         </div>
@@ -431,8 +431,8 @@ function HostsPanel() {
               <input className="input" type="password" value={editHost.password || ''} placeholder="私钥为空时使用密码" onChange={e => setEditHost({...editHost, password: e.target.value})} />
             </div>
             <div className="btn-row" style={{marginTop:12}}>
-              <button className="btn" onClick={saveEdit}>保存</button>
-              <button className="btn" onClick={() => setEditHost(null)}>取消</button>
+              <button className="btn-glass-soft" onClick={saveEdit}>保存</button>
+              <button className="btn-glass-soft" onClick={() => setEditHost(null)}>取消</button>
             </div>
           </div>
         </div>
@@ -529,7 +529,7 @@ function InventoriesPanel() {
           <input placeholder="ID" value={form.id} onChange={e => setForm(p => ({...p, id: e.target.value}))} />
           <input placeholder="名称" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} />
           <input placeholder="描述" value={form.description} onChange={e => setForm(p => ({...p, description: e.target.value}))} />
-          <button className="btn" onClick={create}>创建</button>
+          <button className="btn-glass-soft" onClick={create}>创建</button>
         </div>
       </div>
 
@@ -546,7 +546,7 @@ function InventoriesPanel() {
             <div className="btn-row">
               <span className="badge badge-info">{Object.keys(inv.groups).length} 组</span>
               <span className="badge badge-on">{Object.keys(inv.hosts).length} 主机</span>
-              <button className="btn btn-sm btn-danger" onClick={e => { e.stopPropagation(); del(inv.id) }}>删除</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={e => { e.stopPropagation(); del(inv.id) }}>删除</button>
             </div>
           </div>
         ))}
@@ -558,8 +558,8 @@ function InventoriesPanel() {
           <div className="flex-between">
             <h3>{selected.name || selected.id}</h3>
             <div className="btn-row">
-              <button className="btn btn-sm" onClick={importHosts}>导入全部主机</button>
-              <button className="btn btn-sm btn-accent" onClick={saveInventory}>保存修改</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={importHosts}>导入全部主机</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveInventory}>保存修改</button>
             </div>
           </div>
 
@@ -572,7 +572,7 @@ function InventoriesPanel() {
               <input placeholder="组名" value={newGroup} onChange={e => setNewGroup(e.target.value)} />
               <input placeholder="父组(可选)" value={newGroupParent} onChange={e => setNewGroupParent(e.target.value)} />
               <input placeholder='变量 JSON (可选) {"key":"val"}' value={newGroupVars} onChange={e => setNewGroupVars(e.target.value)} style={{flex:1}} />
-              <button className="btn btn-sm" onClick={addGroup}>添加</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={addGroup}>添加</button>
             </div>
           </div>
 
@@ -595,7 +595,7 @@ function InventoriesPanel() {
                     <span className="dim" style={{marginLeft:8}}>{h.addr}:{h.port}</span>
                     <span style={{marginLeft:'0.5rem',fontSize:'0.6875rem',color:'var(--accent)'}}>{h.groups?.join(', ')}</span>
                   </div>
-                  <button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从清单移除 ${h.id}？`)) removeInvHost(h.id) }}>移除</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从清单移除 ${h.id}？`)) removeInvHost(h.id) }}>移除</button>
                 </div>
               ))}
               {Object.keys(selected.hosts).length === 0 && <div className="dim" style={{fontSize:'0.75rem',padding:'0.5rem 0'}}>暂无主机</div>}
@@ -615,7 +615,7 @@ function InventoriesPanel() {
                       <td className="mono">{h.id}</td>
                       <td>{h.alias}</td>
                       <td className="mono">{h.addr}</td>
-                      <td><button className="btn btn-sm" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => addInvHost(h.id)}>添加</button></td>
+                      <td><button className="btn-glass-soft btn-glass-soft-sm" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => addInvHost(h.id)}>添加</button></td>
                     </tr>
                   ))}
                   {allHosts.filter(h => !selected.hosts[h.id]).length === 0 && <tr><td colSpan={4} style={{textAlign:'center',padding:12,color:'var(--text-dim)'}}>所有主机已在清单中</td></tr>}
@@ -713,7 +713,7 @@ function GroupsPanel() {
                   <td><strong>{g.name}</strong>{g.children && g.children.length > 0 ? <span className="dim" style={{fontSize:11}}> (子组: {g.children.join(', ')})</span> : ''}</td>
                   <td>{g.parent || '-'}</td>
                   <td>{g.members.length}</td>
-                  <td><span className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); deleteGroup() }}>删除</span></td>
+                  <td><span className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); deleteGroup() }}>删除</span></td>
                 </tr>
               ))}
               {data.groups.length === 0 && <tr><td colSpan={4} style={{textAlign:'center',padding:24,color:'var(--text-dim)'}}>暂无主机组，先在下方创建</td></tr>}
@@ -730,7 +730,7 @@ function GroupsPanel() {
             <option value="">父组: all (根)</option>
             {data.groups.map(g => <option key={g.name} value={g.name}>父组: {g.name}</option>)}
           </select>
-          <button className="btn" onClick={addGroup}>创建</button>
+          <button className="btn-glass-soft" onClick={addGroup}>创建</button>
         </div>
       </div>
 
@@ -739,8 +739,8 @@ function GroupsPanel() {
           <div className="flex-between">
             <h3>{sel.name} — 成员 ({members.length})</h3>
             <div className="btn-row">
-              {newHosts.size > 0 && <button className="btn btn-sm" onClick={addMembers}>添加选中 ({newHosts.size})</button>}
-              <button className="btn btn-sm" onClick={() => setNewHosts(new Set())}>清空勾选</button>
+              {newHosts.size > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={addMembers}>添加选中 ({newHosts.size})</button>}
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setNewHosts(new Set())}>清空勾选</button>
             </div>
           </div>
 
@@ -776,7 +776,7 @@ function GroupsPanel() {
                   <span className="mono">{m.alias || m.id}</span>
                   <span className="dim" style={{marginLeft:8}}>{m.addr}:{m.port}</span>
                 </div>
-                <button className="btn btn-sm btn-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从 ${selGroup} 组移除 ${m.id}？`)) removeMember(m.id) }}>移除</button>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" style={{fontSize:'0.6875rem',padding:'0.125rem 0.5rem'}} onClick={() => { if (confirm(`从 ${selGroup} 组移除 ${m.id}？`)) removeMember(m.id) }}>移除</button>
               </div>
             ))}
           </div>
@@ -1127,7 +1127,7 @@ function PlaybooksPanel() {
     <div>
       {showTmpl && (
         <div className="section">
-          <div className="flex-between"><h3>Playbook 模板库</h3><button className="btn btn-sm" onClick={() => setShowTmpl(false)}>关闭</button></div>
+          <div className="flex-between"><h3>Playbook 模板库</h3><button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowTmpl(false)}>关闭</button></div>
           <div style={{display:'flex',flexWrap:'wrap',gap:'0.5rem',marginTop:8}}>
             {templates.map(t => (
               <div key={t.id} className="card" style={{flex:'1 1 16.25rem',cursor:'pointer'}} onClick={() => createFromTemplate(t)}>
@@ -1143,8 +1143,8 @@ function PlaybooksPanel() {
         <div className="flex-between">
           <h3>Playbook ({playbooks.length})</h3>
           <div className="btn-row">
-            <button className="btn" onClick={() => setShowTmpl(true)}>从模板新建</button>
-            <button className="btn" onClick={openNew}>新建</button>
+            <button className="btn-glass-soft" onClick={() => setShowTmpl(true)}>从模板新建</button>
+            <button className="btn-glass-soft" onClick={openNew}>新建</button>
           </div>
         </div>
         {playbooks.map(p => (
@@ -1152,9 +1152,9 @@ function PlaybooksPanel() {
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span className="plugin-name">{p.name}</span>
               <div className="btn-row">
-                <button className="btn btn-sm btn-accent" onClick={() => run(p.id)} disabled={sse.running}>{sse.running ? '执行中...' : '执行'}</button>
-                <button className="btn btn-sm" onClick={() => openEdit(p)}>编辑</button>
-                <button className="btn btn-sm btn-danger" onClick={() => del(p.id)}>删除</button>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => run(p.id)} disabled={sse.running}>{sse.running ? '执行中...' : '执行'}</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openEdit(p)}>编辑</button>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => del(p.id)}>删除</button>
               </div>
             </div>
             <div className="form-row" style={{fontSize:'0.75rem',gap:6}}>
@@ -1174,10 +1174,10 @@ function PlaybooksPanel() {
       </div>
 
       {sse.err && <div className="error-box">{sse.err}</div>}
-      {sse.running && <div className="loading"><button className="btn btn-sm btn-danger" style={{marginLeft:8}} onClick={sse.cancel}>取消</button></div>}
+      {sse.running && <div className="loading"><button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" style={{marginLeft:8}} onClick={sse.cancel}>取消</button></div>}
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
-          <div className="flex-between"><h3>执行输出</h3>{sse.running && <button className="btn btn-sm" onClick={sse.cancel}>取消</button>}</div>
+          <div className="flex-between"><h3>执行输出</h3>{sse.running && <button className="btn-glass-soft btn-glass-soft-sm" onClick={sse.cancel}>取消</button>}</div>
           <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:'0.75rem',maxHeight:'25rem',overflow:'auto'}}>
             {sse.lines.join('\n')}
           </div>
@@ -1190,8 +1190,8 @@ function PlaybooksPanel() {
           <div className="flex-between">
             <h3>{editing.id ? '编辑' : '新建'} Playbook</h3>
             <div className="btn-row">
-              <button className="btn btn-sm" onClick={() => setEditing(null)}>取消</button>
-              <button className="btn btn-sm btn-accent" onClick={save}>保存</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEditing(null)}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={save}>保存</button>
             </div>
           </div>
           <div className="form-row" style={{marginBottom:8}}>
@@ -1286,11 +1286,11 @@ function AdhocPanel() {
             {modules.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
           <input placeholder="参数 (如: uptime)" value={args} onChange={e => setArgs(e.target.value)} className="flex-1" />
-          <button className="btn btn-accent" onClick={run} disabled={sse.running}>{sse.running ? '执行中...' : '执行'}</button>
+          <button className="btn-glass-soft btn-glass-soft-accent" onClick={run} disabled={sse.running}>{sse.running ? '执行中...' : '执行'}</button>
         </div>
       </div>
       {sse.err && <div className="error-box">{sse.err}</div>}
-      {sse.running && <div className="loading"><button className="btn btn-sm btn-danger" onClick={sse.cancel}>取消</button></div>}
+      {sse.running && <div className="loading"><button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={sse.cancel}>取消</button></div>}
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
           <h3>执行输出</h3>
@@ -1334,12 +1334,12 @@ function HistoryPanel() {
     <div>
       <div className="flex-between">
         <h3>执行历史 ({history.length})</h3>
-        {history.length > 0 && <button className="btn btn-sm" onClick={clear}>清空</button>}
+        {history.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={clear}>清空</button>}
       </div>
       {sse.err && <div className="error-box">{sse.err}</div>}
       {(sse.lines.length > 0 || sse.results) && (
         <div className="section">
-          <div className="flex-between"><h3>重跑输出</h3>{sse.running && <button className="btn btn-sm" onClick={sse.cancel}>取消</button>}</div>
+          <div className="flex-between"><h3>重跑输出</h3>{sse.running && <button className="btn-glass-soft btn-glass-soft-sm" onClick={sse.cancel}>取消</button>}</div>
           <div className="code-block" style={{whiteSpace:'pre-wrap',fontSize:'0.75rem',maxHeight:'18.75rem',overflow:'auto'}}>{sse.lines.join('\n')}</div>
           {sse.results && <ResultsCard results={sse.results} />}
         </div>
@@ -1354,7 +1354,7 @@ function HistoryPanel() {
               <span className="dim" style={{marginLeft:8}}>({r.duration})</span>
             </span>
             <div className="btn-row" style={{gap:4}}>
-              {r.run && <button className="btn btn-sm" style={{fontSize:'0.625rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); rerun(r.id) }}>重跑</button>}
+              {r.run && <button className="btn-glass-soft btn-glass-soft-sm" style={{fontSize:'0.625rem',padding:'0.125rem 0.5rem'}} onClick={e => { e.stopPropagation(); rerun(r.id) }}>重跑</button>}
               <span className={`badge ${r.success ? 'badge-on' : 'badge-off'}`}>{r.success ? '成功' : '失败'}</span>
             </div>
           </div>
@@ -1456,7 +1456,7 @@ function SSHPanel() {
         <div className="flex-between" style={{gap:8}}>
           <input className="input" placeholder="密钥名称（如：ansible-key）" value={genName} onChange={e => setGenName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && generate()} style={{flex:1}} />
-          <button className="btn" onClick={generate}>生成 Ed25519 密钥</button>
+          <button className="btn-glass-soft" onClick={generate}>生成 Ed25519 密钥</button>
         </div>
       </div>
 
@@ -1478,16 +1478,16 @@ function SSHPanel() {
                   <td style={{fontSize:12}}>{new Date(k.createdAt).toLocaleString()}</td>
                   <td>
                     <div className="btn-row" style={{gap:'0.25rem',flexWrap:'wrap'}}>
-                      <button className="btn btn-sm" onClick={() => setDeployModal({keyName:k.name,hostId:'',password:''})}>部署</button>
-                      <button className="btn btn-sm" onClick={() => {
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDeployModal({keyName:k.name,hostId:'',password:''})}>部署</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
                         const hid = prompt('输入目标主机 ID：')
                         if (hid) testConn(k.name, hid.trim())
                       }} disabled={testing !== null}>测试连接</button>
-                      <button className="btn btn-sm" onClick={() => {
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
                         const hid = prompt('输入目标主机 ID：')
                         if (hid) bindKey(k.name, hid.trim())
                       }}>绑定</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => { if (confirm('确定删除密钥 '+k.name+'？')) delKey(k.name) }}>删除</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => { if (confirm('确定删除密钥 '+k.name+'？')) delKey(k.name) }}>删除</button>
                     </div>
                   </td>
                 </tr>
@@ -1518,8 +1518,8 @@ function SSHPanel() {
                 onChange={e => setDeployModal({...deployModal,password:e.target.value})} />
             </div>
             <div className="btn-row" style={{marginTop:12}}>
-              <button className="btn" onClick={deploy} disabled={!deployModal.hostId || !deployModal.password}>部署</button>
-              <button className="btn" onClick={() => setDeployModal(null)}>取消</button>
+              <button className="btn-glass-soft" onClick={deploy} disabled={!deployModal.hostId || !deployModal.password}>部署</button>
+              <button className="btn-glass-soft" onClick={() => setDeployModal(null)}>取消</button>
             </div>
           </div>
         </div>

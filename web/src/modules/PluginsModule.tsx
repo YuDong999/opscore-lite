@@ -78,7 +78,7 @@ export default function PluginsModule() {
 
       <Card title="插件管理">
         <div className="btn-row" style={{ marginBottom: 14 }}>
-          <button className="btn btn-accent" onClick={handleScan} disabled={scanning}>
+          <button className="btn-glass-soft btn-glass-soft-accent" onClick={handleScan} disabled={scanning}>
             {scanning ? '扫描中...' : '扫描插件'}
           </button>
           <span className="dim" style={{ fontSize:'0.75rem', alignSelf: 'center' }}>
@@ -129,7 +129,7 @@ export default function PluginsModule() {
                     </td>
                     <td>
                       {p.group !== 'core' && p.id !== 'plugins' && (
-                        <button className="btn btn-sm" onClick={() => handleToggle(p.id, !p.active)}
+                        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => handleToggle(p.id, !p.active)}
                           style={{ fontSize:'0.6875rem', padding: '0.1875rem 0.5rem' }}>
                           {p.active ? '移除' : '接入'}
                         </button>
