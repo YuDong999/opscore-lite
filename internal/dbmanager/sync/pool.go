@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	gonavibase "opscore/internal/dbmanager/gonavi/db"
@@ -149,4 +150,41 @@ func isIntBase(base string) bool {
 		return true
 	}
 	return false
+}
+
+// QuoteIdent 导出标识符引用(供 dbmanager 数据浏览接口使用)。
+func QuoteIdent(name string, d Dialect) string { return quoteIdent(name, d) }
+
+// QueryScalar 查询单值(如 COUNT(*)), 返回 int64。
+func QueryScalar(ctx context.Context, db gonavibase.Database, sqlText string) (int64, error) {
+	rows, _, err := QueryRows(ctx, db, sqlText)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	for _, v := range rows[0] {
+		switch t := v.(type) {
+		case int64:
+			return t, nil
+		case int:
+			return int64(t), nil
+		case uint64:
+			return int64(t), nil
+		case float64:
+			return int64(t), nil
+		case string:
+			return strconv.ParseInt(t, 10, 64)
+		}
+	}
+	return 0, nil
+}
+
+// QueryRows 导出查询(供 dbmanager 数据浏览接口使用)。
+func QueryRows(ctx context.Context, db gonavibase.Database, sqlText string) ([]map[string]any, []string, error) {
+	if qc, ok := db.(gonavibase.QueryContexter); ok {
+		return qc.QueryContext(ctx, sqlText)
+	}
+	return db.Query(sqlText)
 }

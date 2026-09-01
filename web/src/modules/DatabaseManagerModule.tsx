@@ -1,25 +1,33 @@
-// 数据库管理模块主入口。
-// 整体布局:
-//   - module-head: 标题 + 当前连接 + 环境标记 + 解锁倒计时 + 新建按钮
-//   - 主体两栏: 左侧连接树(连接列表 + 级联), 右侧内容区(概览/工作台/审计)
-//   - 右侧默认展示概览页(未选连接时); 选连接后默认进工作台
+// 数据库管理模块主入口（P0 改造：标签页工作台）。
+// 布局: 左侧 = ConnectionTree(连接→库→表/视图 懒加载树) ; 右侧 = 多标签工作台
+//   标签类型: data(表数据浏览) / query(查询) / doc(表结构) / sync(跨库同步) / audit(审计)
+// 右上角不再放重复的「新建连接」(入口在连接面板与概览页)。
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useToast } from '../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
   listConnections, getUnlockState, lockWrite, unlockWrite,
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
-import CascadeSelector from '../components/DatabaseManager/CascadeSelector'
+import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
 import DocPanel from '../components/DatabaseManager/DocPanel'
 import QueryEditor from '../components/DatabaseManager/QueryEditor'
 import DataGrid from '../components/DatabaseManager/DataGrid'
+import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 
-type Tab = 'query' | 'doc' | 'audit' | 'sync' | 'overview'
+interface WorkTab {
+  key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit'
+  connId: string
+  db?: string
+  table?: string
+  isView?: boolean
+  label: string
+}
 
 function formatRemaining(sec: number): string {
   if (sec <= 0) return '已锁定'
@@ -32,18 +40,16 @@ export default function DatabaseManagerModule() {
   const toast = useToast()
   const [conns, setConns] = useState<ConnectionInfo[]>([])
   const [conn, setConn] = useState<ConnectionInfo | null>(null)
-  const [database, setDatabase] = useState('')
-  const [table, setTable] = useState('')
-  const [tab, setTab] = useState<Tab>('overview')
-  const [result, setResult] = useState<QueryResult | null>(null)
+  const [tabs, setTabs] = useState<WorkTab[]>([])
+  const [activeTab, setActiveTab] = useState('')
   const [lastSQL, setLastSQL] = useState('')
+  const [result, setResult] = useState<QueryResult | null>(null)
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
 
-  // 加载连接列表
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
-  }, [conn])
+  }, [conn?.id])
 
   // 解锁状态轮询
   useEffect(() => {
@@ -57,29 +63,46 @@ export default function DatabaseManagerModule() {
     return () => { alive = false; clearInterval(t) }
   }, [conn])
 
-  const onSelectConn = (c: ConnectionInfo) => {
+  const connById = useMemo(() => new Map(conns.map(c => [c.id, c])), [conns])
+  const activeConn = conn ? connById.get(conn.id) ?? conn : null
+
+  const openTab = (t: WorkTab) => {
+    setTabs(prev => prev.some(x => x.key === t.key) ? prev : [...prev, t])
+    setActiveTab(t.key)
+  }
+
+  const closeTab = (key: string) => {
+    setTabs(prev => {
+      const idx = prev.findIndex(t => t.key === key)
+      const next = prev.filter(t => t.key !== key)
+      if (activeTab === key && next.length > 0) {
+        setActiveTab(next[Math.max(0, idx - 1)].key)
+      } else if (next.length === 0) {
+        setActiveTab('')
+      }
+      return next
+    })
+  }
+
+  const tabLabel = (c: ConnectionInfo, db: string, table?: string) =>
+    table ? `${table}@${db}` : db ? `查询@${db}` : c.name
+
+  // ── 树交互 ──
+  const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
     setConn(c)
-    setDatabase('')
-    setTable('')
-    setResult(null)
-    setLastSQL('')
-    setTab('query')
+    openTab({ key: `data:${c.id}.${db}.${table}`, kind: 'data', connId: c.id, db, table, isView, label: tabLabel(c, db, table) })
   }
-
-  const handleStartNew = () => {
-    // 触发 ConnectionPanel 内的 startNew: 简化做法是把 ConnectionPanel 暴露一个 ref
-    // 这里通过一个全局事件触发, 实际 ConnectionPanel 还没接, 用一个临时变通
-    setNewConnTrigger(t => t + 1)
+  const handleNewQuery = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    openTab({ key: `query:${c.id}.${db}`, kind: 'query', connId: c.id, db, label: tabLabel(c, db) })
   }
+  const handleOpenDoc = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    openTab({ key: `doc:${c.id}.${db}.${table}`, kind: 'doc', connId: c.id, db, table, label: `${table} 结构` })
+  }
+  const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
-  // 通过自定义事件通知 ConnectionPanel 启动新建流程
-  const [newConnTrigger, setNewConnTrigger] = useState(0)
-  useEffect(() => {
-    if (newConnTrigger > 0) {
-      window.dispatchEvent(new CustomEvent('dbmanager:new-conn'))
-    }
-  }, [newConnTrigger])
-
+  // 解锁/锁定
   const onUnlock = async (minutes: number) => {
     if (!conn) return
     try {
@@ -91,7 +114,6 @@ export default function DatabaseManagerModule() {
       toast.error('解锁失败: ' + e.message)
     }
   }
-
   const onLock = async () => {
     if (!conn) return
     try {
@@ -102,7 +124,6 @@ export default function DatabaseManagerModule() {
       toast.error('锁定失败: ' + e.message)
     }
   }
-
   const handleResult = (r: QueryResult & InterceptionBody) => {
     setResult(r)
     if (r.code === 'write_locked') {
@@ -121,11 +142,11 @@ export default function DatabaseManagerModule() {
     <div className="module db-module">
       <div className="module-head db-module-head">
         <h2>数据库管理</h2>
-        {conn && (
+        {activeConn && (
           <div className="db-head-info">
             <span className="pill">
-              <span className={`db-engine-badge db-engine-${conn.engine}`}>{conn.engine}</span>
-              {conn.name}
+              <span className={`db-engine-badge db-engine-${activeConn.engine}`}>{activeConn.engine}</span>
+              {activeConn.name}
             </span>
             {isProd && <span className="pill pill-err">生产</span>}
             {unlockState.unlocked ? (
@@ -140,12 +161,9 @@ export default function DatabaseManagerModule() {
             )}
           </div>
         )}
-        <div className="db-head-actions">
-          <button className="btn-glass-soft btn-glass-soft-sm" onClick={handleStartNew}>+ 新建连接</button>
-        </div>
       </div>
 
-      {showUnlock && conn && (
+      {showUnlock && activeConn && (
         <div className="banner banner-warn" style={{ margin: '0.5rem 0' }}>
           <span style={{ flex: 1 }}>
             执行写操作前需解锁。解锁后, 写权限仅在时间窗内有效, 到期自动回落只读。
@@ -163,75 +181,82 @@ export default function DatabaseManagerModule() {
         <aside className="db-side">
           <ConnectionPanel
             selected={conn}
-            onSelect={onSelectConn}
+            onSelect={handleSelectConn}
             onConnsChange={setConns}
-            newConnTrigger={newConnTrigger}
           />
-          {conn && (
-            <CascadeSelector
-              connId={conn.id}
-              database={database}
-              table={table}
-              onDatabaseChange={(d) => { setDatabase(d); setTable('') }}
-              onTableChange={setTable}
-            />
-          )}
+          <ConnectionTree
+            conns={conns}
+            selectedConnId={conn?.id}
+            onOpenTable={handleOpenTable}
+            onNewQuery={handleNewQuery}
+            onOpenDoc={handleOpenDoc}
+            onSelectConn={handleSelectConn}
+          />
         </aside>
 
         <main className="db-main">
-          {!conn ? (
-            <OverviewPanel
-              conns={conns}
-              onNewConn={handleStartNew}
-              onPickConn={onSelectConn}
-            />
+          {tabs.length === 0 ? (
+            !conn ? (
+              <OverviewPanel
+                conns={conns}
+                onNewConn={() => window.dispatchEvent(new CustomEvent('dbmanager:new-conn'))}
+                onPickConn={handleSelectConn}
+              />
+            ) : (
+              <div className="db-empty" style={{ marginTop: '3rem' }}>
+                从左侧树展开连接, 单击表查看数据 / 右键更多操作
+              </div>
+            )
           ) : (
             <>
-              <div className="db-main-tabs">
-                <button className={tab === 'query' ? 'active' : ''} onClick={() => setTab('query')}>
-                  查询
-                </button>
-                <button className={tab === 'doc' ? 'active' : ''} onClick={() => setTab('doc')} disabled={!table}>
-                  表结构{table && `: ${table}`}
-                </button>
-                <button className={tab === 'sync' ? 'active' : ''} onClick={() => setTab('sync')}>
-                  同步
-                </button>
-                <button className={tab === 'audit' ? 'active' : ''} onClick={() => setTab('audit')}>
-                  审计
-                </button>
+              <div className="db-main-tabs db-worktabs">
+                {tabs.map(t => (
+                  <div key={t.key} className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
+                    onClick={() => setActiveTab(t.key)} title={t.label}>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '▦' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? '≡' : t.kind === 'sync' ? '⇄' : '✦'}</span>
+                    <span className="db-worktab-label">{t.label}</span>
+                    <span className="db-worktab-close" onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</span>
+                  </div>
+                ))}
+                {conn && (
+                  <div className="db-worktabs-fixed">
+                    <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步"
+                      onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>⇄ 同步</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志"
+                      onClick={() => openTab({ key: `audit:${conn.id}`, kind: 'audit', connId: conn.id, label: '审计' })}>✦ 审计</button>
+                  </div>
+                )}
               </div>
-
-              {tab === 'query' && (
-                <div className="db-query-section">
-                  <QueryEditor
-                    connId={conn.id}
-                    engine={conn.engine}
-                    onResult={handleResult}
-                    onWriteLocked={() => setShowUnlock(true)}
-                    onExecuted={setLastSQL}
-                  />
-                  {result && <DataGrid result={result} connId={conn.id} sql={lastSQL} />}
-                </div>
-              )}
-
-              {tab === 'sync' && (
-                <div className="db-doc-section">
-                  <SyncPanel conns={conns} activeConnId={conn.id} />
-                </div>
-              )}
-
-              {tab === 'doc' && table && (
-                <div className="db-doc-section">
-                  <DocPanel connId={conn.id} database={database} table={table} />
-                </div>
-              )}
-
-              {tab === 'audit' && (
-                <div className="db-audit-section">
-                  <AuditPanel conns={conns} />
-                </div>
-              )}
+              {tabs.map(t => {
+                if (t.key !== activeTab) return null
+                const c = connById.get(t.connId)
+                if (!c) return <div className="db-empty">连接不存在, 请关闭此标签</div>
+                switch (t.kind) {
+                  case 'data':
+                    return <DataPanel key={t.key} conn={c} database={t.db!} table={t.table!} isView={t.isView} />
+                  case 'query':
+                    return (
+                      <div className="db-query-section" key={t.key}>
+                        <QueryEditor
+                          connId={c.id}
+                          engine={c.engine}
+                          onResult={handleResult}
+                          onWriteLocked={() => setShowUnlock(true)}
+                          onExecuted={setLastSQL}
+                        />
+                        {result && <DataGrid result={result} connId={c.id} sql={lastSQL} />}
+                      </div>
+                    )
+                  case 'doc':
+                    return <DocPanel key={t.key} connId={c.id} database={t.db!} table={t.table!} />
+                  case 'sync':
+                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c.id} /></div>
+                  case 'audit':
+                    return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
+                  default:
+                    return null
+                }
+              })}
             </>
           )}
         </main>

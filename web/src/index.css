@@ -1921,3 +1921,55 @@ body {
 /* ── 长文本防穿模(错误 banner / SQL 预览等) ── */
 .db-module .banner { word-break: break-word; overflow-wrap: anywhere; }
 .db-module .banner span { word-break: break-word; overflow-wrap: anywhere; }
+
+/* ═══════════ P0: 树状侧栏 + 标签工作台 + 数据浏览 ═══════════ */
+
+/* ── 对象树 ── */
+.db-tree { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-height: 12rem; }
+.db-tree-search input { font-size: 0.75rem; padding: 0.3rem 0.55rem; }
+.db-tree-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 0.05rem; }
+.db-tree-node { display: flex; align-items: center; gap: 0.3rem; padding: 0.22rem 0.4rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.78rem; min-width: 0; user-select: none; }
+.db-tree-node:hover { background: var(--row-hover); }
+.db-tree-caret { width: 0; height: 0; border-left: 0.9rem solid transparent; border-top: 0.9rem solid transparent; position: relative; display: inline-block; flex-shrink: 0; }
+/* caret 用更稳的三角形 */
+.db-tree-caret { border: none; width: 0.85rem; text-align: center; flex-shrink: 0; }
+.db-tree-caret::before { content: '▸'; color: var(--text-dim); font-size: 0.65rem; display: inline-block; transition: transform .12s; }
+.db-tree-caret.open::before { transform: rotate(90deg); }
+.db-tree-caret.leaf::before { content: '·'; }
+.db-tree-icon { width: 0.9rem; height: 0.9rem; border-radius: 0.2rem; flex-shrink: 0; display: inline-block; }
+.icon-conn { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.icon-db { background: var(--surface-tint); border: 1px solid var(--border); }
+.db-tree-node .db-tree-icon { box-sizing: border-box; }
+.db-tree-node[class*="lv-db"] .db-tree-icon { border-radius: 50%; }
+.db-tree-node[class*="lv-group"] .db-tree-icon { background: transparent; border: 1px dashed var(--border); }
+.db-tree-node[class*="lv-table"] .db-tree-icon { background: var(--accent); opacity: 0.55; }
+.db-tree-node[class*="lv-view"] .db-tree-icon { background: var(--warn); opacity: 0.55; }
+.db-tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lv-conn > .db-tree-label { font-weight: 600; }
+.lv-db > .db-tree-label { color: var(--text-secondary); }
+.lv-group > .db-tree-label { color: var(--text-dim); font-size: 0.72rem; }
+.db-tree-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--ok); margin-left: auto; flex-shrink: 0; }
+
+/* ── 树右键菜单 ── */
+.db-tree-menu { position: fixed; z-index: 1000; background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 0.3rem; display: flex; flex-direction: column; min-width: 10rem; }
+.db-tree-menu-title { font-size: 0.6875rem; font-weight: 700; color: var(--text-dim); padding: 0.2rem 0.5rem 0.3rem; border-bottom: 1px solid var(--border); margin-bottom: 0.2rem; }
+.db-tree-menu button { background: transparent; border: none; text-align: left; padding: 0.35rem 0.6rem; border-radius: 0.35rem; font-size: 0.78rem; cursor: pointer; color: var(--text); }
+.db-tree-menu button:hover { background: var(--row-hover); }
+
+/* ── 标签工作台 ── */
+.db-worktabs { display: flex; gap: 0.25rem; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+.db-worktab { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.32rem 0.5rem 0.32rem 0.65rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0; cursor: pointer; font-size: 0.75rem; border: 1px solid transparent; max-width: 15rem; }
+.db-worktab:hover { background: var(--row-hover); }
+.db-worktab.active { background: var(--surface); border-color: var(--border); border-bottom-color: transparent; font-weight: 600; }
+.db-worktab-kind { font-size: 0.625rem; color: var(--accent); font-weight: 700; }
+.db-worktab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-worktab-close { color: var(--text-dim); border-radius: 0.25rem; padding: 0 0.3rem; }
+.db-worktab-close:hover { background: var(--row-hover); color: var(--danger); }
+.db-worktabs-fixed { margin-left: auto; display: flex; gap: 0.25rem; }
+
+/* ── 数据浏览面板 ── */
+.db-data-panel { display: flex; flex-direction: column; gap: 0.4rem; min-height: 0; }
+.db-data-toolbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.db-data-title { font-size: 0.8125rem; font-weight: 600; }
+.db-data-spacer { flex: 1; }
+.db-data-pager { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; justify-content: flex-end; }

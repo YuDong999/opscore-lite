@@ -54,6 +54,7 @@ Routes: []registry.Route{
 				{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
 				{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
 				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
+				{Path: "/api/dbmanager/data", Handler: h.handleData},
 				},
 		}
 	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)

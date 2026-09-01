@@ -430,3 +430,23 @@ export function statusLabel(s: EngineStatus): { text: string; cls: string } {
     default:         return { text: '未知',  cls: 'pill' }
   }
 }
+
+// ── 表数据分页浏览（P0 树状工作台） ──
+export interface TableData {
+  columns: string[]
+  rows: any[][]
+  total: number
+  page: number
+  pageSize: number
+  durationMs?: number
+}
+
+export async function fetchData(
+  id: string, database: string, table: string,
+  page = 1, pageSize = 100, orderBy = '', orderDir: 'ASC' | 'DESC' = 'ASC', where = '',
+): Promise<TableData> {
+  const p = new URLSearchParams({ id, database, table, page: String(page), pageSize: String(pageSize) })
+  if (orderBy) { p.set('orderBy', orderBy); p.set('orderDir', orderDir) }
+  if (where) p.set('where', where)
+  return getJSON<TableData>(`/api/dbmanager/data?${p.toString()}`)
+}
