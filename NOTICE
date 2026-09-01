@@ -1,0 +1,37 @@
+# NOTICE — third-party code attribution
+
+## GoNavi (Apache License 2.0)
+
+This product contains source code derived from GoNavi
+(https://github.com/Syngnat/GoNavi), licensed under the Apache License,
+Version 2.0 ("GoNavi"). The derived code is located in:
+
+- internal/dbmanager/gonavi/            (11 packages: db, connection, ssh,
+  logger, utils, proxy, tlsconfig, esconsole, sqlaudit, appdata, shared/i18n)
+- third_party/highgo-pq/                (vendored local module)
+- third_party/go-irisnative/            (vendored local module)
+
+Modifications made for opscore-lite:
+- Go module path rewritten from `GoNavi-Wails` to `opscore`
+- internal/logger/wails_adapter.go and its test removed (Wails desktop
+  dependency, not applicable to the HTTP-server form factor)
+
+Original copyright notice:
+
+  Copyright GoNavi authors. Licensed under the Apache License, Version 2.0.
+
+Full license text: see LICENSE-THIRD-PARTY file or
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+## dbx (design reference only)
+
+Design decisions in the dbmanager security layer (risk classification,
+production-aware confirmation, time-boxed write unlock, forbidden database
+switch detection) reference the design of dbx (https://github.com/t8y2/dbx),
+Apache-2.0. No source code was copied from dbx.

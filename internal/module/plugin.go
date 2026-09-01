@@ -24,6 +24,8 @@ func InitPluginStore(c central.CentralStore) {
 	if activeMap == nil {
 		activeMap = map[string]bool{}
 	}
+	// 确保dbmanager模块默认活跃
+	activeMap["dbmanager"] = true
 	activeMu.Unlock()
 }
 

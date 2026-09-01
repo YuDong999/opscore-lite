@@ -14,6 +14,7 @@ import DiagnosticsModule from './modules/DiagnosticsModule'
 import TasksModule from './modules/TasksModule'
 import AnsibleModule from './modules/AnsibleModule'
 import ContainersModule from './modules/ContainersModule'
+import DatabaseManagerModule from './modules/DatabaseManagerModule'
 
 interface Manifest {
   id: string
@@ -33,6 +34,7 @@ const MODULE_MAP: Record<string, () => JSX.Element> = {
   plugins: PluginsModule,
   ansible: AnsibleModule,
   containers: ContainersModule,
+  dbmanager: DatabaseManagerModule,
 }
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -238,6 +240,13 @@ function icon(name: string, size = 18) {  const s = size
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
         <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
         <line x1="12" y1="22.08" x2="12" y2="12" />
+      </svg>
+    ),
+    database: (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+        <path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6" />
       </svg>
     ),
   }

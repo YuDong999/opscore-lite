@@ -17,6 +17,7 @@ import (
 	"opscore/internal/ansible"
 	"opscore/internal/auth"
 	"opscore/internal/central"
+	"opscore/internal/dbmanager"
 	"opscore/internal/kubernetes"
 	"opscore/internal/handlers"
 	"opscore/internal/hostkey"
@@ -143,6 +144,13 @@ func main() {
 	reg := registry.New()
 	registerCoreModules(reg)
 
+	// DB 管理模块(独立初始化, 需要访问 cs + 加密密钥)
+	dbStore := dbmanager.NewStore(func() central.CentralStore { return cs }, auth.GetToken())
+	dbPool := dbmanager.NewDatabasePool(dbStore, 8)
+	dbMod := dbmanager.Module(dbStore, dbPool)
+	reg.Register(dbMod)
+	defer dbPool.Close()
+
 	mux := http.NewServeMux()
 
 	// 认证 API（不受中间件保护）
@@ -152,6 +160,7 @@ func main() {
 	mux.HandleFunc("/api/manifest", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		all := reg.Active()
+		fmt.Printf("DEBUG: All modules: %v\n", all)
 		out := make([]registry.Manifest, 0, len(all))
 		for _, m := range all {
 			if m.Group == "plugin" && m.ID != "plugins" && !module.IsPluginActive(m.ID) {
@@ -159,6 +168,7 @@ func main() {
 			}
 			out = append(out, m)
 		}
+		fmt.Printf("DEBUG: Filtered modules: %v\n", out)
 		json.NewEncoder(w).Encode(out)
 	})
 
