@@ -1,0 +1,152 @@
+package sync
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	gonavibase "opscore/internal/dbmanager/gonavi/db"
+	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
+)
+
+// Pool 同步模块对连接池的最小依赖(避免与 dbmanager 包循环导入)。
+type Pool interface {
+	// AcquireForSync 返回缓存的 gonavi Database 实例与引擎类型。
+	AcquireForSync(connID string) (gonavibase.Database, string, error)
+}
+
+// Runner 同步执行器。
+type Runner struct {
+	pool Pool
+	jobs *JobRegistry
+}
+
+func NewRunner(pool Pool) *Runner {
+	return &Runner{pool: pool, jobs: NewJobRegistry()}
+}
+
+func (r *Runner) Jobs() *JobRegistry { return r.jobs }
+
+// BuildPlan 生成迁移计划: 方言判定 + 每表类型映射/DDL/增量策略。
+func (r *Runner) BuildPlan(ctx context.Context, req SyncRequest) (*SyncPlan, error) {
+	srcDB, srcEngine, err := r.pool.AcquireForSync(req.SourceID)
+	if err != nil {
+		return nil, fmt.Errorf("源连接不可用: %w", err)
+	}
+	dstDB, dstEngine, err := r.pool.AcquireForSync(req.TargetID)
+	if err != nil {
+		return nil, fmt.Errorf("目标连接不可用: %w", err)
+	}
+	_ = dstDB
+
+	srcDialect := EngineDialect(srcEngine)
+	dstDialect := EngineDialect(dstEngine)
+	plan := &SyncPlan{
+		SourceDialect: srcDialect,
+		TargetDialect: dstDialect,
+		Mode:          req.Mode,
+	}
+	if srcDialect == "" || dstDialect == "" {
+		plan.Unsupported = append(plan.Unsupported,
+			fmt.Sprintf("引擎对 %s → %s 暂不支持自动迁移(仅支持 MySQL 族/PostgreSQL 族)", srcEngine, dstEngine))
+		return plan, nil
+	}
+	if req.SourceID == req.TargetID && strings.EqualFold(strings.TrimSpace(req.SourceDB), strings.TrimSpace(req.TargetDB)) {
+		return nil, fmt.Errorf("源库与目标库相同, 拒绝同步")
+	}
+
+	tables := req.Tables
+	if len(tables) == 0 {
+		names, err := srcDB.GetTables(req.SourceDB)
+		if err != nil {
+			return nil, fmt.Errorf("列举源表失败: %w", err)
+		}
+		sort.Strings(tables)
+		tables = names
+		sort.Strings(tables)
+	}
+
+	for _, t := range tables {
+		tp := TablePlan{Source: t, Target: t}
+		cols, err := srcDB.GetColumns(req.SourceDB, t)
+		if err != nil {
+			tp.Skipped, tp.SkipReason = true, "读取源表结构失败: "+err.Error()
+			plan.Tables = append(plan.Tables, tp)
+			continue
+		}
+		idx, _ := srcDB.GetIndexes(req.SourceDB, t)
+
+		for _, c := range cols {
+			tp.Columns = append(tp.Columns, mapColumn(c, srcDialect, dstDialect))
+		}
+		tp.SourcePK = primaryKeyOf(cols)
+
+		ddl, idxDDL, notes := GenerateCreateDDL(req.TargetDB, t, cols, idx, srcDialect, dstDialect)
+		tp.CreateDDL = ddl
+		tp.IndexDDL = idxDDL
+		tp.Notes = notes
+
+		// 增量策略探测
+		tp.IncrColumn, tp.IncrStrategy = detectIncremental(cols, req.IncrementalColumn)
+		if req.Mode == ModeIncrOnly && tp.IncrStrategy == IncrNone {
+			tp.Skipped = true
+			tp.SkipReason = "无可用增量列(需整数自增主键或时间戳列)"
+		}
+		plan.Tables = append(plan.Tables, tp)
+	}
+	return plan, nil
+}
+
+func primaryKeyOf(cols []gonaviConnection.ColumnDefinition) string {
+	for _, c := range cols {
+		if strings.EqualFold(c.Key, "PRI") {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+// detectIncremental 自动探测增量列: 指定列 > 整数自增主键 > 常见时间戳列名。
+func detectIncremental(cols []gonaviConnection.ColumnDefinition, explicit string) (string, IncrementalStrategy) {
+	if strings.TrimSpace(explicit) != "" {
+		for _, c := range cols {
+			if strings.EqualFold(c.Name, strings.TrimSpace(explicit)) {
+				pt := parseTypeName(c.Type)
+				if isIntBase(pt.base) {
+					return c.Name, IncrAutoIncrement
+				}
+				return c.Name, IncrTimestamp
+			}
+		}
+		return explicit, IncrNone
+	}
+	for _, c := range cols {
+		if strings.EqualFold(c.Key, "PRI") && strings.Contains(strings.ToLower(c.Extra), "auto_increment") && isIntBase(parseTypeName(c.Type).base) {
+			return c.Name, IncrAutoIncrement
+		}
+	}
+	// PG identity/serial 的 Extra 由实现而定, 再按列名兜底
+	for _, c := range cols {
+		if strings.EqualFold(c.Key, "PRI") && isIntBase(parseTypeName(c.Type).base) {
+			return c.Name, IncrAutoIncrement
+		}
+	}
+	candidates := []string{"updated_at", "update_time", "modified_at", "modify_time", "gmt_modified", "last_modified", "last_update", "mtime"}
+	for _, cand := range candidates {
+		for _, c := range cols {
+			if strings.EqualFold(c.Name, cand) {
+				return c.Name, IncrTimestamp
+			}
+		}
+	}
+	return "", IncrNone
+}
+
+func isIntBase(base string) bool {
+	switch base {
+	case "tinyint", "smallint", "mediumint", "int", "integer", "bigint", "int2", "int4", "int8":
+		return true
+	}
+	return false
+}

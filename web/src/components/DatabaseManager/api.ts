@@ -6,7 +6,7 @@ import { getJSON, postJSON } from '../../api/client'
 // ── 引擎类型 ──
 // 关系型 (23) + 文档 (1) + 向量 (3) + 时序 (1) + 搜索 (1) + MQ (4) + 自定义 (1) = 34
 export type EngineType =
-  | 'mysql' | 'mysql_agent' | 'mariadb' | 'postgres' | 'oracle' | 'goldendb'
+  | 'mysql' | 'mariadb' | 'postgres' | 'oracle' | 'goldendb'
   | 'clickhouse' | 'sqlserver' | 'duckdb' | 'dameng' | 'gaussdb' | 'opengauss'
   | 'kingbase' | 'highgo' | 'oceanbase' | 'starrocks' | 'tdengine' | 'trino'
   | 'vastbase' | 'iris' | 'diros' | 'sphinx' | 'sqlite'
@@ -48,7 +48,6 @@ export interface EngineMeta {
 export const ENGINES: EngineMeta[] = [
   // 关系型
   { type: 'mysql',        label: 'MySQL',           short: 'MySQL',    category: 'relational', hasDatabase: true, defaultPort: 3306, defaultDb: '',        defaultUser: 'root',     defaultSsl: 'preferred', hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#3b82f6', description: '开源 OLTP, 关系型事实标准', status: 'builtin' },
-  { type: 'mysql_agent',  label: 'MySQL Agent',     short: 'MySQL',    category: 'relational', hasDatabase: true, defaultPort: 3306, defaultDb: '',        defaultUser: 'root',     defaultSsl: 'preferred', hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#3b82f6', description: 'MySQL 兼容 (代理/驱动适配)', status: 'optional' },
   { type: 'mariadb',      label: 'MariaDB',         short: 'Maria',    category: 'relational', hasDatabase: true, defaultPort: 3306, defaultDb: '',        defaultUser: 'root',     defaultSsl: 'preferred', hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#a855f7', description: 'MySQL 兼容分支, 开源', status: 'optional' },
   { type: 'postgres',     label: 'PostgreSQL',      short: 'PG',       category: 'relational', hasDatabase: true, defaultPort: 5432, defaultDb: 'postgres', defaultUser: 'postgres', defaultSsl: 'preferred', hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#0ea5e9', description: '强类型 + JSONB + 高级索引', status: 'builtin' },
   { type: 'oracle',       label: 'Oracle',          short: 'Oracle',   category: 'relational', hasDatabase: true, defaultPort: 1521, defaultDb: 'ORCL',    defaultUser: 'system',   defaultSsl: 'preferred', hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#ef4444', description: '商业关系型, PL/SQL', status: 'builtin' },

@@ -92,6 +92,15 @@ func openGonaviDatabase(conn *Connection) (gonavibase.Database, error) {
 	return db, nil
 }
 
+// AcquireForSync 供 sync 包使用: 返回缓存的 Database 实例与引擎类型。
+func (p *DatabasePool) AcquireForSync(connID string) (gonavibase.Database, string, error) {
+	db, conn, err := p.Acquire(connID)
+	if err != nil {
+		return nil, "", err
+	}
+	return db, string(conn.Info.Engine), nil
+}
+
 func (p *DatabasePool) touchOrder(id string) {
 	for i, x := range p.order {
 		if x == id {

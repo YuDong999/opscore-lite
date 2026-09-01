@@ -16,9 +16,10 @@ import DocPanel from '../components/DatabaseManager/DocPanel'
 import QueryEditor from '../components/DatabaseManager/QueryEditor'
 import DataGrid from '../components/DatabaseManager/DataGrid'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
+import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 
-type Tab = 'query' | 'doc' | 'audit' | 'overview'
+type Tab = 'query' | 'doc' | 'audit' | 'sync' | 'overview'
 
 function formatRemaining(sec: number): string {
   if (sec <= 0) return '已锁定'
@@ -193,6 +194,9 @@ export default function DatabaseManagerModule() {
                 <button className={tab === 'doc' ? 'active' : ''} onClick={() => setTab('doc')} disabled={!table}>
                   表结构{table && `: ${table}`}
                 </button>
+                <button className={tab === 'sync' ? 'active' : ''} onClick={() => setTab('sync')}>
+                  同步
+                </button>
                 <button className={tab === 'audit' ? 'active' : ''} onClick={() => setTab('audit')}>
                   审计
                 </button>
@@ -202,11 +206,18 @@ export default function DatabaseManagerModule() {
                 <div className="db-query-section">
                   <QueryEditor
                     connId={conn.id}
+                    engine={conn.engine}
                     onResult={handleResult}
                     onWriteLocked={() => setShowUnlock(true)}
                     onExecuted={setLastSQL}
                   />
                   {result && <DataGrid result={result} connId={conn.id} sql={lastSQL} />}
+                </div>
+              )}
+
+              {tab === 'sync' && (
+                <div className="db-doc-section">
+                  <SyncPanel conns={conns} activeConnId={conn.id} />
                 </div>
               )}
 

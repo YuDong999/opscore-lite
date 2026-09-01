@@ -1,8 +1,8 @@
 // 查询结果表格: 渲染 columns/rows, 支持溢出截断、null/对象友好显示、单元格编辑。
+// 增强: 表头点击排序(本地)、单元格点击复制、导出 CSV/JSON/XLSX(后端流式下载)。
 // 编辑功能：单单元格编辑 + 批量编辑 + 发送编辑请求到后端生成 SQL。
-// 导出: CSV / JSON / XLSX, 由后端流式返回文件, 浏览器直接下载。
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { type QueryResult, type ColumnInfo, exportQuery, type ExportFormat } from './api'
 
 function renderCell(v: any): string {
@@ -29,19 +29,24 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
   const [isEditable, setIsEditable] = useState(false)
+  const [sortCol, setSortCol] = useState<number | null>(null)
+  const [sortAsc, setSortAsc] = useState(true)
+  const [copied, setCopied] = useState('')
 
   useEffect(() => {
+    setSortCol(null); setSortAsc(true)
     if (!result || !result.columns?.length || !result.rows?.length) {
       setIsEditable(false)
+      setEditedRows([])
       return
     }
-    setIsEditable(result.isEditable || false) // 使用后端返回的 isEditable 标志
+    setIsEditable(!!(result as any).isEditable)
     setEditedRows(result.rows.map(row => [...row]))
   }, [result])
 
   const handleCellClick = useCallback((row: number, col: number) => {
     if (!isEditable) return
-    setEditingCell({ row, col, value: editedRows[row][col] })
+    setEditingCell({ row, col, value: editedRows[row]?.[col] })
   }, [isEditable, editedRows])
 
   const handleCellChange = useCallback((value: any) => {
@@ -54,26 +59,16 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
 
   const handleSave = useCallback(() => {
     if (!isEditable || !result || !result.columns || !onEdit) return
-    
-    // 收集所有变更的单元格
     const changes: Array<{ row: number, col: number, newValue: any, oldValue: any }> = []
-    
     result.rows.forEach((origRow, i) => {
-      editedRows[i].forEach((editedValue, j) => {
+      editedRows[i]?.forEach((editedValue, j) => {
         if (origRow[j] !== editedValue) {
-          changes.push({
-            row: i,
-            col: j,
-            newValue: editedValue,
-            oldValue: origRow[j]
-          })
+          changes.push({ row: i, col: j, newValue: editedValue, oldValue: origRow[j] })
         }
       })
     })
-    
     if (changes.length > 0) {
       onEdit(changes)
-      // 重置为原始数据
       setEditedRows(result.rows.map(row => [...row]))
     }
   }, [isEditable, result, editedRows, onEdit])
@@ -84,6 +79,34 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
       setEditedRows(result.rows.map(row => [...row]))
     }
   }, [result])
+
+  // 本地排序视图(不影响 editedRows 的原始行号映射)
+  const viewRows = useMemo(() => {
+    if (sortCol === null || !editedRows.length) return editedRows
+    const idx = editedRows.map((_, i) => i)
+    idx.sort((a, b) => {
+      const va = editedRows[a]?.[sortCol], vb = editedRows[b]?.[sortCol]
+      if (va === null || va === undefined) return 1
+      if (vb === null || vb === undefined) return -1
+      const na = Number(va), nb = Number(vb)
+      let cmp: number
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && String(va).trim() !== '' && String(vb).trim() !== '') {
+        cmp = na - nb
+      } else {
+        cmp = String(va).localeCompare(String(vb))
+      }
+      return sortAsc ? cmp : -cmp
+    })
+    return idx.map(i => editedRows[i])
+  }, [editedRows, sortCol, sortAsc])
+
+  const copyCell = useCallback((v: any) => {
+    const text = renderCell(v)
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied('已复制')
+      setTimeout(() => setCopied(''), 1200)
+    }).catch(() => {})
+  }, [])
 
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [exportErr, setExportErr] = useState('')
@@ -103,7 +126,7 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
   }, [connId, sql])
 
   if (!result) {
-    return <div className="db-empty">执行查询后查看结果</div>
+    return <div className="db-empty">执行查询后查看结果 · Ctrl+Enter 快速执行</div>
   }
   if (result.error) {
     return <div className="banner banner-err" style={{ margin: 12 }}>{result.error}</div>
@@ -121,11 +144,13 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
           {result.rowCount} 行
           {result.affected > 0 && ` · 影响 ${result.affected} 行`}
           {' · '}{result.durationMs}ms
+          {sortCol !== null && ` · 已按 ${result.columns[sortCol]} ${sortAsc ? '↑' : '↓'} 排序`}
+          {copied && <span style={{ color: 'var(--ok)' }}> {copied}</span>}
         </span>
-        {result.truncated && <span className="pill pill-warn">结果已截断 (max 5000)</span>}
-        {exportErr && <span className="dim" style={{ fontSize: '0.6875rem' }}>{exportErr}</span>}
+        {result.truncated && <span className="pill pill-warn">结果已截断</span>}
+        {exportErr && <span style={{ fontSize: '0.6875rem' }}>{exportErr}</span>}
         {canExport && (
-          <div className="db-export-controls" style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <div className="db-export-controls">
             {(['csv', 'json', 'xlsx'] as ExportFormat[]).map(fmt => (
               <button
                 key={fmt}
@@ -139,37 +164,36 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
             ))}
           </div>
         )}
-        {isEditable && (
-          <div className="db-edit-controls">
-            <button onClick={handleSave} className="btn btn-primary" style={{ marginRight: 8 }}>
-              保存修改
-            </button>
-            <button onClick={handleCancel} className="btn btn-secondary">
-              取消
-            </button>
-          </div>
-        )}
       </div>
       <div className="table-wrap">
         <table className="db-table db-table-result">
           <thead>
             <tr>
               <th className="db-col-num">#</th>
-              {result.columns.map(c => (
-                <th key={c}>{c}</th>
+              {result.columns.map((c, j) => (
+                <th key={c} title="点击排序" onClick={() => {
+                  if (sortCol === j) { setSortAsc(!sortAsc) } else { setSortCol(j); setSortAsc(true) }
+                }}>
+                  {c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {editedRows.map((row, i) => (
+            {viewRows.map((row, i) => (
               <tr key={i}>
-                <td className="db-col-num dim">{i + 1}</td>
+                <td className="db-col-num">{i + 1}</td>
                 {row.map((cell, j) => (
-                  <td 
-                    key={j} 
+                  <td
+                    key={j}
                     title={typeof cell === 'string' ? cell : undefined}
-                    onClick={() => handleCellClick(i, j)}
+                    onClick={() => {
+                      if (editingCell?.row === i && editingCell?.col === j) return
+                      if (isEditable) handleCellClick(i, j)
+                      else copyCell(cell)
+                    }}
                     className={editingCell?.row === i && editingCell?.col === j ? 'editing' : ''}
+                    style={!isEditable ? { cursor: 'copy' } : undefined}
                   >
                     {editingCell?.row === i && editingCell?.col === j ? (
                       <input
@@ -190,6 +214,12 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
           </tbody>
         </table>
       </div>
+      {isEditable && (
+        <div className="db-edit-controls">
+          <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
+          <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
+        </div>
+      )}
     </div>
   )
 }

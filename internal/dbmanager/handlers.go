@@ -16,6 +16,7 @@ import (
 
 	"github.com/tealeg/xlsx"
 	gonavistatus "opscore/internal/dbmanager/gonavi/db"
+	syncpkg "opscore/internal/dbmanager/sync"
 	"opscore/internal/registry"
 )
 
@@ -26,7 +27,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit := NewAuditLog(store.Central)
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
-	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit}
+	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool)}
 module := &registry.Module{
 			Manifest: registry.Manifest{
 				ID:          PluginID,
@@ -48,6 +49,11 @@ Routes: []registry.Route{
 				{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
 				{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
 				{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
+				{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
+				{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
+				{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
+				{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
+				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
 				},
 		}
 	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)
@@ -78,6 +84,7 @@ type Handlers struct {
 	svc    DBService
 	unlock *WriteUnlockManager
 	audit  *AuditLog
+	sync   *syncpkg.Runner
 }
 
 var (
@@ -628,6 +635,11 @@ func (h *Handlers) handleEngines(w http.ResponseWriter, r *http.Request) {
 // driverStatus 委托给 GoNavi 底座的运行时探测。
 // 返回 (status, reason): status ∈ builtin / optional / disabled / unknown。
 func driverStatus(t string) (string, string) {
+	// mysql_agent 是 driver-agent 架构专用引擎(lite 版无 agent 二进制), 一律禁用,
+	// 引导用户用原生 MySQL。存量 mysql_agent 连接仍可编辑。
+	if t == "mysql_agent" {
+		return "disabled", "请使用原生 MySQL 引擎(driver-agent 版本未随 lite 版提供)"
+	}
 	ok, reason := gonavistatus.DriverRuntimeSupportStatus(t)
 	if !ok {
 		return "disabled", reason
@@ -854,4 +866,112 @@ func (h *Handlers) exportToXLSX(res *QueryResult, buf *bytes.Buffer) error {
 	}
 
 	return xlsxFile.Write(buf)
+}
+
+// ===== /api/dbmanager/sync/* 跨库同步 =====
+// 方言对(MySQL 族 ↔ PostgreSQL 族)的 Schema 迁移 + 全量/增量数据同步。
+// 流程: POST plan 预览(类型映射/DDL/增量策略) → POST run 后台执行 → GET status 轮询进度。
+
+func decodeSyncRequest(r *http.Request) (syncpkg.SyncRequest, error) {
+	var req syncpkg.SyncRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, fmt.Errorf("invalid body: %w", err)
+	}
+	if !reConnID.MatchString(req.SourceID) || !reConnID.MatchString(req.TargetID) {
+		return req, fmt.Errorf("连接 ID 格式非法")
+	}
+	if strings.TrimSpace(req.SourceDB) == "" || strings.TrimSpace(req.TargetDB) == "" {
+		return req, fmt.Errorf("源库/目标库不能为空")
+	}
+	switch req.Mode {
+	case syncpkg.ModeSchemaOnly, syncpkg.ModeSchemaFull, syncpkg.ModeSchemaFullIncr,
+		syncpkg.ModeTruncateFull, syncpkg.ModeIncrOnly, syncpkg.ModeVerify:
+	default:
+		return req, fmt.Errorf("不支持的同步模式: %s", req.Mode)
+	}
+	return req, nil
+}
+
+// handleSyncPlan POST {sourceId, sourceDb, targetId, targetDb, tables?, mode} -> 迁移计划预览
+func (h *Handlers) handleSyncPlan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	req, err := decodeSyncRequest(r)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	plan, err := h.sync.BuildPlan(ctx, req)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"plan": plan})
+}
+
+// handleSyncRun POST {同 plan 请求} -> 启动后台任务, 返回 jobId
+func (h *Handlers) handleSyncRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	req, err := decodeSyncRequest(r)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourceID == req.TargetID {
+		writeErr(w, "源与目标不能是同一连接", http.StatusBadRequest)
+		return
+	}
+	job := h.sync.Start(req, nil)
+	writeJSON(w, map[string]any{"ok": true, "jobId": job.ID})
+}
+
+// handleSyncStatus GET ?id=... -> 任务进度
+func (h *Handlers) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	job := h.sync.Jobs().Get(id)
+	if job == nil {
+		writeErr(w, "任务不存在", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"job": job})
+}
+
+// handleSyncJobs GET -> 任务列表
+func (h *Handlers) handleSyncJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, map[string]any{"jobs": h.sync.Jobs().List()})
+}
+
+// handleSyncCancel POST {id} -> 取消运行中任务
+func (h *Handlers) handleSyncCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !h.sync.Jobs().Cancel(body.ID) {
+		writeErr(w, "任务不存在或已结束", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }

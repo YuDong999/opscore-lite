@@ -270,12 +270,16 @@ export default function ConnectionPanel({
             <div className="db-engine-grid">
               {groups[cat].map(e => {
                 const sl = statusLabel(e.status)
+                const off = e.status === 'disabled'
                 return (
                   <button
                     key={e.type}
-                    className={`db-engine-card db-engine-${e.type}`}
-                    onClick={() => onEnginePicked(e.type)}
-                    title={e.description + (e.reason ? `\n${e.reason}` : '')}
+                    className={`db-engine-card db-engine-${e.type}${off ? ' db-engine-card-off' : ''}`}
+                    onClick={() => { if (!off) onEnginePicked(e.type) }}
+                    title={off
+                      ? `暂不可用: ${e.reason || '需安装驱动'}`
+                      : e.description + (e.reason ? `\n${e.reason}` : '')}
+                    style={off ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
                   >
                     <div className="db-engine-card-name">{e.label}</div>
                     <div className="db-engine-card-meta">

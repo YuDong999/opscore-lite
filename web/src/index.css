@@ -1675,3 +1675,249 @@ body {
   user-select: none;
 }
 .db-advanced-toggle input { accent-color: var(--accent); }
+
+/* ═══════════ DatabaseManager 数据库管理模块 ═══════════ */
+
+/* ── 模块布局 ── */
+.db-module { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.db-module-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.db-head-info { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.db-head-actions { margin-left: auto; }
+.db-layout { display: flex; flex: 1; min-height: 0; gap: 0.75rem; }
+.db-side { width: 21rem; min-width: 16rem; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; padding-right: 0.125rem; }
+.db-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+.db-main-tabs { display: flex; gap: 0.25rem; }
+.db-main-tabs button { background: transparent; border: none; padding: 0.4rem 0.9rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-dim); cursor: pointer; font-size: 0.8125rem; }
+.db-main-tabs button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+.db-main-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 连接列表 ── */
+.db-conn-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-conn-list-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.8125rem; font-weight: 600; }
+.db-conn-ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; overflow-y: auto; }
+.db-conn-item { display: flex; align-items: center; justify-content: space-between; gap: 0.375rem; padding: 0.45rem 0.55rem; border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; }
+.db-conn-item:hover { background: var(--row-hover); }
+.db-conn-item.active { background: var(--surface-tint); border-color: var(--accent); }
+.db-conn-item-main { min-width: 0; flex: 1; }
+.db-conn-item-name { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-conn-item-host { font-size: 0.6875rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-conn-item-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.db-empty { padding: 1.5rem 0.75rem; text-align: center; color: var(--text-dim); font-size: 0.8125rem; word-break: break-word; overflow-wrap: anywhere; }
+.db-empty-sm { padding: 0.75rem 0.5rem; text-align: center; color: var(--text-dim); font-size: 0.75rem; }
+
+/* ── 引擎徽章 ── */
+.db-engine-badge { display: inline-flex; align-items: center; padding: 0.05rem 0.4rem; border-radius: 0.5rem; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.02em; background: var(--surface-tint); border: 1px solid var(--border); color: var(--text-secondary); text-transform: uppercase; }
+
+/* ── 引擎选择网格 ── */
+.db-engine-group { margin-bottom: 0.5rem; }
+.db-engine-group-label { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; font-weight: 600; color: var(--text-dim); margin-bottom: 0.375rem; }
+.db-engine-cat-icon { font-size: 0.875rem; }
+.db-engine-group-count { background: var(--surface-tint); border-radius: 1rem; padding: 0 0.4rem; font-size: 0.625rem; }
+.db-engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.4rem; }
+.db-engine-card { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.55rem 0.6rem; cursor: pointer; transition: border-color .15s, transform .15s; text-align: left; min-width: 0; }
+.db-engine-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.db-engine-card-off:hover { border-color: var(--border); transform: none; }
+.db-engine-card-name { font-size: 0.78rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.db-engine-card-meta { display: flex; align-items: center; font-size: 0.625rem; color: var(--text-dim); }
+
+/* ── 连接编辑表单 ── */
+.db-conn-editor { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-conn-editor-title { display: flex; align-items: center; font-size: 0.875rem; font-weight: 600; }
+.db-form { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+.db-form > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; }
+.db-form input, .db-form select { width: 100%; box-sizing: border-box; }
+/* 关键修复: 行内多输入 flex + 允许换行, 固定宽度子项可收缩, 不再溢出面板 */
+.db-form-row { display: flex; gap: 0.5rem; flex-wrap: wrap; min-width: 0; }
+.db-form-row > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; flex-shrink: 1; }
+.db-form-grow { flex: 1 1 8rem; min-width: 6rem; }
+.db-form-actions { display: flex; justify-content: flex-end; gap: 0.375rem; padding-top: 0.25rem; }
+
+/* ── 高级选项 ── */
+.db-advanced { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.db-advanced summary { padding: 0.5rem 0.625rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; user-select: none; background: var(--surface-tint); }
+.db-advanced-body { padding: 0.625rem; display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+.db-advanced-toggle { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; cursor: pointer; }
+.db-advanced-block { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem 0.625rem; border-left: 2px solid var(--border); background: var(--surface-tint); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; min-width: 0; }
+.db-advanced-block > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; }
+.db-advanced-block input, .db-advanced-block select { width: 100%; box-sizing: border-box; }
+.db-advanced-section { font-size: 0.6875rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.25rem; }
+.db-icon-btn { display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── 级联选择器(库/表) ── */
+.db-cascade { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.db-cascade-section { display: flex; flex-direction: column; gap: 0.3rem; min-height: 0; }
+.db-cascade-label { font-size: 0.75rem; font-weight: 600; color: var(--text-dim); }
+.db-cascade-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.375rem; }
+.db-cascade-grow { flex: 1; min-width: 0; }
+.db-cascade-list { display: flex; flex-direction: column; gap: 0.15rem; max-height: 11rem; overflow-y: auto; }
+.db-cascade-item { display: flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.78rem; border: 1px solid transparent; min-width: 0; }
+.db-cascade-item:hover { background: var(--row-hover); }
+.db-cascade-item.active { background: var(--surface-tint); border-color: var(--accent); }
+.db-cascade-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-cascade-item-comment { margin-left: auto; font-size: 0.625rem; color: var(--text-dim); flex-shrink: 0; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 查询工作台 ── */
+.db-query-section { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-query-editor { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1p
+
+/* ═══════════ DatabaseManager 数据库管理模块 ═══════════ */
+
+/* ── 模块布局 ── */
+.db-module { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.db-module-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.db-head-info { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.db-head-actions { margin-left: auto; }
+.db-layout { display: flex; flex: 1; min-height: 0; gap: 0.75rem; }
+.db-side { width: 21rem; min-width: 16rem; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; padding-right: 0.125rem; }
+.db-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+.db-main-tabs { display: flex; gap: 0.25rem; }
+.db-main-tabs button { background: transparent; border: none; padding: 0.4rem 0.9rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-dim); cursor: pointer; font-size: 0.8125rem; }
+.db-main-tabs button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+.db-main-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 连接列表 ── */
+.db-conn-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-conn-list-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.8125rem; font-weight: 600; }
+.db-conn-ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; overflow-y: auto; }
+.db-conn-item { display: flex; align-items: center; justify-content: space-between; gap: 0.375rem; padding: 0.45rem 0.55rem; border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; }
+.db-conn-item:hover { background: var(--row-hover); }
+.db-conn-item.active { background: var(--surface-tint); border-color: var(--accent); }
+.db-conn-item-main { min-width: 0; flex: 1; }
+.db-conn-item-name { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-conn-item-host { font-size: 0.6875rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-conn-item-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.db-empty { padding: 1.5rem 0.75rem; text-align: center; color: var(--text-dim); font-size: 0.8125rem; word-break: break-word; overflow-wrap: anywhere; }
+.db-empty-sm { padding: 0.75rem 0.5rem; text-align: center; color: var(--text-dim); font-size: 0.75rem; }
+
+/* ── 引擎徽章 ── */
+.db-engine-badge { display: inline-flex; align-items: center; padding: 0.05rem 0.4rem; border-radius: 0.5rem; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.02em; background: var(--surface-tint); border: 1px solid var(--border); color: var(--text-secondary); text-transform: uppercase; }
+
+/* ── 引擎选择网格 ── */
+.db-engine-group { margin-bottom: 0.5rem; }
+.db-engine-group-label { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; font-weight: 600; color: var(--text-dim); margin-bottom: 0.375rem; }
+.db-engine-cat-icon { font-size: 0.875rem; }
+.db-engine-group-count { background: var(--surface-tint); border-radius: 1rem; padding: 0 0.4rem; font-size: 0.625rem; }
+.db-engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.4rem; }
+.db-engine-card { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.55rem 0.6rem; cursor: pointer; transition: border-color .15s, transform .15s; text-align: left; min-width: 0; }
+.db-engine-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.db-engine-card-off:hover { border-color: var(--border); transform: none; }
+.db-engine-card-name { font-size: 0.78rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.db-engine-card-meta { display: flex; align-items: center; font-size: 0.625rem; color: var(--text-dim); }
+
+/* ── 连接编辑表单 ── */
+.db-conn-editor { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-conn-editor-title { display: flex; align-items: center; font-size: 0.875rem; font-weight: 600; }
+.db-form { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+.db-form > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; }
+.db-form input, .db-form select { width: 100%; box-sizing: border-box; }
+/* 关键修复: 行内多输入 flex + 允许换行, 固定宽度子项可收缩, 不再溢出面板 */
+.db-form-row { display: flex; gap: 0.5rem; flex-wrap: wrap; min-width: 0; }
+.db-form-row > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; flex-shrink: 1; }
+.db-form-grow { flex: 1 1 8rem; min-width: 6rem; }
+.db-form-actions { display: flex; justify-content: flex-end; gap: 0.375rem; padding-top: 0.25rem; }
+
+/* ── 高级选项 ── */
+.db-advanced { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.db-advanced summary { padding: 0.5rem 0.625rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; user-select: none; background: var(--surface-tint); }
+.db-advanced-body { padding: 0.625rem; display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+.db-advanced-toggle { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; cursor: pointer; }
+.db-advanced-block { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem 0.625rem; border-left: 2px solid var(--border); background: var(--surface-tint); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; min-width: 0; }
+.db-advanced-block > label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.71875rem; color: var(--text-secondary); min-width: 0; }
+.db-advanced-block input, .db-advanced-block select { width: 100%; box-sizing: border-box; }
+.db-advanced-section { font-size: 0.6875rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.25rem; }
+.db-icon-btn { display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── 级联选择器(库/表) ── */
+.db-cascade { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.db-cascade-section { display: flex; flex-direction: column; gap: 0.3rem; min-height: 0; }
+.db-cascade-label { font-size: 0.75rem; font-weight: 600; color: var(--text-dim); }
+.db-cascade-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.375rem; }
+.db-cascade-grow { flex: 1; min-width: 0; }
+.db-cascade-list { display: flex; flex-direction: column; gap: 0.15rem; max-height: 11rem; overflow-y: auto; }
+.db-cascade-item { display: flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.78rem; border: 1px solid transparent; min-width: 0; }
+.db-cascade-item:hover { background: var(--row-hover); }
+.db-cascade-item.active { background: var(--surface-tint); border-color: var(--accent); }
+.db-cascade-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-cascade-item-comment { margin-left: auto; font-size: 0.625rem; color: var(--text-dim); flex-shrink: 0; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 查询工作台 ── */
+.db-query-section { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.db-query-editor { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; }
+.db-query-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.db-query-controls { display: flex; gap: 0.375rem; flex-wrap: wrap; }
+.db-query-samples { display: flex; gap: 0.375rem; flex-wrap: wrap; }
+.db-query-textarea { width: 100%; box-sizing: border-box; min-height: 8rem; resize: vertical; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8125rem; line-height: 1.5; padding: 0.625rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-solid); color: var(--text); }
+.db-query-textarea:focus { outline: none; border-color: var(--accent); }
+
+/* ── 结果表格 ── */
+.db-result { display: flex; flex-direction: column; gap: 0.375rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; min-height: 0; }
+.db-result-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-dim); }
+.db-export-controls { margin-left: auto; display: flex; gap: 0.25rem; }
+.table-wrap { overflow: auto; max-height: 26rem; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.db-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.db-table th, .db-table td { padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+.db-table th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 600; cursor: pointer; user-select: none; z-index: 1; }
+.db-table th:hover { color: var(--accent); }
+.db-table tbody tr:hover { background: var(--row-hover); }
+.db-col-num { color: var(--text-dim); width: 2.5rem; text-align: right; }
+.db-edit-controls { display: flex; gap: 0.25rem; }
+.db-edit-input { width: 100%; box-sizing: border-box; font-size: 0.75rem; }
+
+/* ── 表结构 ── */
+.db-doc-section { display: flex; flex-direction: column; min-height: 0; }
+.db-doc { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; }
+.db-doc-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.375rem; }
+.db-doc-tabs button { background: transparent; border: none; padding: 0.25rem 0.75rem; border-radius: var(--radius-sm); cursor: pointer; color: var(--text-dim); font-size: 0.75rem; }
+.db-doc-tabs button.active { background: var(--surface-tint); color: var(--text); font-weight: 600; }
+.db-tbl-type { font-size: 0.6875rem; color: var(--text-dim); }
+
+/* ── 审计 ── */
+.db-audit-section { display: flex; flex-direction: column; min-height: 0; }
+.db-audit { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; }
+.db-audit-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.db-audit-filters { display: flex; gap: 0.375rem; flex-wrap: wrap; align-items: center; }
+.db-audit-stats { display: flex; gap: 0.75rem; font-size: 0.75rem; color: var(--text-dim); }
+.db-audit-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.db-audit-table th, .db-audit-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; }
+.db-audit-sql { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.71875rem; max-width: 22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.db-audit-sql-full { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.71875rem; white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; background: var(--surface-tint); padding: 0.5rem; border-radius: var(--radius-sm); }
+.db-audit-detail { padding: 0.5rem; background: var(--surface-tint); border-radius: var(--radius-sm); }
+.db-audit-detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; font-size: 0.75rem; }
+
+/* ── 概览页 ── */
+.db-overview { display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; padding-right: 0.25rem; }
+.db-overview-hero { display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1rem 1.25rem; flex-wrap: wrap; }
+.db-overview-title { display: flex; align-items: center; gap: 0.75rem; }
+.db-overview-title h1 { margin: 0; font-size: 1.25rem; }
+.db-overview-title p { margin: 0.125rem 0 0; font-size: 0.8125rem; }
+.db-overview-ico { display: flex; color: var(--accent); }
+.db-overview-stats { display: grid; gap: 0.5rem; }
+.db-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; }
+.db-stat-value { font-size: 1.375rem; font-weight: 700; }
+.db-stat-label { font-size: 0.6875rem; color: var(--text-dim); }
+.db-overview-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.db-overview-section-title { font-size: 0.8125rem; font-weight: 600; }
+.db-conn-quick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.5rem; }
+.db-conn-quick-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; cursor: pointer; min-width: 0; }
+.db-conn-quick-card:hover { border-color: var(--accent); }
+.db-conn-quick-name { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-conn-quick-host { font-size: 0.6875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-engine-quick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 0.5rem; }
+.db-engine-quick { display: flex; flex-direction: column; gap: 0.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; cursor: pointer; text-align: left; }
+.db-engine-quick:hover { border-color: var(--accent); }
+.db-engine-quick-name { font-size: 0.8125rem; font-weight: 600; }
+.db-engine-quick-meta { font-size: 0.6875rem; color: var(--text-dim); }
+.db-engine-table { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.75rem; }
+.db-engine-cat { display: flex; gap: 0.75rem; align-items: flex-start; }
+.db-engine-cat-label { width: 5.5rem; flex-shrink: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-dim); }
+.db-engine-cat-list { display: flex; flex-wrap: wrap; gap: 0.375rem; min-width: 0; }
+.db-engine-cat-item { display: inline-flex; align-items: center; gap: 0.25rem; }
+.db-overview-tips { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.5rem; }
+.db-tip { display: flex; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; }
+.db-tip-icon { font-size: 1.125rem; }
+.db-tip-title { font-size: 0.78rem; font-weight: 600; }
+.db-tip-body { font-size: 0.6875rem; }
+
+/* ── 长文本防穿模(错误 banner / SQL 预览等) ── */
+.db-module .banner { word-break: break-word; overflow-wrap: anywhere; }
+.db-module .banner span { word-break: break-word; overflow-wrap: anywhere; }
