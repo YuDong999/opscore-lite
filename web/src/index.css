@@ -2060,3 +2060,14 @@ body {
 .db-tree-caret::before { content: '▸'; font-size: 0.7rem !important; line-height: 1; }
 .dbx-engine-icon svg, .dbx-node-icon svg { display: block; }
 .db-tree-actions button svg { width: 0.8rem; height: 0.8rem; }
+
+/* V3: 连接向导浮层化(修复与树重叠/穿模); db-conn-panel 仅向导渲染 */
+.db-conn-panel {
+  position: fixed; z-index: 600; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(34rem, 94vw); max-height: 88vh; overflow-y: auto;
+  background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow); padding: 0.875rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.db-conn-panel { box-shadow: 0 0 0 200vmax rgba(15, 18, 34, 0.32), var(--shadow); }
+.db-conn-panel .db-engine-grid { grid-template-columns: repeat(auto-fill, minmax(7.6rem, 1fr)); }

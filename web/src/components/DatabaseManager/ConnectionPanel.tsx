@@ -5,6 +5,7 @@
 //   引擎类别不同, 字段不同(关系型需要 database, 向量库需要 collection, MQ 需要 topic)
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useToast } from '../Toast'
 import {
   type ConnectionInfo,
@@ -34,13 +35,13 @@ const CATEGORY_LABELS: Record<EngineCategory, string> = {
 }
 
 const CATEGORY_ICONS: Record<EngineCategory, string> = {
-  relational: '▣',
-  document:   '◫',
-  vector:     '◆',
-  timeseries: '◷',
-  search:     '◎',
-  mq:         '◈',
-  custom:     '◇',
+  relational: '🗄️',
+  document:   '📄',
+  vector:     '🧲',
+  timeseries: '📈',
+  search:     '🔍',
+  mq:         '📬',
+  custom:     '🧩',
 }
 
 const CATEGORY_ORDER: EngineCategory[] = ['relational', 'document', 'timeseries', 'vector', 'search', 'mq', 'custom']
@@ -212,7 +213,7 @@ export default function ConnectionPanel({
     }
     ENGINES.forEach(e => groups[e.category]?.push(e))
 
-    return (
+    return createPortal(
       <div className="db-conn-panel">
         <div className="db-conn-list-head">
           <button className="btn-glass-soft btn-glass-soft-sm db-icon-btn" onClick={cancelWizard} title="返回">
@@ -257,7 +258,8 @@ export default function ConnectionPanel({
             </div>
           </div>
         ))}
-      </div>
+      </div>,
+      document.body,
     )
   }
 
@@ -269,7 +271,7 @@ export default function ConnectionPanel({
     const isMQ = meta.category === 'mq'
     const isVector = meta.category === 'vector'
 
-    return (
+    return createPortal(
       <div className="db-conn-panel">
         <div className="db-conn-list-head">
           <button className="btn-glass-soft btn-glass-soft-sm db-icon-btn" onClick={() => setStep(editing.id ? 'list' : 'pick-engine')} title="返回">
@@ -493,7 +495,8 @@ export default function ConnectionPanel({
             </div>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     )
   }
 

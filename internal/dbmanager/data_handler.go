@@ -33,7 +33,16 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	database, table := q.Get("database"), q.Get("table")
-	if !validIdentifier(database) || !validIdentifier(table) {
+	if !validIdentifier(database) {
+		writeErr(w, "database 名非法", http.StatusBadRequest)
+		return
+	}
+	// PG 族表名可为 "schema.table" 两段(gonavi GetTables 返回带前缀名)
+	tableSchema := ""
+	if i := strings.Index(table, "."); i >= 0 {
+		tableSchema, table = table[:i], table[i+1:]
+	}
+	if !validIdentifier(table) || (tableSchema != "" && !validIdentifier(tableSchema)) {
 		writeErr(w, "database/table 名非法", http.StatusBadRequest)
 		return
 	}
@@ -81,6 +90,10 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 	// 引号标识符
 	qi := func(n string) string { return sync.QuoteIdent(n, dialect) }
 	tn := qi(database) + "." + qi(table)
+	if tableSchema != "" {
+		// PG 族: "schema.table" 按两段引用(search_path 生效), 库前缀由连接上下文决定
+		tn = qi(tableSchema) + "." + qi(table)
+	}
 
 	where := ""
 	if w := strings.TrimSpace(q.Get("where")); w != "" {
