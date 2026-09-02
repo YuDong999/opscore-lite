@@ -29,8 +29,8 @@ func IsEditableResult(sqlText string, columns []ColumnInfo, rows [][]any) bool {
 		return false
 	}
 
-	// 4. 检查是否为 SELECT *（避免意外编辑所有列）
-	if !isSelectStar(sqlText) {
+	// 4. 检查是否为 SELECT *（SELECT * 可编辑，指定列需谨慎）
+	if isSelectStar(sqlText) {
 		return false
 	}
 
@@ -107,7 +107,7 @@ func DMLBinding(table string, columns []ColumnInfo, originalRows, editedRows [][
 		return nil, fmt.Errorf("行数不匹配")
 	}
 
-	var updates []string
+	var updateSQLs []string
 	pkIndices := make([]int, 0) // 主键列索引
 
 	// 收集主键列索引
@@ -138,33 +138,38 @@ func DMLBinding(table string, columns []ColumnInfo, originalRows, editedRows [][
 		}
 
 		// 收集需要更新的列
-		updates := make([]string, 0)
+		setClauses := make([]string, 0)
 		for colIdx, col := range columns {
 			if col.Key == "PRI" {
 				continue // 跳过主键
 			}
 			if original[colIdx] != edited[colIdx] {
-				updates = append(updates, fmt.Sprintf("%s = %v", col.Name, edited[colIdx]))
+				setClauses = append(setClauses, fmt.Sprintf("%s = %v", col.Name, edited[colIdx]))
 			}
 		}
 
-		if len(updates) > 0 {
-			whereClause := buildWhereClause(pkIndices, original)
+		if len(setClauses) > 0 {
+			whereClause := buildWhereClause(columns, pkIndices, original)
 			updateSQL := fmt.Sprintf("UPDATE %s SET %s WHERE %s",
-				table, strings.Join(updates, ", "), whereClause)
-			updates = append(updates, updateSQL)
+				table, strings.Join(setClauses, ", "), whereClause)
+			updateSQLs = append(updateSQLs, updateSQL)
 		}
 	}
 
-	return updates, nil
+	return updateSQLs, nil
 }
 
-// buildWhereClause 构建主键 WHERE 子句。
-func buildWhereClause(pkIndices []int, row []any) string {
+// buildWhereClause 构建主键 WHERE 子句（使用真实列名）。
+func buildWhereClause(columns []ColumnInfo, pkIndices []int, row []any) string {
 	conditions := make([]string, 0)
 	for _, pkIdx := range pkIndices {
-		colName := fmt.Sprintf("col_%d", pkIdx) // 实际应从 columns 获取名称
-		conditions = append(conditions, fmt.Sprintf("%s = %v", colName, row[pkIdx]))
+		colName := columns[pkIdx].Name
+		val := row[pkIdx]
+		if val == nil {
+			conditions = append(conditions, fmt.Sprintf("%s IS NULL", colName))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("%s = %v", colName, val))
+		}
 	}
 	return strings.Join(conditions, " AND ")
 }

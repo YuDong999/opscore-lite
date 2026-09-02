@@ -188,6 +188,50 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 
 	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
 	if isReadOnlySQL(sqlText) {
+		// 只读多语句 → 逐条执行, 返回执行摘要(GoNavi 执行摘要同款信息结构)
+		stmts := splitSQLStatements(sqlText)
+		if len(stmts) > 1 {
+			var summary []StatementResult
+			for _, st := range stmts {
+				stStart := time.Now()
+				sr := StatementResult{SQL: st, Type: statementType(st)}
+				rows, cols, err := db.Query(st)
+				if err != nil {
+					sr.Error = err.Error()
+					sr.DurationMs = time.Since(stStart).Milliseconds()
+					summary = append(summary, sr)
+					res.Statements = summary
+					res.Error = err.Error()
+					res.DurationMs = time.Since(start).Milliseconds()
+					return res, err
+				}
+				if len(cols) > 0 {
+					sr.Rows = len(rows)
+					// 最后一条成功语句的结果作为主结果集展示
+					res.Columns = cols
+					res.Rows = res.Rows[:0]
+					truncated := false
+					for _, row := range rows {
+						if len(res.Rows) >= maxRows {
+							truncated = true
+							break
+						}
+						vals := make([]any, len(cols))
+						for i, c := range cols {
+							vals[i] = row[c]
+						}
+						res.Rows = append(res.Rows, vals)
+					}
+					res.Truncated = truncated
+					res.RowCount = len(res.Rows)
+				}
+				sr.DurationMs = time.Since(stStart).Milliseconds()
+				summary = append(summary, sr)
+			}
+			res.Statements = summary
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res, nil
+		}
 		rows, colNames, err := db.Query(sqlText)
 		if err != nil {
 			res.Error = err.Error()

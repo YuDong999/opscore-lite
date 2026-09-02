@@ -1,9 +1,11 @@
-// 表数据浏览面板（P0）：点表即看数据。分页 + 总行数 + 每页行数 + 排序。
-// 复用 DataGrid(排序/复制/导出)。
+// 表数据浏览面板: 点表即看数据。分页 + 总行数 + 多视图(表格/JSON/文本) + 字段筛选。
+// 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { type ConnectionInfo, fetchData, describeTable, type TableData } from './api'
 import DataGrid from './DataGrid'
+
+type ViewMode = 'table' | 'json' | 'text'
 
 export default function DataPanel({
   conn, database, table, isView,
@@ -19,12 +21,18 @@ export default function DataPanel({
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [viewMode, setViewMode] = useState<ViewMode>('table')
+  const [visibleCols, setVisibleCols] = useState<Set<number>>(new Set())
+  const [showColFilter, setShowColFilter] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
       const d = await fetchData(conn.id, database, table, page, pageSize)
       setData(d)
+      if (d.columns.length > 0 && visibleCols.size === 0) {
+        setVisibleCols(new Set(d.columns.map((_, i) => i)))
+      }
     } catch (e: any) {
       setErr(e.message || '加载失败')
       setData(null)
@@ -33,7 +41,6 @@ export default function DataPanel({
     }
   }, [conn.id, database, table, page, pageSize])
 
-  // 列类型(列头第二行), 拉一次
   useEffect(() => {
     setColTypes(undefined)
     describeTable(conn.id, database, table)
@@ -47,6 +54,48 @@ export default function DataPanel({
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
+  const toggleCol = (idx: number) => {
+    setVisibleCols(prev => {
+      const next = new Set(prev)
+      if (next.has(idx)) next.delete(idx); else next.add(idx)
+      return next
+    })
+  }
+
+  const visibleColumns = useMemo(() => {
+    if (!data) return []
+    return data.columns.filter((_, i) => visibleCols.has(i))
+  }, [data, visibleCols])
+
+  // JSON 视图
+  const jsonRows = useMemo(() => {
+    if (!data || viewMode !== 'json') return []
+    return data.rows.map(row => {
+      const obj: Record<string, any> = {}
+      data.columns.forEach((col, i) => { if (visibleCols.has(i)) obj[col] = row[i] })
+      return obj
+    })
+  }, [data, viewMode, visibleCols])
+
+  // 文本视图
+  const textRows = useMemo(() => {
+    if (!data || viewMode !== 'text') return []
+    const colWidths = data.columns.map((col, i) => {
+      if (!visibleCols.has(i)) return 0
+      return Math.max(col.length, ...data.rows.slice(0, 20).map(row => String(row[i] ?? '').length))
+    })
+    return data.rows.map(row => {
+      const parts: string[] = []
+      data.columns.forEach((col, i) => {
+        if (!visibleCols.has(i)) return
+        const w = colWidths[i]
+        const val = String(row[i] ?? 'NULL').padEnd(w)
+        parts.push(val)
+      })
+      return parts.join(' | ')
+    })
+  }, [data, viewMode, visibleCols])
+
   return (
     <div className="db-data-panel">
       <div className="db-data-toolbar">
@@ -55,6 +104,30 @@ export default function DataPanel({
         {busy && <span className="dim">加载中...</span>}
         {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }}>{err}</span>}
         <span className="db-data-spacer" />
+
+        {/* 视图切换 */}
+        <div className="db-view-toggle">
+          {([
+            { key: 'table', label: '▦ 表格' },
+            { key: 'json', label: '{ } JSON' },
+            { key: 'text', label: 'T 文本' },
+          ] as const).map(v => (
+            <button
+              key={v.key}
+              className={`btn-glass-soft btn-glass-soft-sm ${viewMode === v.key ? 'active' : ''}`}
+              onClick={() => setViewMode(v.key)}
+              title={v.label}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 字段筛选 */}
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowColFilter(!showColFilter)} title="字段筛选">
+          {showColFilter ? '隐藏字段' : '筛选字段'}
+        </button>
+
         <select
           className="input"
           style={{ width: 'auto', fontSize: '0.75rem', padding: '0.15rem 0.4rem' }}
@@ -66,27 +139,62 @@ export default function DataPanel({
         </select>
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={load} disabled={busy} title="刷新">⟳</button>
       </div>
-      <DataGrid
-        result={data ? {
-          columns: data.columns,
-          rows: data.rows,
-          rowCount: data.rows.length,
-          affected: 0,
-          durationMs: data.durationMs || 0,
-          truncated: false,
-        } : null}
-        connId={conn.id}
-        sql={`SELECT * FROM ${database}.${table}`}
-        columnTypes={colTypes}
-      />
-      <div className="db-data-pager">
-        <span className="dim">共 {total} 行</span>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(1)}>⏮</button>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(p => p - 1)}>‹</button>
-        <span>{page} / {totalPages}</span>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= totalPages || busy} onClick={() => setPage(p => p + 1)}>›</button>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= totalPages || busy} onClick={() => setPage(totalPages)}>⏭</button>
-      </div>
+
+      {/* 字段筛选栏 */}
+      {showColFilter && data && (
+        <div className="db-col-filter">
+          {data.columns.map((col, i) => {
+            const visible = visibleCols.has(i)
+            return (
+              <label key={col} className="db-col-filter-item">
+                <input type="checkbox" checked={visible} onChange={() => toggleCol(i)} />
+                <span className={visible ? '' : 'dim'} style={{ fontSize: '0.75rem' }}>{col}</span>
+                {colTypes && colTypes[i] && <span className="dim" style={{ fontSize: '0.625rem' }}>{colTypes[i]}</span>}
+              </label>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 内容区 */}
+      {viewMode === 'table' && data && visibleCols.size > 0 ? (
+        <>
+          <DataGrid
+            result={{
+              columns: visibleColumns,
+              rows: data.rows.map(row => visibleColumns.map((_, i) => {
+                const origIdx = data.columns.indexOf(visibleColumns[i])
+                return origIdx >= 0 ? row[origIdx] : null
+              })),
+              rowCount: data.rows.length,
+              affected: 0,
+              durationMs: data.durationMs || 0,
+              truncated: false,
+            }}
+            connId={conn.id}
+            sql={`SELECT * FROM ${database}.${table}`}
+            columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
+          />
+          <div className="db-data-pager">
+            <span className="dim">共 {total} 行</span>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(1)}>⏮</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(p => p - 1)}>‹</button>
+            <span>{page} / {totalPages}</span>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= totalPages || busy} onClick={() => setPage(p => p + 1)}>›</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= totalPages || busy} onClick={() => setPage(totalPages)}>⏭</button>
+          </div>
+        </>
+      ) : viewMode === 'json' ? (
+        <div className="db-json-view">
+          <pre className="code-block">{JSON.stringify(jsonRows, null, 2)}</pre>
+        </div>
+      ) : viewMode === 'text' ? (
+        <div className="db-text-view">
+          <pre className="code-block">{textRows.join('\n')}</pre>
+        </div>
+      ) : (
+        <div className="db-empty">选择字段后查看数据</div>
+      )}
     </div>
   )
 }

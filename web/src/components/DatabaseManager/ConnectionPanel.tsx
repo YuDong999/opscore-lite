@@ -485,6 +485,72 @@ export default function ConnectionPanel({
                     <input className="input" value={cfg.note || ''} onChange={e => setEditing({ ...editing, config: { ...cfg, note: e.target.value } })} placeholder="如: 双写备库" />
                   </label>
                 </div>
+
+                {/* 引擎特参 */}
+                {pickedEngine === 'mongodb' && (
+                  <div className="db-advanced-section">MongoDB 特参</div>
+                )}
+                {pickedEngine === 'mongodb' && (
+                  <div className="db-advanced-block">
+                    <div className="db-form-row">
+                      <label className="db-form-grow">
+                        Replica Set
+                        <input className="input" value={cfg.mongoReplicaSet || ''} onChange={e => setEditing({ ...editing, config: { ...cfg, mongoReplicaSet: e.target.value } })} placeholder="rs0" />
+                      </label>
+                      <label style={{ width: 130 }}>
+                        Auth Source
+                        <input className="input" value={cfg.mongoAuthSource || ''} onChange={e => setEditing({ ...editing, config: { ...cfg, mongoAuthSource: e.target.value } })} placeholder="admin" />
+                      </label>
+                    </div>
+                    <div className="db-form-row">
+                      <label style={{ width: 150 }}>
+                        Read Preference
+                        <select className="input" value={cfg.mongoReadPreference || 'primary'} onChange={e => setEditing({ ...editing, config: { ...cfg, mongoReadPreference: e.target.value } })}>
+                          <option value="primary">primary</option>
+                          <option value="secondary">secondary</option>
+                          <option value="nearest">nearest</option>
+                          <option value="primaryPreferred">primaryPreferred</option>
+                          <option value="secondaryPreferred">secondaryPreferred</option>
+                        </select>
+                      </label>
+                      <label className="db-advanced-toggle" style={{ marginLeft: 8 }}>
+                        <input type="checkbox" checked={!!cfg.mongoSrv} onChange={e => setEditing({ ...editing, config: { ...cfg, mongoSrv: e.target.checked } })} />
+                        SRV 记录 (mongodb+srv://)
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {pickedEngine === 'clickhouse' && (
+                  <div className="db-advanced-section">ClickHouse 特参</div>
+                )}
+                {pickedEngine === 'clickhouse' && (
+                  <div className="db-advanced-block">
+                    <label style={{ width: 150 }}>
+                      协议
+                      <select className="input" value={cfg.clickHouseProtocol || 'auto'} onChange={e => setEditing({ ...editing, config: { ...cfg, clickHouseProtocol: e.target.value } })}>
+                        <option value="auto">auto</option>
+                        <option value="http">HTTP</option>
+                        <option value="native">Native</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                {pickedEngine === 'oceanbase' && (
+                  <div className="db-advanced-section">OceanBase 特参</div>
+                )}
+                {pickedEngine === 'oceanbase' && (
+                  <div className="db-advanced-block">
+                    <label style={{ width: 150 }}>
+                      兼容协议
+                      <select className="input" value={cfg.oceanBaseProtocol || 'mysql'} onChange={e => setEditing({ ...editing, config: { ...cfg, oceanBaseProtocol: e.target.value } })}>
+                        <option value="mysql">MySQL</option>
+                        <option value="oracle">Oracle</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
               </div>
             </details>
             <div className="db-form-actions">

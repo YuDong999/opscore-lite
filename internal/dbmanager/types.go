@@ -4,6 +4,8 @@
 package dbmanager
 
 import (
+	"strings"
+
 	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
 )
 
@@ -235,6 +237,16 @@ type ConnectionConfig struct {
 	Group string `json:"group,omitempty"` // 手动分组标签
 	Icon  string `json:"icon,omitempty"`  // emoji 或字母
 	Note  string `json:"note,omitempty"`
+
+	// 引擎特参 (按引擎类型选择性使用)
+	MongoReplicaSet    string `json:"mongoReplicaSet,omitempty"`    // MongoDB replica set 名称
+	MongoAuthSource    string `json:"mongoAuthSource,omitempty"`    // MongoDB authSource (默认 admin)
+	MongoReadPreference string `json:"mongoReadPreference,omitempty"` // MongoDB readPreference (primary/secondary/nearest)
+	MongoSRV           bool   `json:"mongoSrv,omitempty"`            // MongoDB use mongodb+srv URI
+	ClickHouseProtocol string `json:"clickHouseProtocol,omitempty"` // ClickHouse protocol (auto/http/native)
+	OceanBaseProtocol  string `json:"oceanBaseProtocol,omitempty"`  // OceanBase protocol (mysql/oracle)
+	Topology           string `json:"topology,omitempty"`           // topology: single/replica/cluster/sentinel
+	Hosts              string `json:"hosts,omitempty"`              // multi-host addresses (host:port,host:port)
 }
 
 // ToGonaviConfig 转换为 GoNavi 底座的连接配置。
@@ -298,6 +310,34 @@ func (c ConnectionConfig) ToGonaviConfig(password string) gonaviConnection.Conne
 	if c.SSL.Key != "" {
 		cfg.SSLKeyPath = c.SSL.Key
 	}
+
+	// 引擎特参映射
+	if c.MongoReplicaSet != "" {
+		cfg.ReplicaSet = c.MongoReplicaSet
+	}
+	if c.MongoAuthSource != "" {
+		cfg.AuthSource = c.MongoAuthSource
+	}
+	if c.MongoReadPreference != "" {
+		cfg.ReadPreference = c.MongoReadPreference
+	}
+	cfg.MongoSRV = c.MongoSRV
+	if c.ClickHouseProtocol != "" {
+		cfg.ClickHouseProtocol = c.ClickHouseProtocol
+	}
+	if c.OceanBaseProtocol != "" {
+		cfg.OceanBaseProtocol = c.OceanBaseProtocol
+	}
+	if c.Topology != "" {
+		cfg.Topology = c.Topology
+	}
+	if c.Hosts != "" {
+		cfg.Hosts = strings.Split(c.Hosts, ",")
+		for i := range cfg.Hosts {
+			cfg.Hosts[i] = strings.TrimSpace(cfg.Hosts[i])
+		}
+	}
+
 	return cfg
 }
 
@@ -353,11 +393,23 @@ type IndexInfo struct {
 
 // QueryResult 查询结果。
 type QueryResult struct {
-	Columns    []string `json:"columns"`
-	Rows       [][]any  `json:"rows"`
-	RowCount   int      `json:"rowCount"`
-	Affected   int64    `json:"affected"`
-	DurationMs int64    `json:"durationMs"`
-	Truncated  bool     `json:"truncated"`
-	Error      string   `json:"error,omitempty"`
+	Columns    []string          `json:"columns"`
+	Rows       [][]any           `json:"rows"`
+	RowCount   int               `json:"rowCount"`
+	Affected   int64             `json:"affected"`
+	DurationMs int64             `json:"durationMs"`
+	Truncated  bool              `json:"truncated"`
+	Error      string            `json:"error,omitempty"`
+	Statements []StatementResult `json:"statements,omitempty"` // 多语句执行摘要
+}
+
+// SavedQuery 用户保存的查询语句。
+type SavedQuery struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SQL       string `json:"sql"`
+	Engine    string `json:"engine,omitempty"`     // 关联引擎类型 (空=通用)
+	ConnID    string `json:"connId,omitempty"`     // 关联连接 ID (空=任意连接)
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
 }

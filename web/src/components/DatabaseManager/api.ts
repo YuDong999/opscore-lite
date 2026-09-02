@@ -202,6 +202,16 @@ export interface ConnectionConfig {
   group?: string
   icon?: string
   note?: string
+
+  // 引擎特参
+  mongoReplicaSet?: string
+  mongoAuthSource?: string
+  mongoReadPreference?: string
+  mongoSrv?: boolean
+  clickHouseProtocol?: string
+  oceanBaseProtocol?: string
+  topology?: string
+  hosts?: string
 }
 
 export const DEFAULT_CONFIG: ConnectionConfig = {
@@ -259,6 +269,15 @@ export interface IndexInfo {
   primary: boolean
 }
 
+export interface StatementResult {
+  sql: string
+  type: string
+  rows: number
+  affected: number
+  durationMs: number
+  error?: string
+}
+
 export interface QueryResult {
   columns: string[]
   rows: any[][]
@@ -268,6 +287,7 @@ export interface QueryResult {
   truncated: boolean
   error?: string
   isEditable?: boolean
+  statements?: StatementResult[]
 }
 
 export interface InterceptionBody {
@@ -421,7 +441,36 @@ export async function getAudit(connId?: string): Promise<AuditEntry[]> {
   return r.entries || []
 }
 
+export async function getSlowSQL(id: string, limit = 20): Promise<{ engine: string; columns: string[]; rows: any[]; note?: string }> {
+  return getJSON(`/api/dbmanager/slow-sql?id=${id}&limit=${limit}`)
+}
+
+export async function getTableStatus(id: string, database: string, table: string): Promise<{ engine: string; columns: string[]; rows: any[]; note?: string }> {
+  return getJSON(`/api/dbmanager/table-status?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`)
+}
+
+export async function explainSQL(id: string, sql: string, format = 'json'): Promise<{ engine: string; sql: string; format: string; columns: string[]; rows: any[] }> {
+  return postJSON('/api/dbmanager/explain', { id, sql, format })
+}
+
 // ── 引擎状态标签 ──
+export interface DriverInfo {
+  type: EngineType
+  label: string
+  short: string
+  category: string
+  color: string
+  status: 'builtin' | 'optional' | 'disabled' | 'unknown'
+  reason?: string
+  installed: boolean
+  builtin: boolean
+}
+
+export async function getDrivers(): Promise<DriverInfo[]> {
+  const r = await getJSON<{ drivers: DriverInfo[] }>('/api/dbmanager/drivers')
+  return r.drivers || []
+}
+
 export function statusLabel(s: EngineStatus): { text: string; cls: string } {
   switch (s) {
     case 'builtin':  return { text: '内置',  cls: 'pill-ok' }
@@ -449,4 +498,32 @@ export async function fetchData(
   if (orderBy) { p.set('orderBy', orderBy); p.set('orderDir', orderDir) }
   if (where) p.set('where', where)
   return getJSON<TableData>(`/api/dbmanager/data?${p.toString()}`)
+}
+
+// ── 保存的查询 ──
+export interface SavedQuery {
+  id: string
+  name: string
+  sql: string
+  engine?: string
+  connId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export async function listSavedQueries(): Promise<SavedQuery[]> {
+  const r = await getJSON<{ queries: SavedQuery[] }>('/api/dbmanager/queries')
+  return r.queries || []
+}
+
+export async function saveQuery(q: { name: string; sql: string; engine?: string; connId?: string }): Promise<SavedQuery> {
+  return postJSON<SavedQuery>('/api/dbmanager/queries/save', q)
+}
+
+export async function deleteSavedQuery(id: string): Promise<void> {
+  await fetch('/api/dbmanager/queries/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }).then(r => { if (!r.ok) throw new Error('删除失败') })
 }

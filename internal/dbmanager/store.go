@@ -310,3 +310,92 @@ func newID() string {
 func isEmptyConfig(c ConnectionConfig) bool {
 	return c.Host == "" && c.Port == 0 && c.Database == "" && c.Username == "" && c.SSLMode == "" && c.EnvTag == "" && len(c.Options) == 0
 }
+
+const savedQueriesKey = "dbmanager:saved_queries"
+
+// ListSavedQueries 返回全部保存的查询。
+func (s *Store) ListSavedQueries() ([]SavedQuery, error) {
+	st := s.store()
+	if st == nil {
+		return nil, fmt.Errorf("central store not initialized")
+	}
+	raw, err := central.GetMetaString(st, savedQueriesKey)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return []SavedQuery{}, nil
+	}
+	var out []SavedQuery
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("decode saved queries: %w", err)
+	}
+	return out, nil
+}
+
+// SaveQuery 保存或更新查询语句。
+func (s *Store) SaveQuery(q SavedQuery) (SavedQuery, error) {
+	st := s.store()
+	if st == nil {
+		return SavedQuery{}, fmt.Errorf("central store not initialized")
+	}
+	if strings.TrimSpace(q.Name) == "" {
+		return SavedQuery{}, fmt.Errorf("查询名称不能为空")
+	}
+	if strings.TrimSpace(q.SQL) == "" {
+		return SavedQuery{}, fmt.Errorf("SQL 不能为空")
+	}
+	list, err := s.ListSavedQueries()
+	if err != nil {
+		return SavedQuery{}, err
+	}
+	now := time.Now().Unix()
+	if q.ID == "" {
+		q.ID = newID()
+		q.CreatedAt = now
+	}
+	q.UpdatedAt = now
+	// 去重更新
+	found := false
+	for i := range list {
+		if list[i].ID == q.ID {
+			list[i] = q
+			found = true
+			break
+		}
+	}
+	if !found {
+		list = append(list, q)
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return SavedQuery{}, err
+	}
+	if err := central.SetMetaString(st, savedQueriesKey, string(b)); err != nil {
+		return SavedQuery{}, err
+	}
+	return q, nil
+}
+
+// DeleteSavedQuery 删除保存的查询。
+func (s *Store) DeleteSavedQuery(id string) error {
+	st := s.store()
+	if st == nil {
+		return fmt.Errorf("central store not initialized")
+	}
+	list, err := s.ListSavedQueries()
+	if err != nil {
+		return err
+	}
+	for i := range list {
+		if list[i].ID == id {
+			list = append(list[:i], list[i+1:]...)
+			b, err := json.Marshal(list)
+			if err != nil {
+				return err
+			}
+			return central.SetMetaString(st, savedQueriesKey, string(b))
+		}
+	}
+	return fmt.Errorf("查询不存在: %s", id)
+}

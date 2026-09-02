@@ -49,13 +49,21 @@ Routes: []registry.Route{
 				{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
 				{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
 				{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
+				{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
+				{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
+				{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
+				{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
 				{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
 				{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
 				{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
 				{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
 				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
-				{Path: "/api/dbmanager/data", Handler: h.handleData},
-				},
+			{Path: "/api/dbmanager/data", Handler: h.handleData},
+			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
+			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
+			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
+			{Path: "/api/dbmanager/drivers/install", Handler: h.handleDriverInstall},
+			},
 		}
 	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)
 	return module
@@ -650,8 +658,44 @@ func driverStatus(t string) (string, string) {
 	}
 	return "optional", ""
 }
-	// GET ?engine=... -> 获取指定引擎类型的默认配置
-	// POST {engine} -> 获取指定引擎类型的默认配置
+
+// ===== /api/dbmanager/drivers =====
+// GET -> 列出所有驱动的运行时状态
+//   builtin: 内置驱动, 开箱即用
+//   optional: 可选驱动, 已安装/可启用
+//   disabled: 未安装/不可用
+
+func (h *Handlers) handleDrivers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	all := AllEngineMetas()
+	out := make([]map[string]any, 0, len(all))
+	for _, m := range all {
+		status, reason := driverStatus(string(m.Type))
+		installed := false
+		if status == "optional" {
+			installed = gonavistatus.IsOptionalGoDriverBuildIncluded(string(m.Type))
+		}
+		out = append(out, map[string]any{
+			"type":      m.Type,
+			"label":     m.Label,
+			"short":     m.Short,
+			"category":  m.Category,
+			"color":     m.Color,
+			"status":    status,
+			"reason":    reason,
+			"installed": installed,
+			"builtin":   status == "builtin",
+		})
+	}
+	writeJSON(w, map[string]any{"drivers": out})
+}
+
+// ===== /api/dbmanager/engine-config =====
+// GET ?engine=... -> 获取指定引擎类型的默认配置
+// POST {engine} -> 获取指定引擎类型的默认配置
 
 func (h *Handlers) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -869,6 +913,88 @@ func (h *Handlers) exportToXLSX(res *QueryResult, buf *bytes.Buffer) error {
 	return xlsxFile.Write(buf)
 }
 
+// ===== /api/dbmanager/slow-sql =====
+// GET ?id=...&limit=20 -> 慢 SQL 列表 (MySQL performance_schema / 各引擎适配)
+
+func (h *Handlers) handleSlowSQL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if !reConnID.MatchString(id) {
+		writeErr(w, "id 格式非法", http.StatusBadRequest)
+		return
+	}
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+		if limit <= 0 || limit > 200 {
+			limit = 20
+		}
+	}
+
+	conn, err := h.store.Get(id)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	_ = ctx
+
+	db, _, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	var rows []map[string]interface{}
+	var cols []string
+
+	switch conn.Info.Engine {
+	case EngineMySQL:
+		query := fmt.Sprintf(`
+			SELECT DIGEST_TEXT, COUNT_STAR, SUM_TIMER_WAIT/1000000000 AS total_ms,
+			       AVG_TIMER_WAIT/1000000000 AS avg_ms, MAX_TIMER_WAIT/1000000000 AS max_ms,
+			       FIRST_SEEN, LAST_SEEN
+			FROM performance_schema.events_statements_summary_by_digest
+			WHERE SUM_TIMER_WAIT > 0
+			ORDER BY SUM_TIMER_WAIT DESC
+			LIMIT %d`, limit)
+		data, colNames, err := db.Query(query)
+		if err != nil {
+			writeErr(w, "查询慢 SQL 失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cols = colNames
+		for _, row := range data {
+			item := make(map[string]interface{})
+			for _, c := range colNames {
+				item[c] = row[c]
+			}
+			rows = append(rows, item)
+		}
+	default:
+		writeJSON(w, map[string]any{
+			"engine": conn.Info.Engine,
+			"rows": []any{},
+			"columns": []string{"digest_text", "count_star", "avg_ms", "total_ms", "max_ms", "first_seen", "last_seen"},
+			"note": fmt.Sprintf("%s 引擎暂不支持慢 SQL 采集", conn.Info.Engine),
+		})
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"engine":   conn.Info.Engine,
+		"rows":     rows,
+		"columns":  cols,
+		"limit":    limit,
+	})
+}
+
 // ===== /api/dbmanager/sync/* 跨库同步 =====
 // 方言对(MySQL 族 ↔ PostgreSQL 族)的 Schema 迁移 + 全量/增量数据同步。
 // 流程: POST plan 预览(类型映射/DDL/增量策略) → POST run 后台执行 → GET status 轮询进度。
@@ -975,4 +1101,257 @@ func (h *Handlers) handleSyncCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ===== /api/dbmanager/table-status =====
+// GET ?id=...&database=...&table=... -> 表属性 (SHOW TABLE STATUS / information_schema)
+
+func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	database := r.URL.Query().Get("database")
+	table := r.URL.Query().Get("table")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) || !reTableName.MatchString(table) {
+		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+		return
+	}
+
+	db, _, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	conn, err := h.store.Get(id)
+	if err != nil {
+		writeErr(w, "连接不存在", http.StatusNotFound)
+		return
+	}
+
+	var cols []string
+	var rows []map[string]interface{}
+
+	switch conn.Info.Engine {
+	case EngineMySQL, EngineMariaDB, EngineGoldendb:
+		query := fmt.Sprintf(`
+			SELECT TABLE_NAME, TABLE_TYPE, ENGINE, VERSION, ROW_FORMAT,
+			       TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH,
+			       DATA_FREE, AUTO_INCREMENT, CREATE_TIME, UPDATE_TIME,
+			       CHECK_TIME, TABLE_COLLATION, CHECKSUM, CREATE_OPTIONS, TABLE_COMMENT
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'`,
+			strings.ReplaceAll(database, "'", "''"), strings.ReplaceAll(table, "'", "''"))
+		data, colNames, err := db.Query(query)
+		if err != nil {
+			writeErr(w, "查询表属性失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cols = colNames
+		for _, row := range data {
+			item := make(map[string]interface{})
+			for _, c := range colNames {
+				item[c] = row[c]
+			}
+			rows = append(rows, item)
+		}
+	case EnginePostgreSQL, EngineOpenGauss, EngineGaussDB, EngineKingbase, EngineHighgo, EngineVastbase:
+		query := fmt.Sprintf(`
+			SELECT relname AS table_name, 'BASE TABLE' AS table_type,
+			       pg_size_pretty(pg_total_relation_size(quote_ident('%s')::regclass)) AS total_size,
+			       pg_total_relation_size(quote_ident('%s')::regclass) AS total_bytes,
+			       n_live_tup AS table_rows,
+			       pg_size_pretty(pg_relation_size(quote_ident('%s')::regclass)) AS data_size,
+			       pg_size_pretty(pg_indexes_size(quote_ident('%s')::regclass)) AS index_size
+			FROM pg_stat_user_tables
+			WHERE schemaname = '%s' AND relname = '%s'`,
+			strings.ReplaceAll(table, "'", "''"), strings.ReplaceAll(table, "'", "''"),
+			strings.ReplaceAll(table, "'", "''"), strings.ReplaceAll(table, "'", "''"),
+			strings.ReplaceAll(database, "'", "''"), strings.ReplaceAll(table, "'", "''"))
+		data, colNames, err := db.Query(query)
+		if err != nil {
+			writeErr(w, "查询表属性失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cols = colNames
+		for _, row := range data {
+			item := make(map[string]interface{})
+			for _, c := range colNames {
+				item[c] = row[c]
+			}
+			rows = append(rows, item)
+		}
+	default:
+		writeJSON(w, map[string]any{
+			"engine": conn.Info.Engine,
+			"note":   fmt.Sprintf("%s 引擎暂不支持表属性查询", conn.Info.Engine),
+			"columns": []string{"name", "value"},
+			"rows": []any{
+				map[string]any{"name": "引擎", "value": conn.Info.Engine},
+				map[string]any{"name": "数据库", "value": database},
+				map[string]any{"name": "表", "value": table},
+			},
+		})
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"engine":   conn.Info.Engine,
+		"columns":  cols,
+		"rows":     rows,
+	})
+}
+
+// ===== /api/dbmanager/explain =====
+// POST {id, sql, format?} -> 执行 EXPLAIN 并返回原始结果
+//   format: json (默认) | table | text
+
+func (h *Handlers) handleExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		ID     string `json:"id"`
+		SQL    string `json:"sql"`
+		Format string `json:"format"` // json | table | text
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !reConnID.MatchString(body.ID) {
+		writeErr(w, "id 格式非法", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.SQL) == "" {
+		writeErr(w, "sql 不能为空", http.StatusBadRequest)
+		return
+	}
+
+	conn, err := h.store.Get(body.ID)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	db, _, err := h.pool.Acquire(body.ID)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(body.ID)
+
+	format := body.Format
+	if format == "" {
+		format = "json"
+	}
+
+	explainSQL := fmt.Sprintf("EXPLAIN FORMAT=%s %s", format, body.SQL)
+	rows, cols, err := db.Query(explainSQL)
+	if err != nil {
+		writeErr(w, "EXPLAIN 执行失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	outRows := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		item := make(map[string]interface{})
+		for _, c := range cols {
+			item[c] = row[c]
+		}
+		outRows = append(outRows, item)
+	}
+
+	writeJSON(w, map[string]any{
+		"engine":   conn.Info.Engine,
+		"sql":      body.SQL,
+		"format":   format,
+		"columns":  cols,
+		"rows":     outRows,
+	})
+}
+
+// ===== /api/dbmanager/queries =====
+// GET -> 列出全部保存的查询
+func (h *Handlers) handleQueries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	list, err := h.store.ListSavedQueries()
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, list)
+}
+
+// ===== /api/dbmanager/queries/save =====
+// POST {name, sql, engine?, connId?} -> 保存查询
+func (h *Handlers) handleSaveQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body SavedQuery
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	q, err := h.store.SaveQuery(body)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, q)
+}
+
+// ===== /api/dbmanager/queries/delete =====
+// POST {id} -> 删除查询
+func (h *Handlers) handleDeleteQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		writeErr(w, "id 不能为空", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteSavedQuery(body.ID); err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ===== /api/dbmanager/drivers/install =====
+// POST {type: engineType} -> 触发可选驱动安装
+func (h *Handlers) handleDriverInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !engineTypeSupported(EngineType(body.Type)) {
+		writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
+		return
+	}
+	writeErr(w, "驱动安装功能开发中, 请使用 lite 全量构建或手动部署 driver-agent", http.StatusNotImplemented)
 }

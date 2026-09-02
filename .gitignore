@@ -6,6 +6,15 @@ known_hosts.json
 ssh_keys.json
 opscore.log
 
+# 运行期生成的数据(连接/SSH/缓存)与意外文件, 切勿提交
+data/
+*.bak
+*.bak-*
+nul
+
+# 实验性前端参考源码(未接入构建, 与 web/src 重复)
+src/
+
 # 构建产物
 bin/
 web/dist

@@ -1,12 +1,13 @@
-// 树状对象侧栏（对标 GoNavi Sidebar / dbx sidebar）:
-//   连接(引擎图标+状态点+hover 操作组) → 库 → [表(N)/视图(N)] → 对象(行数徽标)
-// 懒加载: 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单。
-
+// 树状对象侧栏（对�?GoNavi Sidebar / dbx sidebar�?
+//   连接(引擎图标+状态点+hover 操作�? �?�?�?[�?N)/视图(N)] �?对象(行数徽标)
+// 懒加�? 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单�?
+import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 interface TreeNode {
   key: string
@@ -39,6 +40,10 @@ export default function ConnectionTree({
   const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({})
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
+
+  const isSystemDb = (db: string) => {
+    return db === 'information_schema' || db === 'performance_schema' || db === 'mysql' || db === 'sys' || db.startsWith('pg_')
+  }
 
   const f = filter.trim().toLowerCase()
   const visibleConns = useMemo(
@@ -90,6 +95,38 @@ export default function ConnectionTree({
     }
   }
 
+  const buildMenuItems = (node: TreeNode): ContextMenuItem[] => {
+    if (node.level === 'conn' && node.conn) {
+      return [
+        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db || '') },
+        { label: '测试连接', icon: '🔌', onClick: () => quickTest(node.conn!) },
+        { divider: true },
+        { label: '编辑连接', icon: '✏️', onClick: () => onEditConn(node.conn!) },
+        { label: '删除连接', icon: '🗑', danger: true, onClick: () => remove(node.conn!) },
+      ]
+    }
+    if (node.level === 'db' && node.conn && node.db) {
+      const sys = isSystemDb(node.db)
+      return [
+        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '刷新列表', icon: '🔄', onClick: () => { loadTables(node.conn!.id, node.db!) } },
+        { divider: true },
+        { label: sys ? '系统库 (不可删除)' : '删除数据库', icon: '🗑', danger: true, disabled: sys, onClick: () => {} },
+      ]
+    }
+    if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
+      return [
+        { label: '查看数据', icon: '📊', onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
+        { label: '查看结构 / DDL', icon: '📋', onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
+        { label: '表属性', icon: '⚙️', onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
+        { divider: true },
+        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '复制表名', icon: '📋', onClick: () => { navigator.clipboard?.writeText(node.table!) } },
+      ]
+    }
+    return []
+  }
+
   const quickTest = async (c: ConnectionInfo) => {
     setTesting(c.id)
     try {
@@ -115,30 +152,28 @@ export default function ConnectionTree({
   const rows: TreeNode[] = []
   for (const c of visibleConns) {
     const ckey = `conn:${c.id}`
-    const isOpen = expanded.has(ckey)
+    const isConnOpen = expanded.has(ckey)
     rows.push({ key: ckey, level: 'conn', label: c.name, conn: c })
-    if (!isOpen) continue
+    if (!isConnOpen) continue
     const dbs = dbCache[c.id] || []
     for (const db of dbs) {
       const dkey = `${ckey}|db:${db}`
       if (f && !db.toLowerCase().includes(f) && !c.name.toLowerCase().includes(f)) continue
+      const isDbOpen = expanded.has(dkey)
       rows.push({ key: dkey, level: 'db', label: db, conn: c, db })
-      if (!expanded.has(dkey)) continue
+      if (!isDbOpen) continue
       const ck2 = `${c.id}|${db}`
       const objs = tablesCache[ck2]
-      const groups: Array<{ label: string; level: 'table' | 'view'; items: string[] }> = objs ? [
-        { label: '表', level: 'table', items: objs.tables },
-        { label: '视图', level: 'view', items: objs.views },
-      ] : []
-      for (const g of groups) {
-        const gkey = `${dkey}|${g.level}`
-        const items = g.items.filter(t => !f || t.toLowerCase().includes(f))
-        if (g.level === 'view' && items.length === 0 && objs) continue
-        rows.push({ key: gkey, level: 'group', label: g.label, conn: c, db, count: items.length })
-        if (!expanded.has(gkey)) continue
-        for (const t of items) {
-          rows.push({ key: `${gkey}|${t}`, level: g.level, label: t, conn: c, db, table: t, leaf: true })
-        }
+      if (!objs) continue
+      // �?视图不再作为树节�? 改为平铺卡片(�?db 节点下方连续渲染)
+      const tables = objs.tables.filter(t => !f || t.toLowerCase().includes(f))
+      const views = objs.views.filter(t => !f || t.toLowerCase().includes(f))
+      // 用特殊的 group 节点标记, 渲染时展开为卡片
+      if (tables.length > 0) {
+        rows.push({ key: `${dkey}|group:table`, level: 'group', label: `表 (${tables.length})`, conn: c, db, count: tables.length })
+      }
+      if (views.length > 0) {
+        rows.push({ key: `${dkey}|group:view`, level: 'group', label: `视图 (${views.length})`, conn: c, db, count: views.length })
       }
     }
   }
@@ -184,7 +219,69 @@ export default function ConnectionTree({
           const depth = node.key.split('|').length - 1
           const isObj = node.level === 'table' || node.level === 'view'
           const isConn = node.level === 'conn'
-          const selected = selectedConnId === node.conn?.id && (isConn || isObj || node.level === 'db')
+          const isDb = node.level === 'db'
+          const isGroup = node.level === 'group'
+          const selected = selectedConnId === node.conn?.id && (isConn || isDb)
+
+          // 窗口式表卡片渲染 (group 展开后: 始终保留 group 节点, 展开时在下方追加卡片)
+          if (isGroup && node.conn && node.db) {
+            const ck2 = `${node.conn.id}|${node.db}`
+            const objs = tablesCache[ck2]
+            const tables = objs ? objs.tables.filter(t => !f || t.toLowerCase().includes(f)) : []
+            const views = objs ? objs.views.filter(t => !f || t.toLowerCase().includes(f)) : []
+            const isTableGroup = node.label.startsWith('表')
+            const items = isTableGroup ? tables : views
+            const itemLevel = isTableGroup ? 'table' : 'view'
+
+            return (
+              <React.Fragment key={node.key}>
+                <div
+                  className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
+                  style={{ paddingLeft: `${0.3 + depth * 0.9}rem` }}
+                  onClick={() => onNodeClick(node)}
+                  onContextMenu={e => {
+                    e.preventDefault()
+                    const menuItems = buildMenuItems(node)
+                    if (menuItems.length > 0) setMenu({ x: e.clientX, y: e.clientY, node })
+                  }}
+                  title={node.label}
+                >
+                  <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+                  <NodeIcon level={node.level} />
+                  <span className="db-tree-label">{node.label}</span>
+                  {node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
+                </div>
+                {expanded.has(node.key) && items.length > 0 && (
+                  <div className="db-tree-cards">
+                    {items.map(t => {
+                      const tblKey = `${node.key}|${t}`
+                      return (
+                        <div
+                          key={tblKey}
+                          className="db-tree-card"
+                          onClick={() => onOpenTable(node.conn!, node.db!, t, itemLevel === 'view')}
+                          title={`${t} @ ${node.db}`}
+                        >
+                          <span className="db-tree-card-icon">{itemLevel === 'view' ? '◱' : '▦'}</span>
+                          <span className="db-tree-card-label">{t}</span>
+                          <span className="db-tree-card-db">@{node.db}</span>
+                          <button
+                            className="db-tree-card-close"
+                            onClick={e => { e.stopPropagation(); onOpenTable(node.conn!, node.db!, t, itemLevel === 'view') }}
+                            title="打开"
+                          >
+                            →
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </React.Fragment>
+            )
+          }
+
+          // 普通树节点 (连接 / 数据�?/ group 折叠�?
           return (
             <div
               key={node.key}
@@ -192,16 +289,16 @@ export default function ConnectionTree({
               style={{ paddingLeft: `${0.3 + depth * 0.9}rem` }}
               onClick={() => onNodeClick(node)}
               onContextMenu={e => {
-                if (!isObj) return
                 e.preventDefault()
-                setMenu({ x: e.clientX, y: e.clientY, node })
+                const items = buildMenuItems(node)
+                if (items.length > 0) setMenu({ x: e.clientX, y: e.clientY, node })
               }}
               title={node.label}
             >
               <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} /> : <NodeIcon level={node.level} />}
               <span className="db-tree-label">{node.label}</span>
-              {node.level === 'group' && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
+              {isGroup && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>
@@ -219,14 +316,13 @@ export default function ConnectionTree({
           )
         })}
       </div>
-      {menu && menu.node.conn && menu.node.db && menu.node.table && (
-        <div className="db-tree-menu" style={{ left: menu.x, top: menu.y }}>
-          <div className="db-tree-menu-title">{menu.node.table}</div>
-          <button onClick={() => { onOpenTable(menu.node.conn!, menu.node.db!, menu.node.table!, menu.node.level === 'view'); setMenu(null) }}>查看数据</button>
-          <button onClick={() => { onNewQuery(menu.node.conn!, menu.node.db!); setMenu(null) }}>新建查询</button>
-          <button onClick={() => { onOpenDoc(menu.node.conn!, menu.node.db!, menu.node.table!); setMenu(null) }}>查看结构 / DDL</button>
-          <button onClick={() => { navigator.clipboard?.writeText(menu.node.table!); setMenu(null) }}>复制表名</button>
-        </div>
+      {menu && menu.node.conn && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={buildMenuItems(menu.node)}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   )

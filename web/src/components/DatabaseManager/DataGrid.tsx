@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { type QueryResult, type ColumnInfo, exportQuery, type ExportFormat } from './api'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 function renderCell(v: any): string {
   if (v === null || v === undefined) return ''
@@ -33,6 +34,8 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
   const [sortCol, setSortCol] = useState<number | null>(null)
   const [sortAsc, setSortAsc] = useState(true)
   const [copied, setCopied] = useState('')
+  const [ctxMenu, setCtxMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null)
+  const [rowCtxMenu, setRowCtxMenu] = useState<{ row: number; x: number; y: number } | null>(null)
 
   useEffect(() => {
     setSortCol(null); setSortAsc(true)
@@ -109,6 +112,41 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
     }).catch(() => {})
   }, [])
 
+  const buildCtxMenu = useCallback((row: number, col: number, x: number, y: number): ContextMenuItem[] => {
+    if (!result || !result.columns) return []
+    const colName = result.columns[col]
+    const cellValue = result.rows[row]?.[col]
+    const rowData = result.rows[row] || []
+    const items: ContextMenuItem[] = [
+      { label: '复制值', icon: '📋', onClick: () => copyCell(cellValue) },
+      { label: '复制整行', icon: '📋', onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { label: '复制列名', icon: '📋', onClick: () => navigator.clipboard?.writeText(colName) },
+      { divider: true },
+      { label: `筛选 ${colName} = 值`, icon: '🔍', onClick: () => { /* 外部通过 onFilter 回调处理 */ } },
+    ]
+    return items
+  }, [result, copyCell])
+
+  const buildRowCtxMenu = useCallback((row: number, x: number, y: number): ContextMenuItem[] => {
+    if (!result || !result.columns) return []
+    const rowData = result.rows[row] || []
+    const items: ContextMenuItem[] = [
+      { label: '复制整行', icon: '📋', onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { divider: true },
+    ]
+    result.columns.forEach((col, j) => {
+      const val = rowData[j]
+      items.push({
+        label: `筛选 ${col} = ${renderCell(val).slice(0, 30)}`,
+        icon: '🔍',
+        onClick: () => { /* 筛选逻辑 */ }
+      })
+    })
+    items.push({ divider: true })
+    items.push({ label: '导出当前页', icon: '📤', onClick: () => { /* 触发 export */ } })
+    return items
+  }, [result])
+
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [exportErr, setExportErr] = useState('')
 
@@ -166,6 +204,32 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
           </div>
         )}
       </div>
+
+      {/* 多语句执行摘要 */}
+      {result.statements && result.statements.length > 1 && (
+        <div className="db-stmts-summary">
+          <div className="db-stmts-title">执行摘要 · {result.statements.length} 条语句</div>
+          <div className="db-stmts-list">
+            {result.statements.map((s, i) => (
+              <div key={i} className={`db-stmt-item db-stmt-${s.type.toLowerCase()}`}>
+                <span className="db-stmt-num">{i + 1}</span>
+                <span className={`pill db-stmt-type-${s.type.toLowerCase()}`}>{s.type}</span>
+                <code className="db-stmt-sql" title={s.sql}>{s.sql.length > 80 ? s.sql.slice(0, 80) + '...' : s.sql}</code>
+                {s.error ? (
+                  <span className="pill pill-err" title={s.error}>失败</span>
+                ) : (
+                  <>
+                    <span className="dim">{s.durationMs}ms</span>
+                    {s.rows > 0 && <span className="dim">{s.rows} 行</span>}
+                    {s.affected > 0 && <span className="dim">{s.affected} 行</span>}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="table-wrap">
         <table className="db-table db-table-result">
           <thead>
@@ -189,12 +253,24 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
           </thead>
           <tbody>
             {viewRows.map((row, i) => (
-              <tr key={i}>
+              <tr
+                key={i}
+                onContextMenu={e => {
+                  e.preventDefault()
+                  if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'TD') {
+                    setRowCtxMenu({ row: i, x: e.clientX, y: e.clientY })
+                  }
+                }}
+              >
                 <td className="db-col-num">{i + 1}</td>
                 {row.map((cell, j) => (
-                  <td
+                   <td
                     key={j}
                     title={typeof cell === 'string' ? cell : undefined}
+                    onContextMenu={e => {
+                      e.preventDefault()
+                      setCtxMenu({ row: i, col: j, x: e.clientX, y: e.clientY })
+                    }}
                     onClick={() => {
                       if (editingCell?.row === i && editingCell?.col === j) return
                       if (isEditable) handleCellClick(i, j)
@@ -227,6 +303,22 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
           <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
           <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
         </div>
+      )}
+      {ctxMenu && result && result.columns && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={buildCtxMenu(ctxMenu.row, ctxMenu.col, ctxMenu.x, ctxMenu.y)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {rowCtxMenu && result && result.columns && (
+        <ContextMenu
+          x={rowCtxMenu.x}
+          y={rowCtxMenu.y}
+          items={buildRowCtxMenu(rowCtxMenu.row, rowCtxMenu.x, rowCtxMenu.y)}
+          onClose={() => setRowCtxMenu(null)}
+        />
       )}
     </div>
   )

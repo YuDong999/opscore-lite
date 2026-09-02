@@ -18,10 +18,15 @@ import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
+import DriverManagement from '../components/DatabaseManager/DriverManagement'
+import SlowSQLPanel from '../components/DatabaseManager/SlowSQLPanel'
+import TableStatusPanel from '../components/DatabaseManager/TableStatusPanel'
+import ExplainPanel from '../components/DatabaseManager/ExplainPanel'
+import SavedQueriesPanel from '../components/DatabaseManager/SavedQueriesPanel'
 
 interface WorkTab {
-  key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit'
+  key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries'
   connId: string
   db?: string
   table?: string
@@ -46,6 +51,8 @@ export default function DatabaseManagerModule() {
   const [result, setResult] = useState<QueryResult | null>(null)
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
+  const [showConnPanel, setShowConnPanel] = useState(false)
+  const [editConn, setEditConn] = useState<ConnectionInfo | null>(null)
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
@@ -142,6 +149,20 @@ export default function DatabaseManagerModule() {
     <div className="module db-module">
       <div className="module-head db-module-head">
         <h2>数据库管理</h2>
+        <div className="db-head-global-actions">
+          <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>⬇ 驱动</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>📋 查询</button>
+          {conn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="慢 SQL" onClick={() => openTab({ key: `slow:${conn.id}`, kind: 'slow', connId: conn.id, label: '慢 SQL' })}>🐢 慢 SQL</button>
+          )}
+          {conn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="执行计划" onClick={() => openTab({ key: `explain:${conn.id}`, kind: 'explain', connId: conn.id, label: '执行计划' })}>🔍 执行计划</button>
+          )}
+          <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>✦ 审计</button>
+          {conn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>⇄ 同步</button>
+          )}
+        </div>
         {activeConn && (
           <div className="db-head-info">
             <span className="pill">
@@ -179,11 +200,6 @@ export default function DatabaseManagerModule() {
 
       <div className="db-layout">
         <aside className="db-side">
-          <ConnectionPanel
-            selected={conn}
-            onSelect={handleSelectConn}
-            onConnsChange={setConns}
-          />
           <ConnectionTree
             conns={conns}
             selectedConnId={conn?.id}
@@ -191,8 +207,8 @@ export default function DatabaseManagerModule() {
             onNewQuery={handleNewQuery}
             onOpenDoc={handleOpenDoc}
             onSelectConn={handleSelectConn}
-            onEditConn={(c) => window.dispatchEvent(new CustomEvent('dbmanager:edit-conn', { detail: c }))}
-            onNewConn={() => window.dispatchEvent(new CustomEvent('dbmanager:new-conn'))}
+            onEditConn={(c) => { setEditConn(c); setShowConnPanel(true) }}
+            onNewConn={() => { setEditConn(null); setShowConnPanel(true) }}
             onConnsChange={setConns}
             notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
           />
@@ -222,41 +238,44 @@ export default function DatabaseManagerModule() {
                     <span className="db-worktab-close" onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</span>
                   </div>
                 ))}
-                {conn && (
-                  <div className="db-worktabs-fixed">
-                    <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步"
-                      onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>⇄ 同步</button>
-                    <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志"
-                      onClick={() => openTab({ key: `audit:${conn.id}`, kind: 'audit', connId: conn.id, label: '审计' })}>✦ 审计</button>
-                  </div>
-                )}
               </div>
               {tabs.map(t => {
                 if (t.key !== activeTab) return null
-                const c = connById.get(t.connId)
-                if (!c) return <div className="db-empty">连接不存在, 请关闭此标签</div>
+                const c = t.connId ? connById.get(t.connId) : null
+                const needsConn = !['drivers', 'audit', 'queries'].includes(t.kind)
+                if (needsConn && !c) return <div className="db-empty">连接不存在, 请关闭此标签</div>
                 switch (t.kind) {
                   case 'data':
-                    return <DataPanel key={t.key} conn={c} database={t.db!} table={t.table!} isView={t.isView} />
+                    return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView} />
                   case 'query':
                     return (
                       <div className="db-query-section" key={t.key}>
                         <QueryEditor
-                          connId={c.id}
-                          engine={c.engine}
+                          connId={c!.id}
+                          engine={c!.engine}
                           onResult={handleResult}
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={setLastSQL}
                         />
-                        {result && <DataGrid result={result} connId={c.id} sql={lastSQL} />}
+                        {result && <DataGrid result={result} connId={c!.id} sql={lastSQL} />}
                       </div>
                     )
                   case 'doc':
-                    return <DocPanel key={t.key} connId={c.id} database={t.db!} table={t.table!} />
+                    return <DocPanel key={t.key} connId={c!.id} database={t.db!} table={t.table!} />
                   case 'sync':
-                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c.id} /></div>
+                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} /></div>
                   case 'audit':
                     return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
+                  case 'drivers':
+                    return <div className="db-driver-section" key={t.key}><DriverManagement /></div>
+                  case 'slow':
+                    return <div className="db-slow-section" key={t.key}><SlowSQLPanel connId={t.connId} /></div>
+                  case 'status':
+                    return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
+                  case 'explain':
+                    return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={lastSQL} /></div>
+                  case 'queries':
+                    return <div className="db-queries-section" key={t.key}><SavedQueriesPanel conns={conns} activeConn={activeConn} /></div>
                   default:
                     return null
                 }
@@ -265,6 +284,19 @@ export default function DatabaseManagerModule() {
           )}
         </main>
       </div>
+
+      {/* 连接编辑浮层 (替代侧栏内的 ConnectionPanel) */}
+      {showConnPanel && (
+        <div className="db-conn-overlay" onClick={() => setShowConnPanel(false)}>
+          <div className="db-conn-drawer" onClick={e => e.stopPropagation()}>
+            <ConnectionPanel
+              selected={editConn}
+              onSelect={c => { handleSelectConn(c); setShowConnPanel(false) }}
+              onConnsChange={setConns}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
