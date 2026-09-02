@@ -134,7 +134,7 @@ main.go registerCoreModules         插件中心 UI (/plugins)
              ③ 前端 MODULE_MAP 加组件 (+侧栏分组渲染可选)
 ```
 
-**8 大模块一览：**
+**9 大模块一览：**
 
 | ID | 名称 | Group | 代表能力 |
 |---|---|---|---|
@@ -144,6 +144,7 @@ main.go registerCoreModules         插件中心 UI (/plugins)
 | diagnostics | 系统诊断 | core | 网络诊断/登录审计/系统更新 |
 | tasks | 任务与存储 | core | cron CRUD/磁盘分区挂载/LVM/SMART |
 | ansible | Ansible 多机管理 | core | 清单/Playbook/Ad-hoc/SSE 实时流/SSH 密钥 |
+| cicd | CI/CD 流水线 | core | 代码库/镜像仓库连接, K8s·Docker·裸机发布模板, Webhook·cron·手动触发, 进度与实时日志, 凭据中心/脚本库 (见 docs/cicd) |
 | plugins | 插件中心 | plugin | Manifest 契约展示/扫描/接入移除 |
 | containers | 容器管理 ★ | plugin | Docker 启停删除日志镜像连接走向/K8s 只读巡检 |
 

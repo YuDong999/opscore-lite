@@ -17,6 +17,7 @@ import (
 	"opscore/internal/ansible"
 	"opscore/internal/auth"
 	"opscore/internal/central"
+	"opscore/internal/cicd"
 	"opscore/internal/dbmanager"
 	"opscore/internal/kubernetes"
 	"opscore/internal/handlers"
@@ -101,6 +102,15 @@ func main() {
 	sshPool := remote.NewPool()
 	handlers.InitPool(sshPool)
 	defer sshPool.Close()
+
+	// CI/CD 引擎: 领域层(internal/cicd)与执行通道(handlers.CicdExec)在此缝合
+	cicdEngine, err := cicd.NewEngine(dataDir)
+	if err != nil {
+		log.Fatalf("init cicd engine: %v", err)
+	}
+	cicdEngine.Exec = handlers.CicdExec
+	handlers.InitCicd(cicdEngine)
+	defer cicdEngine.Stop()
 
 	agentAddr := os.Getenv("OPCORE_AGENT_LISTEN")
 	if agentAddr == "" {
@@ -410,6 +420,34 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/ansible/ssh/deploy", Handler: handlers.SSHCmdDeploy},
 			{Path: "/api/ansible/ssh/test", Handler: handlers.SSHCmdTest},
 			{Path: "/api/ansible/ssh/bind", Handler: handlers.SSHCmdBind},
+		}},
+		{man("cicd", "CI/CD 流水线", "cicd", "/cicd", "core", "流水线编排 / 多主机构建部署 / Webhook·定时·手动触发 / 实时日志"), []registry.Route{
+			{Path: "/api/cicd/pipelines", Handler: handlers.CicdPipelines},
+			{Path: "/api/cicd/pipeline/get", Handler: handlers.CicdPipelineGet},
+			{Path: "/api/cicd/pipeline/save", Handler: handlers.CicdPipelineSave},
+			{Path: "/api/cicd/pipeline/delete", Handler: handlers.CicdPipelineDelete},
+			{Path: "/api/cicd/pipeline/run", Handler: handlers.CicdPipelineRun},
+			{Path: "/api/cicd/run/cancel", Handler: handlers.CicdRunCancel},
+			{Path: "/api/cicd/runs", Handler: handlers.CicdRuns},
+			{Path: "/api/cicd/run/get", Handler: handlers.CicdRunGet},
+			{Path: "/api/cicd/run/log", Handler: handlers.CicdRunLog},
+			{Path: "/api/cicd/run/stream", Handler: handlers.CicdRunStream},
+			{Path: "/api/cicd/webhook/", Handler: handlers.CicdWebhook},
+			{Path: "/api/cicd/overview", Handler: handlers.CicdOverview},
+			{Path: "/api/cicd/credentials", Handler: handlers.CicdCredentials},
+			{Path: "/api/cicd/credential/save", Handler: handlers.CicdCredentialSave},
+			{Path: "/api/cicd/credential/delete", Handler: handlers.CicdCredentialDelete},
+			{Path: "/api/cicd/repos", Handler: handlers.CicdRepos},
+			{Path: "/api/cicd/repo/save", Handler: handlers.CicdRepoSave},
+			{Path: "/api/cicd/repo/delete", Handler: handlers.CicdRepoDelete},
+			{Path: "/api/cicd/repo/test", Handler: handlers.CicdRepoTest},
+			{Path: "/api/cicd/registries", Handler: handlers.CicdRegistries},
+			{Path: "/api/cicd/registry/save", Handler: handlers.CicdRegistrySave},
+			{Path: "/api/cicd/registry/delete", Handler: handlers.CicdRegistryDelete},
+			{Path: "/api/cicd/registry/test", Handler: handlers.CicdRegistryTest},
+			{Path: "/api/cicd/scripts", Handler: handlers.CicdScripts},
+			{Path: "/api/cicd/script/save", Handler: handlers.CicdScriptSave},
+			{Path: "/api/cicd/script/delete", Handler: handlers.CicdScriptDelete},
 		}},
 		{man("plugins", "插件中心", "puzzle", "/plugins", "plugin", "可插拔模块管理"), []registry.Route{
 			{Path: "/api/plugins", Handler: handlers.PluginList},
