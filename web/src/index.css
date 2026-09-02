@@ -2071,3 +2071,16 @@ body {
 }
 .db-conn-panel { box-shadow: 0 0 0 200vmax rgba(15, 18, 34, 0.32), var(--shadow); }
 .db-conn-panel .db-engine-grid { grid-template-columns: repeat(auto-fill, minmax(7.6rem, 1fr)); }
+
+/* V4: 表单布局防冲突 — 主站 .db-form label(column) 会命中向导全部后代 label,
+   所有 dbmanager 表单 label 显式声明方向; checkbox 不拉伸 */
+.db-advanced-toggle { flex-direction: row !important; flex-wrap: nowrap; align-items: center !important; }
+.db-advanced-toggle input[type="checkbox"] { width: auto !important; flex: 0 0 auto; margin: 0; }
+.db-form > label, .db-form-row > label, .db-advanced-block > label { flex-direction: column !important; }
+.db-advanced-toggle input[type="checkbox"] + span,
+.db-advanced-toggle span { white-space: nowrap; }
+.db-form input[type="checkbox"], .db-advanced-block input[type="checkbox"] { width: auto !important; }
+
+/* V5: 主站 .input 的 min-width:9.375rem 撑爆固定宽度 label 内的输入框 → 向导内归零 */
+.db-conn-panel input, .db-conn-panel select { min-width: 0 !important; }
+.db-conn-panel .input { min-width: 0 !important; }
