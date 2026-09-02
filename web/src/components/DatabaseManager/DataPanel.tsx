@@ -2,7 +2,7 @@
 // 复用 DataGrid(排序/复制/导出)。
 
 import { useCallback, useEffect, useState } from 'react'
-import { type ConnectionInfo, fetchData, type TableData } from './api'
+import { type ConnectionInfo, fetchData, describeTable, type TableData } from './api'
 import DataGrid from './DataGrid'
 
 export default function DataPanel({
@@ -14,6 +14,7 @@ export default function DataPanel({
   isView?: boolean
 }) {
   const [data, setData] = useState<TableData | null>(null)
+  const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -31,6 +32,14 @@ export default function DataPanel({
       setBusy(false)
     }
   }, [conn.id, database, table, page, pageSize])
+
+  // 列类型(列头第二行), 拉一次
+  useEffect(() => {
+    setColTypes(undefined)
+    describeTable(conn.id, database, table)
+      .then(d => setColTypes(d.columns.map(c => c.type)))
+      .catch(() => setColTypes(undefined))
+  }, [conn.id, database, table])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setPage(1) }, [database, table])
@@ -68,6 +77,7 @@ export default function DataPanel({
         } : null}
         connId={conn.id}
         sql={`SELECT * FROM ${database}.${table}`}
+        columnTypes={colTypes}
       />
       <div className="db-data-pager">
         <span className="dim">共 {total} 行</span>

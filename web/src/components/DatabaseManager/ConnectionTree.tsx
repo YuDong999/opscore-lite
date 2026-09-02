@@ -1,12 +1,12 @@
-// 树状对象侧栏（P0 改造核心）:
-//   连接(在线状态) → 库 → [表(N)/视图(N) 分组] → 对象
-// 懒加载: 点开才请求。表节点: 单击打开数据浏览标签, 右键菜单(查看数据/新建查询/查看结构/复制表名)。
-// 顶部搜索框前端过滤。对标 GoNavi Sidebar / dbx sidebar。
+// 树状对象侧栏（对标 GoNavi Sidebar / dbx sidebar）:
+//   连接(引擎图标+状态点+hover 操作组) → 库 → [表(N)/视图(N)] → 对象(行数徽标)
+// 懒加载: 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单。
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listDatabases, listTables,
+  type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection,
 } from './api'
+import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 
 interface TreeNode {
   key: string
@@ -20,7 +20,7 @@ interface TreeNode {
 }
 
 export default function ConnectionTree({
-  conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn,
+  conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -28,12 +28,17 @@ export default function ConnectionTree({
   onNewQuery: (conn: ConnectionInfo, db: string) => void
   onOpenDoc: (conn: ConnectionInfo, db: string, table: string) => void
   onSelectConn: (conn: ConnectionInfo) => void
+  onEditConn: (conn: ConnectionInfo) => void
+  onNewConn: () => void
+  onConnsChange: (list: ConnectionInfo[]) => void
+  notify: (ok: boolean, msg: string) => void
 }) {
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [dbCache, setDbCache] = useState<Record<string, string[]>>({})      // connId -> dbs
-  const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({}) // connId.db -> 对象
+  const [dbCache, setDbCache] = useState<Record<string, string[]>>({})
+  const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({})
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null)
+  const [testing, setTesting] = useState<string | null>(null)
 
   const f = filter.trim().toLowerCase()
   const visibleConns = useMemo(
@@ -79,13 +84,34 @@ export default function ConnectionTree({
       if (!expanded.has(node.key)) loadDbs(node.conn.id)
       return
     }
-    if (node.level === 'db') { toggle(node.key); return }
-    if (node.level === 'group') { toggle(node.key); return }
+    if (node.level === 'db' || node.level === 'group') { toggle(node.key); return }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       onOpenTable(node.conn, node.db, node.table, node.level === 'view')
     }
   }
 
+  const quickTest = async (c: ConnectionInfo) => {
+    setTesting(c.id)
+    try {
+      const r = await testConnection({ id: c.id })
+      notify(r.ok, r.ok ? `${c.name}: ${r.version || '连接成功'}` : `${c.name}: ${r.error}`)
+    } catch (e: any) {
+      notify(false, `${c.name}: ${e.message}`)
+    } finally { setTesting(null) }
+  }
+
+  const remove = async (c: ConnectionInfo) => {
+    if (!confirm(`确认删除连接「${c.name}」?`)) return
+    try {
+      await deleteConnection(c.id)
+      notify(true, `已删除 ${c.name}`)
+      onConnsChange(conns.filter(x => x.id !== c.id))
+    } catch (e: any) {
+      notify(false, '删除失败: ' + e.message)
+    }
+  }
+
+  // 组装可见行
   const rows: TreeNode[] = []
   for (const c of visibleConns) {
     const ckey = `conn:${c.id}`
@@ -95,10 +121,7 @@ export default function ConnectionTree({
     const dbs = dbCache[c.id] || []
     for (const db of dbs) {
       const dkey = `${ckey}|db:${db}`
-      if (f && !db.toLowerCase().includes(f) && !c.name.toLowerCase().includes(f)) {
-        // 搜索时仅显示匹配库
-        continue
-      }
+      if (f && !db.toLowerCase().includes(f) && !c.name.toLowerCase().includes(f)) continue
       rows.push({ key: dkey, level: 'db', label: db, conn: c, db })
       if (!expanded.has(dkey)) continue
       const ck2 = `${c.id}|${db}`
@@ -110,8 +133,8 @@ export default function ConnectionTree({
       for (const g of groups) {
         const gkey = `${dkey}|${g.level}`
         const items = g.items.filter(t => !f || t.toLowerCase().includes(f))
-        if (g.level === 'view' && items.length === 0 && objs) continue // 空视图组不占位
-        rows.push({ key: gkey, level: 'group', label: `${g.label}${objs ? ` (${items.length})` : ''}`, conn: c, db, count: items.length })
+        if (g.level === 'view' && items.length === 0 && objs) continue
+        rows.push({ key: gkey, level: 'group', label: g.label, conn: c, db, count: items.length })
         if (!expanded.has(gkey)) continue
         for (const t of items) {
           rows.push({ key: `${gkey}|${t}`, level: g.level, label: t, conn: c, db, table: t, leaf: true })
@@ -120,7 +143,7 @@ export default function ConnectionTree({
     }
   }
 
-  // 懒加载触发: 展开状态变化时补数据
+  // 懒加载触发
   useEffect(() => {
     for (const key of expanded) {
       const [connPart, dbPart] = key.split('|')
@@ -137,7 +160,6 @@ export default function ConnectionTree({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded])
 
-  // 点击其它区域关闭右键菜单
   useEffect(() => {
     if (!menu) return
     const close = () => setMenu(null)
@@ -147,24 +169,27 @@ export default function ConnectionTree({
 
   return (
     <div className="db-tree">
-      <div className="db-tree-search">
+      <div className="db-tree-header">
         <input
-          className="input"
+          className="input db-tree-search"
           placeholder="搜索连接 / 库 / 表..."
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
+        <button className="db-tree-add" onClick={onNewConn} title="新建连接">+</button>
       </div>
       <div className="db-tree-body">
-        {rows.length === 0 && <div className="db-empty-sm">{conns.length === 0 ? '暂无连接' : '无匹配对象'}</div>}
+        {rows.length === 0 && <div className="db-empty-sm">{conns.length === 0 ? '暂无连接, 点右上 + 新建' : '无匹配对象'}</div>}
         {rows.map(node => {
           const depth = node.key.split('|').length - 1
           const isObj = node.level === 'table' || node.level === 'view'
+          const isConn = node.level === 'conn'
+          const selected = selectedConnId === node.conn?.id && (isConn || isObj || node.level === 'db')
           return (
             <div
               key={node.key}
-              className={`db-tree-node lv-${node.level}${isObj && selectedConnId === node.conn?.id ? '' : ''}`}
-              style={{ paddingLeft: `${0.4 + depth * 0.85}rem` }}
+              className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
+              style={{ paddingLeft: `${0.3 + depth * 0.9}rem` }}
               onClick={() => onNodeClick(node)}
               onContextMenu={e => {
                 if (!isObj) return
@@ -173,10 +198,23 @@ export default function ConnectionTree({
               }}
               title={node.label}
             >
-              <span className={`db-tree-caret ${expanded.has(node.key) && !node.leaf ? 'open' : ''}${node.leaf ? 'leaf' : ''}`} />
-              <span className={`db-tree-icon icon-${node.level}`} />
+              <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+              {isConn && node.conn ? <EngineIcon engine={node.conn.engine} /> : <NodeIcon level={node.level} />}
               <span className="db-tree-label">{node.label}</span>
-              {node.level === 'conn' && <span className="db-tree-dot" title="已保存连接" />}
+              {node.level === 'group' && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
+              {isConn && node.conn && (
+                <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
+                  <button title="测试连接" onClick={() => quickTest(node.conn!)}>
+                    {testing === node.conn.id ? <span className="db-spin" /> : <ActionIcon kind="test" />}
+                  </button>
+                  <button title="编辑" onClick={() => onEditConn(node.conn!)}>
+                    <ActionIcon kind="edit" />
+                  </button>
+                  <button title="删除" className="danger" onClick={() => remove(node.conn!)}>
+                    <ActionIcon kind="delete" />
+                  </button>
+                </span>
+              )}
             </div>
           )
         })}

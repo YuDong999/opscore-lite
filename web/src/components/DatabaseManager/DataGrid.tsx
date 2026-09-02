@@ -20,11 +20,12 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql }: {
+export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
   sql?: string
+  columnTypes?: (string | undefined)[]  // 列类型(数据浏览模式展示在列头第二行)
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
@@ -174,7 +175,14 @@ export default function DataGrid({ result, onEdit, connId, sql }: {
                 <th key={c} title="点击排序" onClick={() => {
                   if (sortCol === j) { setSortAsc(!sortAsc) } else { setSortCol(j); setSortAsc(true) }
                 }}>
-                  {c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}
+                  {columnTypes ? (
+                    <span className="db-th-two-line">
+                      <span className="db-th-name">{c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}</span>
+                      <span className="db-th-type">{columnTypes[j] || ''}</span>
+                    </span>
+                  ) : (
+                    <>{c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}</>
+                  )}
                 </th>
               ))}
             </tr>

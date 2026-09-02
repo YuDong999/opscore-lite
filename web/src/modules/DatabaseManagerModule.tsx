@@ -191,6 +191,10 @@ export default function DatabaseManagerModule() {
             onNewQuery={handleNewQuery}
             onOpenDoc={handleOpenDoc}
             onSelectConn={handleSelectConn}
+            onEditConn={(c) => window.dispatchEvent(new CustomEvent('dbmanager:edit-conn', { detail: c }))}
+            onNewConn={() => window.dispatchEvent(new CustomEvent('dbmanager:new-conn'))}
+            onConnsChange={setConns}
+            notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
           />
         </aside>
 

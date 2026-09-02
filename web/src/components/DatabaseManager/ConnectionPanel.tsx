@@ -88,7 +88,7 @@ export default function ConnectionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 监听外部"新建连接"触发(顶部 + 新建连接 按钮)
+  // 监听外部"新建连接"触发(概览页大按钮)
   useEffect(() => {
     const handler = () => startNew()
     window.addEventListener('dbmanager:new-conn', handler)
@@ -96,10 +96,16 @@ export default function ConnectionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 监听树上的"编辑连接"触发(detail = ConnectionInfo)
   useEffect(() => {
-    if (newConnTrigger && newConnTrigger > 0) startNew()
+    const handler = (e: Event) => {
+      const c = (e as CustomEvent<ConnectionInfo>).detail
+      if (c?.id) startEdit(c)
+    }
+    window.addEventListener('dbmanager:edit-conn', handler)
+    return () => window.removeEventListener('dbmanager:edit-conn', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newConnTrigger])
+  }, [])
 
   const startNew = () => {
     setEditing({ engine: undefined, config: { host: '127.0.0.1', port: 0, database: '', username: '', sslMode: 'preferred' } })
@@ -194,52 +200,9 @@ export default function ConnectionPanel({
     }
   }
 
-  // ── 列表 ──
+  // ── 列表已由 ConnectionTree 承担; 面板只负责新建/编辑向导 ──
   if (step === 'list') {
-    return (
-      <div className="db-conn-panel">
-        <div className="db-conn-list-head">
-          <span>连接 ({conns.length})</span>
-          <button className="btn-glass-soft btn-glass-soft-sm" onClick={startNew}>+ 新建连接</button>
-        </div>
-        {loading ? (
-          <div className="log-loading">加载中...</div>
-        ) : conns.length === 0 ? (
-          <div className="db-empty">暂无连接, 点击「+ 新建连接」开始</div>
-        ) : (
-          <ul className="db-conn-ul">
-            {conns.map(c => {
-              const meta = getEngineMeta(c.engine)
-              return (
-                <li
-                  key={c.id}
-                  className={`db-conn-item ${selected?.id === c.id ? 'active' : ''}`}
-                  onClick={() => onSelect(c)}
-                >
-                  <div className="db-conn-item-main">
-                    <div className="db-conn-item-name">
-                      <span className={`db-engine-badge db-engine-${c.engine}`}>
-                        {meta?.label.split(' ')[0] || c.engine}
-                      </span>
-                      {c.name}
-                    </div>
-                    <div className="db-conn-item-host">
-                      {c.config.username ? `${c.config.username}@` : ''}{c.config.host}:{c.config.port}
-                      {c.config.database ? `/${c.config.database}` : ''}
-                    </div>
-                  </div>
-                  <div className="db-conn-item-actions" onClick={e => e.stopPropagation()}>
-                    <button className="btn-glass-soft btn-glass-soft-sm" title="测试连接" onClick={() => quickTest(c)}>测试</button>
-                    <button className="btn-glass-soft btn-glass-soft-sm" title="编辑" onClick={() => startEdit(c)}>编辑</button>
-                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" title="删除" onClick={() => remove(c)}>删</button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
-    )
+    return null
   }
 
   // ── 第 1 步: 选引擎 ──
