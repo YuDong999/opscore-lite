@@ -68,7 +68,8 @@ type Step struct {
 	Command        string   `json:"command"`
 	ContinueOnFail bool     `json:"continueOnFail"`
 	TimeoutMin     int      `json:"timeoutMin"`
-	Artifacts      []string `json:"artifacts"` // 制品路径(相对工作目录, 支持 * 通配), 步骤成功后归档
+	Artifacts      []string `json:"artifacts"`     // 制品路径(相对工作目录, 支持 * 通配), 步骤成功后归档
+	PullArtifact   string   `json:"pullArtifact"`  // 运行前把同次运行已收集的制品推送到本步骤主机工作目录
 }
 
 // Stage 顺序执行的阶段, 回答"在哪台主机上做什么"
@@ -173,6 +174,10 @@ type ExecFunc func(ctx context.Context, hostID, workspace, command string, env [
 // 本机直接捕获; 远程经 base64 文本通道传输后由实现方解码。
 // 未注入(nil)时制品收集自动跳过并记日志。
 type CollectFunc func(ctx context.Context, hostID, workspace, command string) ([]byte, error)
+
+// PushFunc 把制品字节推送到目标主机路径(远程经 SSH stdin)。
+// 未注入(nil)时远程拉取制品的步骤直接失败并给出明确提示。
+type PushFunc func(ctx context.Context, hostID, destPath string, data []byte) error
 
 // 默认并发与队列参数
 const (
@@ -305,6 +310,7 @@ type Engine struct {
 
 	Exec    ExecFunc    // main.go 注入
 	Collect CollectFunc // main.go 注入(制品归档; nil=跳过收集)
+	Push    PushFunc    // main.go 注入(制品分发; nil=远程拉取失败)
 
 	mu         sync.RWMutex
 	pipes      []*Pipeline
@@ -504,6 +510,13 @@ func (e *Engine) SavePipeline(p *Pipeline) error {
 	}
 	if p.Trigger.Webhook && p.Trigger.Secret == "" {
 		p.Trigger.Secret = NewSecret()
+	}
+	for _, st := range p.Stages {
+		for _, sp := range st.Steps {
+			if sp.PullArtifact != "" && !reArtifactFile.MatchString(sp.PullArtifact) {
+				return fmt.Errorf("拉取制品文件名无效: %q(应为 s<阶段>-step<步骤>.tar.gz)", sp.PullArtifact)
+			}
+		}
 	}
 
 	e.mu.Lock()
@@ -885,12 +898,26 @@ overall:
 			e.persistRuns()
 			writeLine(fmt.Sprintf("──── [步骤 %d/%d] %s ────", j+1, len(defs), step.Name))
 
-			stepCtx, stepCancel := context.WithCancel(ctx)
-			if step.TimeoutMin > 0 {
-				stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMin)*time.Minute)
+			stepEnv := stageEnv
+			var exit int
+			var execErr error
+			if step.PullArtifact != "" {
+				if perr := e.pullArtifact(ctx, run.ID, step.PullArtifact, stage, writeLine); perr != nil {
+					exit, execErr = -1, perr
+				} else {
+					stepEnv = append(append([]Var{}, stageEnv...), Var{Name: "CICD_ARTIFACT", Value: step.PullArtifact})
+				}
 			}
-			exit, execErr := e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stageEnv, writeLine)
-			stepCancel()
+			if execErr == nil {
+				stepCtx, stepCancel := context.WithCancel(ctx)
+				if step.TimeoutMin > 0 {
+					stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMin)*time.Minute)
+				}
+				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stepEnv, writeLine)
+				stepCancel()
+			} else {
+				exit = -1
+			}
 			e.mu.Lock()
 			spr.FinishedAt = time.Now()
 			spr.DurationMs = spr.FinishedAt.Sub(spr.StartedAt).Milliseconds()
@@ -1385,6 +1412,67 @@ func (e *Engine) ArtifactFile(runID, file string) (string, error) {
 	}
 	return p, nil
 }
+
+// pullArtifact 把同次运行中已收集的制品推送到阶段目标主机的工作目录,
+// 随后该步骤命令可用 $CICD_ARTIFACT 引用文件名(如 tar xzf $CICD_ARTIFACT)。
+func (e *Engine) pullArtifact(ctx context.Context, runID, file string, stage *Stage, writeLine func(string)) error {
+	if !reArtifactFile.MatchString(file) {
+		return fmt.Errorf("制品文件名非法: %q", file)
+	}
+	src := filepath.Join(e.artDir, runID, file)
+	st, err := os.Stat(src)
+	if err != nil {
+		return errors.New("制品不存在(需引用同一次运行中更早步骤已收集的制品)")
+	}
+	if stage.Host == "" { // 本机: 直接复制
+		base := stage.Workspace
+		if base == "" {
+			if base, err = os.Getwd(); err != nil {
+				return err
+			}
+		}
+		dest := filepath.Join(base, file)
+		if err := copyFile(src, dest); err != nil {
+			return err
+		}
+		writeLine(fmt.Sprintf("📥 [制品] %s (%s) → 本机:%s", file, humanBytes(st.Size()), dest))
+		return nil
+	}
+	if e.Push == nil {
+		return errors.New("制品推送回调未初始化, 无法向远程主机分发")
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	dest := file
+	if stage.Workspace != "" {
+		dest = stage.Workspace + "/" + file
+	}
+	if err := e.Push(ctx, stage.Host, dest, data); err != nil {
+		return err
+	}
+	writeLine(fmt.Sprintf("📥 [制品] %s (%s) → %s:%s", file, humanBytes(st.Size()), displayHost(stage.Host), dest))
+	return nil
+}
+
+func copyFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+// ValidArtifactFile 供 HTTP 层校验拉取制品文件名格式
+func ValidArtifactFile(name string) bool { return reArtifactFile.MatchString(name) }
 
 func humanBytes(n int64) string {
 	switch {

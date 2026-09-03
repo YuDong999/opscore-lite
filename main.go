@@ -111,6 +111,7 @@ func main() {
 	}
 	cicdEngine.Exec = handlers.CicdExec
 	cicdEngine.Collect = handlers.CicdCollect
+	cicdEngine.Push = handlers.CicdPush
 	handlers.InitCicd(cicdEngine)
 	defer cicdEngine.Stop()
 

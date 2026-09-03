@@ -109,6 +109,10 @@ Step 增加 `Artifacts []string`(制品路径, 相对工作目录, 支持 `* ? [
 - **白名单防注入**: 制品路径正则禁止引号/空白/`; $ & | < > \` 等元字符(通配符需要 shell 展开, 白名单即边界); 下载端点对 runID(禁 `/` `.`)与文件名(`s\d+-step\d+\.tar\.gz`)严格校验防目录穿越;
 - **清理**: 删除流水线与历史裁剪时同步删除制品目录。
 
+### 3.3.3 制品分发(v2.3)
+
+Step 增加 `PullArtifact`(拉取制品文件名): 步骤命令执行前把同次运行已收集的制品推送到阶段目标主机工作目录, 并注入 `CICD_ARTIFACT` 环境变量。本机直接复制; 远程经 `PushFunc` 回调(SSH stdin `cat > dest`, main.go 注入 handlers.CicdPush)。推送失败或制品不存在 → 步骤 failed 且不执行命令。保存时校验文件名格式。
+
 ### 3.3.1 阶段审批门禁(v2.1)
 
 Stage 增加 `Approval bool`: 开启后该阶段执行前暂停在 `waiting`, 由人工在运行详情中批准或拒绝(POST /api/cicd/run/approve):

@@ -8,7 +8,7 @@ import Card from '../components/Card'
 // ── 类型(与 internal/cicd 模型对应) ──
 interface Var { name: string; value: string; secret: boolean }
 interface Trigger { manual: boolean; webhook: boolean; secret: string; cron: string }
-interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number; artifacts?: string[] }
+interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number; artifacts?: string[]; pullArtifact?: string }
 interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 interface Source { repoId: string; branch: string }
 interface Pipeline {
@@ -282,6 +282,19 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
   )
 }
 
+// 枚举同流水线中当前步骤之前已声明制品的步骤(跨阶段+同阶段在前), 作为拉取候选
+function priorArtifactSteps(p: Pipeline, si: number, i: number): { value: string; label: string }[] {
+  const out: { value: string; label: string }[] = []
+  p.stages.forEach((st, x) => {
+    st.steps.forEach((sp, y) => {
+      if ((sp.artifacts?.length ?? 0) > 0 && (x < si || (x === si && y < i))) {
+        out.push({ value: `s${x + 1}-step${y + 1}.tar.gz`, label: `阶段${x + 1}·步骤${y + 1} ${sp.name}` })
+      }
+    })
+  })
+  return out
+}
+
 // ==================== 流水线编辑器 ====================
 
 function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose: () => void; onSaved: () => void }) {
@@ -506,6 +519,14 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
                     placeholder="构建产物路径, 逗号分隔, 支持 * 通配; 步骤成功后自动归档到服务端可下载"
                     onChange={e => setStep(si, i, { artifacts: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })}
                   />
+                  <select
+                    className="input sel-xs" title="执行前把已收集制品推送到本步骤主机工作目录, 命令中用 $CICD_ARTIFACT 引用"
+                    value={sp.pullArtifact || ''}
+                    onChange={e => setStep(si, i, { pullArtifact: e.target.value || undefined })}
+                  >
+                    <option value="">不拉取制品</option>
+                    {priorArtifactSteps(p, si, i).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
                 </div>
               </div>
             ))}

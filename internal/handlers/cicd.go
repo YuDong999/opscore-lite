@@ -104,6 +104,9 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 			if sp.TimeoutMin < 0 || sp.TimeoutMin > 1440 {
 				return fmt.Sprintf("步骤 %q 超时无效", sp.Name)
 			}
+			if sp.PullArtifact != "" && !cicd.ValidArtifactFile(sp.PullArtifact) {
+				return fmt.Sprintf("步骤 %q 拉取制品文件名无效", sp.Name)
+			}
 		}
 	}
 	return ""
@@ -630,6 +633,26 @@ func firstLine(s string) string {
 		s = s[:200]
 	}
 	return s
+}
+
+// CicdPush 引擎制品分发回调: 本机直接写文件; 远程经 SSH stdin(cat > 目标路径)
+func CicdPush(ctx context.Context, hostID, destPath string, data []byte) error {
+	if IsLocalTarget(hostID) {
+		return os.WriteFile(destPath, data, 0644)
+	}
+	h := resolveAnsibleHost(hostID)
+	if h == nil {
+		return fmt.Errorf("目标主机不存在: %s", hostID)
+	}
+	if remotePool == nil {
+		return errors.New("远程执行池未初始化")
+	}
+	rm := resolveRemoteHost(*h)
+	res := remotePool.ExecWithInput(rm, "cat > "+Shq(destPath), data)
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	return nil
 }
 
 // CicdArtifactDownload 下载运行制品(GET, 支持 ?token= 认证以配合浏览器直接下载)
