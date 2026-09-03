@@ -26,6 +26,8 @@ func InitPluginStore(c central.CentralStore) {
 	}
 	// 确保dbmanager模块默认活跃
 	activeMap["dbmanager"] = true
+	// 确保logmonitor(日志监控)模块默认活跃
+	activeMap["logmonitor"] = true
 	activeMu.Unlock()
 }
 

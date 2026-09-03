@@ -16,6 +16,7 @@ import AnsibleModule from './modules/AnsibleModule'
 import ContainersModule from './modules/ContainersModule'
 import DatabaseManagerModule from './modules/DatabaseManagerModule'
 import CicdModule from './modules/CicdModule'
+import LogMonitorModule from './modules/LogMonitorModule'
 
 interface Manifest {
   id: string
@@ -34,8 +35,10 @@ const MODULE_MAP: Record<string, () => JSX.Element> = {
   tasks: TasksModule,
   plugins: PluginsModule,
   ansible: AnsibleModule,
+  containers: ContainersModule,
   dbmanager: DatabaseManagerModule,
   cicd: CicdModule,
+  logmonitor: LogMonitorModule,
 }
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {

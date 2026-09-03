@@ -51,8 +51,6 @@ export default function DatabaseManagerModule() {
   const [result, setResult] = useState<QueryResult | null>(null)
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
-  const [showConnPanel, setShowConnPanel] = useState(false)
-  const [editConn, setEditConn] = useState<ConnectionInfo | null>(null)
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
@@ -108,6 +106,15 @@ export default function DatabaseManagerModule() {
     openTab({ key: `doc:${c.id}.${db}.${table}`, kind: 'doc', connId: c.id, db, table, label: `${table} 结构` })
   }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
+
+  // 新建/编辑连接通过自定义事件交给 ConnectionPanel (其内部用 portal 渲染向导浮层)
+  const handleNewConn = () => {
+    window.dispatchEvent(new CustomEvent('dbmanager:new-conn'))
+  }
+  const handleEditConn = (c: ConnectionInfo) => {
+    setConn(c)
+    window.dispatchEvent(new CustomEvent('dbmanager:edit-conn', { detail: c }))
+  }
 
   // 解锁/锁定
   const onUnlock = async (minutes: number) => {
@@ -207,10 +214,15 @@ export default function DatabaseManagerModule() {
             onNewQuery={handleNewQuery}
             onOpenDoc={handleOpenDoc}
             onSelectConn={handleSelectConn}
-            onEditConn={(c) => { setEditConn(c); setShowConnPanel(true) }}
-            onNewConn={() => { setEditConn(null); setShowConnPanel(true) }}
+            onEditConn={handleEditConn}
+            onNewConn={handleNewConn}
             onConnsChange={setConns}
             notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
+          />
+          <ConnectionPanel
+            selected={null}
+            onSelect={handleSelectConn}
+            onConnsChange={setConns}
           />
         </aside>
 
@@ -284,19 +296,6 @@ export default function DatabaseManagerModule() {
           )}
         </main>
       </div>
-
-      {/* 连接编辑浮层 (替代侧栏内的 ConnectionPanel) */}
-      {showConnPanel && (
-        <div className="db-conn-overlay" onClick={() => setShowConnPanel(false)}>
-          <div className="db-conn-drawer" onClick={e => e.stopPropagation()}>
-            <ConnectionPanel
-              selected={editConn}
-              onSelect={c => { handleSelectConn(c); setShowConnPanel(false) }}
-              onConnsChange={setConns}
-            />
-          </div>
-        </div>
-      )}
     </div>
   )
 }

@@ -22,6 +22,7 @@ import (
 	"opscore/internal/kubernetes"
 	"opscore/internal/handlers"
 	"opscore/internal/hostkey"
+	"opscore/internal/logmonitor"
 	"opscore/internal/metrics"
 	"opscore/internal/module"
 	"opscore/internal/registry"
@@ -160,6 +161,16 @@ func main() {
 	dbMod := dbmanager.Module(dbStore, dbPool)
 	reg.Register(dbMod)
 	defer dbPool.Close()
+
+	// 日志监控模块(独立包, 使用 SQLite 元数据索引 + 分级文件存储)
+	logStore, err := logmonitor.RequireStore(filepath.Join(dataDir, "logmeta.db"))
+	if err != nil {
+		log.Fatalf("init log monitor store: %v", err)
+	}
+	defer logStore.Close()
+	logSvc := logmonitor.NewService(logStore)
+	lmMod := logmonitor.Module(logStore, logSvc, filepath.Join(dataDir, "logs"))
+	reg.Register(lmMod)
 
 	mux := http.NewServeMux()
 
