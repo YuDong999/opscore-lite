@@ -108,7 +108,7 @@ export default function DataPanel({
         {/* 视图切换 */}
         <div className="db-view-toggle">
           {([
-            { key: 'table', label: '▦ 表格' },
+            { key: 'table', label: '表格' },
             { key: 'json', label: '{ } JSON' },
             { key: 'text', label: 'T 文本' },
           ] as const).map(v => (

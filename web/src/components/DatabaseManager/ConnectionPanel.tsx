@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '../Toast'
+import { CategoryIcon } from './DbIcons'
 import {
   type ConnectionInfo,
   type ConnectionConfig,
@@ -32,16 +33,6 @@ const CATEGORY_LABELS: Record<EngineCategory, string> = {
   search:     '搜索/分析',
   mq:         '消息队列',
   custom:     '自定义',
-}
-
-const CATEGORY_ICONS: Record<EngineCategory, string> = {
-  relational: '🗄️',
-  document:   '📄',
-  vector:     '🧲',
-  timeseries: '📈',
-  search:     '🔍',
-  mq:         '📬',
-  custom:     '🧩',
 }
 
 const CATEGORY_ORDER: EngineCategory[] = ['relational', 'document', 'timeseries', 'vector', 'search', 'mq', 'custom']
@@ -227,7 +218,7 @@ export default function ConnectionPanel({
         {CATEGORY_ORDER.filter(c => groups[c]?.length > 0).map(cat => (
           <div key={cat} className="db-engine-group">
             <div className="db-engine-group-label">
-              <span className="db-engine-cat-icon">{CATEGORY_ICONS[cat]}</span>
+              <span className="db-engine-cat-icon"><CategoryIcon cat={cat} size={14} /></span>
               {CATEGORY_LABELS[cat]}
               <span className="db-engine-group-count">{groups[cat].length}</span>
             </div>

@@ -18,11 +18,23 @@ function isSystemSchema(db: string): boolean {
   return SYSTEM_SCHEMA_RULES.some(rule => rule(db))
 }
 
-// 表类型图标
-function tableIcon(type: string): string {
-  if (type === 'VIEW') return '◱'
-  if (type === 'SYSTEM VIEW') return '◱'
-  return '▦'
+// 表类型图标(SVG)
+function tableIcon(type: string): React.ReactNode {
+  const common = { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (type === 'VIEW' || type === 'SYSTEM VIEW') {
+    return (
+      <svg {...common}>
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+    </svg>
+  )
 }
 
 export default function CascadeSelector({

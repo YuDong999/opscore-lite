@@ -159,7 +159,7 @@ export default function ServicesModule() {
           <div className="head-tools" style={{ marginLeft: 'auto' }}>
             {view === 'services' && (
               <div className="search-box">
-                <span className="search-ico">🔍</span>
+                <span className="search-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg></span>
                 <input className="ipt search-ipt" placeholder="搜索服务，如 nginx" value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
             )}
@@ -364,13 +364,13 @@ function LogModal({ service, onClose }: { service: ServiceInfo; onClose: () => v
         <div className="log-panel-head">
           {hasJournal && hasFile ? (
             <div className="tab-row">
-              <button className={`tab ${tab === 'journalctl' ? 'tab-active' : ''}`} onClick={() => setTab('journalctl')}>📋 journalctl</button>
-              <button className={`tab ${tab === 'file' ? 'tab-active' : ''}`} onClick={() => setTab('file')}>📁 文件日志</button>
+              <button className={`tab ${tab === 'journalctl' ? 'tab-active' : ''}`} onClick={() => setTab('journalctl')}>journalctl</button>
+              <button className={`tab ${tab === 'file' ? 'tab-active' : ''}`} onClick={() => setTab('file')}>文件日志</button>
             </div>
           ) : hasJournal ? (
-            <span className="log-srclabel">📋 journalctl 日志</span>
+            <span className="log-srclabel">journalctl 日志</span>
           ) : hasFile ? (
-            <span className="log-srclabel">📁 文件日志</span>
+            <span className="log-srclabel">文件日志</span>
           ) : (
             <span className="log-srclabel">⚠ 无可识别日志来源</span>
           )}

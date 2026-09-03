@@ -98,30 +98,30 @@ export default function ConnectionTree({
   const buildMenuItems = (node: TreeNode): ContextMenuItem[] => {
     if (node.level === 'conn' && node.conn) {
       return [
-        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db || '') },
-        { label: '测试连接', icon: '🔌', onClick: () => quickTest(node.conn!) },
+        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db || '') },
+        { label: '测试连接', icon: <ActionIcon kind="test" />, onClick: () => quickTest(node.conn!) },
         { divider: true },
-        { label: '编辑连接', icon: '✏️', onClick: () => onEditConn(node.conn!) },
-        { label: '删除连接', icon: '🗑', danger: true, onClick: () => remove(node.conn!) },
+        { label: '编辑连接', icon: <ActionIcon kind="edit" />, onClick: () => onEditConn(node.conn!) },
+        { label: '删除连接', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => remove(node.conn!) },
       ]
     }
     if (node.level === 'db' && node.conn && node.db) {
       const sys = isSystemDb(node.db)
       return [
-        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db!) },
-        { label: '刷新列表', icon: '🔄', onClick: () => { loadTables(node.conn!.id, node.db!) } },
+        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
         { divider: true },
-        { label: sys ? '系统库 (不可删除)' : '删除数据库', icon: '🗑', danger: true, disabled: sys, onClick: () => {} },
+        { label: sys ? '系统库 (不可删除)' : '删除数据库', icon: <ActionIcon kind="delete" />, danger: true, disabled: sys, onClick: () => {} },
       ]
     }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       return [
-        { label: '查看数据', icon: '📊', onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
-        { label: '查看结构 / DDL', icon: '📋', onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
-        { label: '表属性', icon: '⚙️', onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
+        { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
+        { label: '查看结构 / DDL', icon: <ActionIcon kind="doc" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
+        { label: '表属性', icon: <ActionIcon kind="gear" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
         { divider: true },
-        { label: '新建查询', icon: '📝', onClick: () => onNewQuery(node.conn!, node.db!) },
-        { label: '复制表名', icon: '📋', onClick: () => { navigator.clipboard?.writeText(node.table!) } },
+        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '复制表名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!) } },
       ]
     }
     return []
@@ -262,7 +262,7 @@ export default function ConnectionTree({
                           onClick={() => onOpenTable(node.conn!, node.db!, t, itemLevel === 'view')}
                           title={`${t} @ ${node.db}`}
                         >
-                          <span className="db-tree-card-icon">{itemLevel === 'view' ? '◱' : '▦'}</span>
+                          <span className="db-tree-card-icon">{itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}</span>
                           <span className="db-tree-card-label">{t}</span>
                           <span className="db-tree-card-db">@{node.db}</span>
                           <button

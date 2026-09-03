@@ -3,6 +3,70 @@
 import { useEffect, useState } from 'react'
 import Card from '../components/Card'
 
+function pluginIcon(name: string): React.ReactNode {
+  const common = { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  switch (name) {
+    case 'cpu':
+      return (
+        <svg {...common}>
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <rect x="9" y="9" width="6" height="6" />
+          <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
+        </svg>
+      )
+    case 'server':
+      return (
+        <svg {...common}>
+          <rect x="2" y="3" width="20" height="7" rx="2" />
+          <rect x="2" y="14" width="20" height="7" rx="2" />
+          <path d="M6 6.5h.01M6 17.5h.01M10 6.5h.01M10 17.5h.01" />
+        </svg>
+      )
+    case 'network':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="2.5" />
+          <circle cx="5" cy="5" r="2.5" />
+          <circle cx="19" cy="5" r="2.5" />
+          <circle cx="5" cy="19" r="2.5" />
+          <circle cx="19" cy="19" r="2.5" />
+        </svg>
+      )
+    case 'activity':
+      return (
+        <svg {...common}>
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
+      )
+    case 'clipboard':
+      return (
+        <svg {...common}>
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+          <rect x="8" y="2" width="8" height="4" rx="1" />
+        </svg>
+      )
+    case 'puzzle':
+      return (
+        <svg {...common}>
+          <path d="M19.44 12.06 16 8.62V7a2 2 0 0 0-2-2h-1.15V3.2a1.5 1.5 0 0 0-3 0V5H8.62a2 2 0 0 0-2 2v1.15H5a1.5 1.5 0 0 0 0 3h1.62V13a2 2 0 0 0 2 2h1.15v1.15a1.5 1.5 0 0 0 3 0V15h1.15a2 2 0 0 0 2-2v-1.15h1.52a1 1 0 0 1 0 2.44l-1.24.86" />
+        </svg>
+      )
+    case 'box':
+      return (
+        <svg {...common}>
+          <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+          <path d="M3.3 8.3 12 12l8.7-3.7M12 22V12" />
+        </svg>
+      )
+    default:
+      return (
+        <svg {...common}>
+          <path d="M12 3v18M3 12h18" />
+        </svg>
+      )
+  }
+}
+
 interface PluginInfo {
   id: string
   name: string
@@ -105,13 +169,7 @@ export default function PluginsModule() {
                 {plugins.map((p) => (
                   <tr key={p.id}>
                     <td><span className="nav-icon" style={{ width:'1.5rem', height:'1.5rem', fontSize: 12 }}>
-                      {p.icon === 'cpu' && '⚙'}
-                      {p.icon === 'server' && '🖥'}
-                      {p.icon === 'network' && '🌐'}
-                      {p.icon === 'activity' && '📊'}
-                      {p.icon === 'clipboard' && '📋'}
-                      {p.icon === 'puzzle' && '🧩'}
-                      {p.icon === 'box' && '📦'}
+                      {pluginIcon(p.icon)}
                     </span></td>
                     <td>{p.name}</td>
                     <td className="dim" style={{ maxWidth:'12.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

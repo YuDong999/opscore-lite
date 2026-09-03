@@ -157,17 +157,17 @@ export default function DatabaseManagerModule() {
       <div className="module-head db-module-head">
         <h2>数据库管理</h2>
         <div className="db-head-global-actions">
-          <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>⬇ 驱动</button>
-          <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>📋 查询</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>驱动</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>查询</button>
           {conn && (
-            <button className="btn-glass-soft btn-glass-soft-sm" title="慢 SQL" onClick={() => openTab({ key: `slow:${conn.id}`, kind: 'slow', connId: conn.id, label: '慢 SQL' })}>🐢 慢 SQL</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" title="慢 SQL" onClick={() => openTab({ key: `slow:${conn.id}`, kind: 'slow', connId: conn.id, label: '慢 SQL' })}>慢 SQL</button>
           )}
           {conn && (
-            <button className="btn-glass-soft btn-glass-soft-sm" title="执行计划" onClick={() => openTab({ key: `explain:${conn.id}`, kind: 'explain', connId: conn.id, label: '执行计划' })}>🔍 执行计划</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" title="执行计划" onClick={() => openTab({ key: `explain:${conn.id}`, kind: 'explain', connId: conn.id, label: '执行计划' })}>执行计划</button>
           )}
-          <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>✦ 审计</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>审计</button>
           {conn && (
-            <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>⇄ 同步</button>
+            <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
           )}
         </div>
         {activeConn && (
@@ -178,9 +178,9 @@ export default function DatabaseManagerModule() {
             </span>
             {isProd && <span className="pill pill-err">生产</span>}
             {unlockState.unlocked ? (
-              <span className="pill pill-ok" title="写操作已解锁">🔓 写 {formatRemaining(unlockState.remainingSec)}</span>
+              <span className="pill pill-ok" title="写操作已解锁">写 {formatRemaining(unlockState.remainingSec)}</span>
             ) : (
-              <span className="pill pill-warn" title="默认只读, 写操作前需解锁">🔒 只读</span>
+              <span className="pill pill-warn" title="默认只读, 写操作前需解锁">只读</span>
             )}
             {unlockState.unlocked ? (
               <button className="btn-glass-soft btn-glass-soft-sm" onClick={onLock}>立即锁定</button>
@@ -245,7 +245,7 @@ export default function DatabaseManagerModule() {
                 {tabs.map(t => (
                   <div key={t.key} className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
                     onClick={() => setActiveTab(t.key)} title={t.label}>
-                    <span className="db-worktab-kind">{t.kind === 'data' ? '▦' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? '≡' : t.kind === 'sync' ? '⇄' : '✦'}</span>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
                     <span className="db-worktab-close" onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</span>
                   </div>

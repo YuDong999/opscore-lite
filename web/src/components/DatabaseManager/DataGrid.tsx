@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { type QueryResult, type ColumnInfo, exportQuery, type ExportFormat } from './api'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import { ActionIcon } from './DbIcons'
 
 function renderCell(v: any): string {
   if (v === null || v === undefined) return ''
@@ -118,11 +119,11 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
     const cellValue = result.rows[row]?.[col]
     const rowData = result.rows[row] || []
     const items: ContextMenuItem[] = [
-      { label: '复制值', icon: '📋', onClick: () => copyCell(cellValue) },
-      { label: '复制整行', icon: '📋', onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
-      { label: '复制列名', icon: '📋', onClick: () => navigator.clipboard?.writeText(colName) },
+      { label: '复制值', icon: <ActionIcon kind="copy" />, onClick: () => copyCell(cellValue) },
+      { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { label: '复制列名', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(colName) },
       { divider: true },
-      { label: `筛选 ${colName} = 值`, icon: '🔍', onClick: () => { /* 外部通过 onFilter 回调处理 */ } },
+      { label: `筛选 ${colName} = 值`, icon: <ActionIcon kind="search" />, onClick: () => { /* 外部通过 onFilter 回调处理 */ } },
     ]
     return items
   }, [result, copyCell])
@@ -131,19 +132,19 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
     if (!result || !result.columns) return []
     const rowData = result.rows[row] || []
     const items: ContextMenuItem[] = [
-      { label: '复制整行', icon: '📋', onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
       { divider: true },
     ]
     result.columns.forEach((col, j) => {
       const val = rowData[j]
       items.push({
         label: `筛选 ${col} = ${renderCell(val).slice(0, 30)}`,
-        icon: '🔍',
+        icon: <ActionIcon kind="search" />,
         onClick: () => { /* 筛选逻辑 */ }
       })
     })
     items.push({ divider: true })
-    items.push({ label: '导出当前页', icon: '📤', onClick: () => { /* 触发 export */ } })
+    items.push({ label: '导出当前页', icon: <ActionIcon kind="upload" />, onClick: () => { /* 触发 export */ } })
     return items
   }, [result])
 

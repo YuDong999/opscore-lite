@@ -2,6 +2,7 @@
 // 展示连接数/引擎分布/快速新建入口/安全提示。
 
 import { type ConnectionInfo, getEngineMeta, ENGINES, statusLabel, type EngineCategory, type EngineMeta } from './api'
+import { ActionIcon } from './DbIcons'
 
 const CATEGORY_LABEL: Record<EngineCategory, string> = {
   relational: '关系型',
@@ -151,21 +152,21 @@ export default function OverviewPanel({
 
       <div className="db-overview-tips">
         <div className="db-tip">
-          <span className="db-tip-icon">🔒</span>
+          <span className="db-tip-icon"><ActionIcon kind="lock" size={15} /></span>
           <div>
             <div className="db-tip-title">写操作默认锁定</div>
             <div className="db-tip-body dim">执行 INSERT/UPDATE/DELETE/DDL 前需主动解锁(临时授权), 期限一到自动回落</div>
           </div>
         </div>
         <div className="db-tip">
-          <span className="db-tip-icon">📋</span>
+          <span className="db-tip-icon"><ActionIcon kind="doc" size={15} /></span>
           <div>
             <div className="db-tip-title">全量审计</div>
             <div className="db-tip-body dim">所有 SQL 写入审计日志, 包含风险分级与决策记录</div>
           </div>
         </div>
         <div className="db-tip">
-          <span className="db-tip-icon">⚙️</span>
+          <span className="db-tip-icon"><ActionIcon kind="gear" size={15} /></span>
           <div>
             <div className="db-tip-title">环境感知</div>
             <div className="db-tip-body dim">生产库(名称/标签包含 prod)执行高危操作自动升级二次确认</div>
