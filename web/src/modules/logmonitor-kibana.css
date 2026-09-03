@@ -1,0 +1,643 @@
+/* ── Kibana Discover 三段式 日志检索布局 ──
+   视觉/交互参照 Elastic Kibana Discover:
+   顶栏(查询条+时间范围) / 左字段面板 / 中时间线柱状+文档列表 / 右详情抽屉
+   全部复用项目既有主题变量(--bg/--text/--accent/--border/--panel/--glass)
+*/
+
+/* 一、整体：全屏自适应三段式 */
+/* 外层页面容器：纵向铺满视口高度，让内部 .kib 的 100% 真正生效 */
+.kib-page {
+  height: calc(100vh - 120px); /* 扣除页头标题/tab/操作栏的大致高度，贴近真实屏幕尺寸(参照 db-module) */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.kib {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kib-err { border-color: var(--danger, #ff4d4f) !important; }
+
+/* 二、顶部查询条（Kibana Discover 顶栏） */
+.kib-topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel, rgba(255,255,255,0.6));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.kib-topbar-soon { font-size: 11px; color: var(--text-dim); }
+.kib-topbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.kib-topbar input[type="checkbox"] { accent-color: var(--accent); }
+
+/* 数据视图下拉(更像 Kibana 的索引模式选择) */
+.kib-dataview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.kib-dataview svg { flex: none; color: var(--accent); }
+.kib-dataview select {
+  appearance: none;
+  padding: 6px 26px 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.08));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  max-width: 220px;
+}
+
+/* 搜索/查询框 + 建议下拉 */
+.kib-search {
+  position: relative;
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+.kib-search input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.06));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.kib-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.kib-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.kib-suggest-item {
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.kib-suggest-item:hover, .kib-suggest-item.sel {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.kib-suggest-opt {
+  font-weight: 600;
+  color: var(--accent);
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+/* 三、主体三段 */
+.kib-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px 1fr; /* 左字段栏固定 240px(N长+堆叠)=解锁 08-25 */
+  gap: 10px;
+}
+/* 右抽屉覆盖在结果区右侧 */
+.kib-body.with-drawer {
+  grid-template-columns: 240px 1fr 420px;
+}
+
+/* 左侧字段面板（Kibana "可用字段"） */
+.kib-fields {
+  background: var(--panel, rgba(255,255,255,0.6));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.kib-fields-head {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg-soft, #888) 10%, transparent);
+}
+.kib-fields-search {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.kib-fields-search input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  background: var(--bg-soft, rgba(127,127,127,0.06));
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+}
+.kib-fields-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+.kib-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  transition: background 0.15s ease, outline-color 0.15s ease, color 0.15s ease;
+  outline: 1px solid transparent;
+}
+.kib-field:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.kib-field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.kib-field-type {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.kib-field.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.kib-fields-tip {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+/* 中间结果区 */
+.kib-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  /* 不自带滚动：直方图固定高度 + 文档列表弹性占满并内部滚动 */
+}
+.kib-hist-card {
+  background: var(--panel, rgba(255,255,255,0.6));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  flex: none; /* 直方图固定高度，不参与弹性伸缩 */
+}
+.kib-hist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.kib-hist-total { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 文档列表：占满中间区剩余高度，表格内部滚动 */
+.kib-docs {
+  background: var(--panel, rgba(255,255,255,0.6));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kib-docs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.kib-docs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.kib-docs-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.kib-docs-table th {
+  text-align: left;
+  padding: 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-soft, #888) 8%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kib-docs-table td {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kib-docs-table tbody tr { cursor: pointer; }
+.kib-docs-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.kib-docs-table tbody tr.row-on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.kib-docs-svc,
+.kib-docs-src { color: var(--text-secondary); font-size: 11px; }
+.kib-docs-sum {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.kib-hl {
+  color: var(--accent);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* 级别徽标 + 索引徽标 */
+.kib-lvl {
+  display: inline-block;
+  min-width: 46px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+.kib-idx {
+  display: inline-block;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  white-space: nowrap;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  cursor: help;
+}
+.kib-ts { color: var(--text-secondary); font-size: 11px; }
+
+/* 分页 */
+.kib-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+
+/* 右侧详情抽屉 */
+.kib-drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  justify-content: flex-end;
+}
+.kib-drawer {
+  width: 420px;
+  max-width: 92vw;
+  height: 100%;
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kib-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.kib-drawer-title { font-weight: 600; color: var(--text); }
+.kib-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kib-field-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kib-field-card-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.kib-field-card-row:last-child { border-bottom: none; }
+.kib-fc-name { color: var(--text-dim); font-size: 11px; width: 84px; flex: none; }
+.kib-fc-val {
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--text);
+  word-break: break-all;
+  white-space: pre-wrap;
+  min-height: 18px;
+  flex: 1;
+}
+.kib-raw-pre {
+  background: color-mix(in srgb, var(--bg, #000) 40%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.kib-drawer-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Toast */
+.kib-toast-wrap {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kib-toast {
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel, #fff);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  animation: kib-toast-in 0.2s ease-out;
+}
+.kib-toast-ok { border-left: 3px solid #34c759; }
+.kib-toast-err { border-left: 3px solid #ff4d4f; }
+.kib-toast-info { border-left: 3px solid var(--accent-2); }
+.kib-toast::before { content: ''; }
+@keyframes kib-toast-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* 空态 */
+.kib-empty {
+  padding: 30px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* 通用按钮: 参照 Kibana 扁平按钮 */
+.kib-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.kib-btn:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.kib-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kib-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kib-btn-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.kib-btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }
+.kib-btn-bare {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.kib-btn-bare:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.kib-btn-bare-danger:hover { color: #ff4d4f; background: color-mix(in srgb, #ff4d4f 10%, transparent); }
+
+.kib-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: color-mix(in srgb, #34c759 12%, transparent);
+  color: #34c759;
+}
+.kib-live.on {
+  background: color-mix(in srgb, #ff4d4f 14%, transparent);
+  color: #ff4d4f;
+}
+.kib-live-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.kib-live.on .kib-live-dot { animation: kib-blink 1s steps(2, start) infinite; }
+@keyframes kib-blink { to { visibility: hidden; } }
+
+/* 表单(替换 window.prompt/alert) */
+.kib-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kib-modal {
+  width: 420px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kib-modal h3 { margin: 0; font-size: 15px; color: var(--text); }
+.kib-inline-form { display: flex; flex-direction: column; gap: 10px; }
+.kib-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kib-form-row label { font-size: 12px; color: var(--text-dim); }
+.kib-form-row input, .kib-form-row select {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.06));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.kib-form-row input:focus, .kib-form-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.kib-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 字段过滤 chips(点击字段值快速加过滤) */
+.kib-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.kib-chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.kib-chip .kib-chip-key { color: var(--text-dim); }
+
+/* 响应式: 窄屏时左字段栏折叠 */
+@media (max-width: 900px) {
+  .kib-body, .kib-body.with-drawer { grid-template-columns: 1fr; }
+  .kib-fields { display: none; }
+}
+
+/* 从已连接资源添加(容器/K8S 发现面板) */
+.kib-discover-panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--bg-soft, rgba(127,127,127,0.04));
+}
+.kib-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.kib-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.kib-check-item:hover { background: var(--bg-soft, rgba(127,127,127,0.08)); }
+.kib-check-item:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kib-check-item input { accent-color: var(--accent); }
+.kib-check-item code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.kib-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent, #4c7dff);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  justify-content: center;
+}
+.kib-badge.kib-multi { background: #22a06b; }

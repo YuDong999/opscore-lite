@@ -24,15 +24,16 @@ const (
 
 // Service 日志处理服务
 type Service struct {
-	store  *Store
-	mu     sync.Mutex
-	cancel chan struct{}
+	store    *Store
+	archiver *Archiver
+	mu       sync.Mutex
+	cancel   chan struct{}
 	// 采集状态
 	inFlight atomic.Int64
 }
 
-func NewService(store *Store) *Service {
-	return &Service{store: store}
+func NewService(store *Store, archiver *Archiver) *Service {
+	return &Service{store: store, archiver: archiver}
 }
 
 var (
@@ -45,7 +46,7 @@ var (
 )
 
 // ParseLine 解析一行日志为元数据
-func (s *Service) ParseLine(line string, filePath string, offset int64, defaultService string, defaultSource string) *LogEntry {
+func (s *Service) ParseLine(line string, filePath string, offset int64, defaultService string, defaultSource string, indexID string) *LogEntry {
 	e := &LogEntry{
 		Ts:       nowMs(),
 		Level:    LevelINFO,
@@ -54,6 +55,7 @@ func (s *Service) ParseLine(line string, filePath string, offset int64, defaultS
 		FilePath: filePath,
 		Offset:   offset,
 		Size:     len(line),
+		IndexID:  indexID,
 	}
 
 	// 提取级别
@@ -112,26 +114,51 @@ func parseLogTime(s string) (int64, error) {
 	return 0, fmt.Errorf("cannot parse time: %s", s)
 }
 
-// Ingest 单条日志写入（供 HTTP API 使用）
-func (s *Service) Ingest(line, service, source string) (*LogEntry, error) {
-	e := s.ParseLine(line, "http-ingest", 0, service, source)
-	err := s.store.InsertBatch([]*LogEntry{e})
+// Ingest 单条日志写入（供 HTTP API 使用），若 indexID 非空则同时原文入库归档
+func (s *Service) Ingest(line, service, source, indexID string) (*LogEntry, error) {
+	e := s.ParseLine(line, "http-ingest", 0, service, source, indexID)
+	var err error
+	if e.IndexID != "" {
+		// 双写：先插入元数据拿 id, 再写归档
+		ids, ierr := s.store.InsertBatch([]*LogEntry{e})
+		if ierr != nil {
+			return e, ierr
+		}
+		e.ID = ids[0]
+		if s.archiver != nil {
+			_ = s.archiver.appendLine(e) // 归档失败不阻断(容错)
+		}
+		return e, nil
+	}
+	_, err = s.store.InsertBatch([]*LogEntry{e})
 	return e, err
 }
 
-// IngestBatch 批量写入
-func (s *Service) IngestBatch(lines []string, service, source string) (int, error) {
-	// 用户有没有指定 service？无则每行自行提取
+// IngestBatch 批量写入，indexID 非空则原文入归档
+func (s *Service) IngestBatch(lines []string, service, source, indexID string) (int, error) {
 	entries := make([]*LogEntry, 0, len(lines))
 	for i, line := range lines {
-		entries = append(entries, s.ParseLine(line, "http-ingest", int64(i), service, source))
+		entries = append(entries, s.ParseLine(line, "http-ingest", int64(i), service, source, indexID))
 	}
-	err := s.store.InsertBatch(entries)
+	if indexID != "" {
+		ids, err := s.store.InsertBatch(entries)
+		if err != nil {
+			return len(entries), err
+		}
+		_ = ids
+		if s.archiver != nil {
+			if err := s.archiver.appendBatch(entries); err != nil {
+				// 容错
+			}
+		}
+		return len(entries), nil
+	}
+	_, err := s.store.InsertBatch(entries)
 	return len(entries), err
 }
 
-// ScanFile 扫描一个文件（全量或尾部）
-func (s *Service) ScanFile(path, defaultService, defaultSource string, tailOnly bool) (int, error) {
+// ScanFile 扫描一个文件（全量或尾部），indexID 非空则原文入归档
+func (s *Service) ScanFile(path, defaultService, defaultSource string, tailOnly bool, indexID string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -167,13 +194,26 @@ func (s *Service) ScanFile(path, defaultService, defaultSource string, tailOnly 
 		lineNum++
 		var e *LogEntry
 		if offset >= startOffset {
-			e = s.ParseLine(strings.TrimRight(line, "\r\n"), path, offset, defaultService, defaultSource)
+			e = s.ParseLine(strings.TrimRight(line, "\r\n"), path, offset, defaultService, defaultSource, indexID)
 			entries = append(entries, e)
 		}
 		offset += int64(len(line))
 	}
 	if len(entries) > 0 {
-		s.store.InsertBatch(entries)
+		if indexID != "" {
+			if _, err := s.store.InsertBatch(entries); err != nil {
+				return 0, err
+			}
+			if s.archiver != nil {
+				if err := s.archiver.appendBatch(entries); err != nil {
+					// 容错
+				}
+			}
+		} else {
+			if _, err := s.store.InsertBatch(entries); err != nil {
+				return 0, err
+			}
+		}
 		count = len(entries)
 	}
 	return count, nil

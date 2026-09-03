@@ -170,8 +170,13 @@ func main() {
 		log.Fatalf("init log monitor store: %v", err)
 	}
 	defer logStore.Close()
-	logSvc := logmonitor.NewService(logStore)
-	lmMod := logmonitor.Module(logStore, logSvc, filepath.Join(dataDir, "logs"))
+	logArchiver, err := logmonitor.NewArchiver(dataDir)
+	if err != nil {
+		log.Fatalf("init log monitor archiver: %v", err)
+	}
+	defer logArchiver.Close()
+	logSvc := logmonitor.NewService(logStore, logArchiver)
+	lmMod := logmonitor.Module(logStore, logSvc, logArchiver, filepath.Join(dataDir, "logs"))
 	reg.Register(lmMod)
 
 	mux := http.NewServeMux()
@@ -242,7 +247,14 @@ func main() {
 	fileServer := http.FileServer(http.Dir(distDir))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p != "" && !strings.Contains(p, ".") {
+		lastSeg := p
+		if idx := strings.LastIndex(lastSeg, "/"); idx >= 0 {
+			lastSeg = lastSeg[idx+1:]
+		}
+		isFile := strings.Contains(lastSeg, ".")
+		// 非文件路径(含根路径 /) → 一律走 index.html 且不缓存,
+		// 保证发版后浏览器总能拿到最新的资源入口引用。
+		if !isFile {
 			indexPath := distDir + "/index.html"
 			if b, err := os.ReadFile(indexPath); err == nil {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -500,6 +512,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/pod/exec", Handler: handlers.K8sPodExecHandler},
 			{Path: "/api/plugins/containers/k8s/yaml", Handler: handlers.K8sYamlHandler},
 			{Path: "/api/plugins/containers/k8s/resource/action", Handler: handlers.K8sResourceActionHandler},
+			{Path: "/api/plugins/containers/k8s/resources/action", Handler: handlers.K8sBatchActionHandler},
 			{Path: "/api/plugins/containers/k8s/replicas", Handler: handlers.K8sReplicasHandler},
 			{Path: "/api/plugins/containers/k8s/rollout/history", Handler: handlers.K8sRolloutHistoryHandler},
 			{Path: "/api/plugins/containers/k8s/yaml/save", Handler: handlers.K8sYamlSaveHandler},

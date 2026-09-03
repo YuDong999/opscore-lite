@@ -54,7 +54,7 @@ export default function DockerModule({ onMsg }: { onMsg?: (m: string) => void })
           ))}
         </nav>
       </aside>
-      <section className="k8s-main" style={{ minWidth: 0, flex: 1 }}>
+      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {section === 'containers' && <ContainersPanel onMsg={onMsg} />}
         {section === 'images' && <ImagesPanel onMsg={onMsg} />}
         {section === 'registries' && <RegistriesPanel onMsg={onMsg} />}
@@ -150,7 +150,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
 
   return (
     <>
-      <Card title={`容器列表 (${containers.length})`}
+      <Card className="containers-card" title={`容器列表 (${containers.length})`}
         subtitle={canWrite ? `${rt} · 支持批量操作与创建/重建(端口/卷挂载/环境变量)` : '当前运行时只读(K8s 托管或未检测到 docker/podman)'}>
         <div className="toolbar-strip">
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!canWrite}
@@ -502,7 +502,7 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
         {out && <pre className="code-block" style={{ maxHeight: 140, overflow: 'auto', marginTop: '0.5rem', fontSize: '0.6875rem' }}>{out}</pre>}
       </Card>
 
-      <Card title={`镜像列表 (${images.length})`} subtitle={`已选 ${sel.size} · 支持全选/反选/批量删除`}>
+      <Card className="images-card" title={`镜像列表 (${images.length})`} subtitle={`已选 ${sel.size} · 支持全选/反选/批量删除`}>
         <div className="toolbar-strip">
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleInvert}>反选</button>

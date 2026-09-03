@@ -20,7 +20,7 @@ export default function EChart({
   useEffect(() => {
     if (!ref.current) return
     chart.current = echarts.init(ref.current)
-    const ro = new ResizeObserver(() => chart.current?.resize())
+    const ro = new ResizeObserver(() => { chart.current?.resize() })
     ro.observe(ref.current)
     return () => {
       ro.disconnect()
@@ -31,7 +31,8 @@ export default function EChart({
 
   // option 变化时增量更新
   useEffect(() => {
-    chart.current?.setOption(option, true)
+    if (option == null) return
+    chart.current?.setOption(option)
   }, [option])
 
   // 数字高度按 1rem=16px 换算为 rem, 跟随根字号响应式缩放

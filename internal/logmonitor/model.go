@@ -14,6 +14,7 @@ type LogEntry struct {
 	Size     int    `json:"size"`     // 该条日志字节数
 	Summary  string `json:"summary"`  // 前 200 字符摘要
 	Raw      string `json:"raw,omitempty"` // 实际内容（按需填充）
+	IndexID  string `json:"indexId,omitempty"` // 归属索引
 }
 
 // LogQuery 查询条件
@@ -24,6 +25,7 @@ type LogQuery struct {
 	Keyword  string `json:"keyword"`  // 摘要/原文模糊搜索
 	StartTs  int64  `json:"startTs"`  // 毫秒
 	EndTs    int64  `json:"endTs"`    // 毫秒
+	IndexID  string `json:"indexId"`  // 归属索引
 	Page     int    `json:"page"`     // 从 1 开始
 	PageSize int    `json:"pageSize"` // 默认 100
 }
@@ -61,6 +63,53 @@ type LogSource struct {
 	Enabled bool   `json:"enabled"`
 	// file 类型特有
 	Follow bool `json:"follow"` // 是否持续跟踪（tail -f 模式）
+}
+
+// FieldMap 字段映射（对标 Kibana Data View 字段）
+type FieldMap struct {
+	Name    string `json:"name"`    // 字段名
+	Type    string `json:"type"`    // text/keyword/date/integer/float/boolean
+	Indexed bool   `json:"indexed"` // 是否索引
+}
+
+// IlmStage ILM 单阶段配置（对标 ES ILM hot/warm/cold/delete）
+type IlmStage struct {
+	RetentionDays int  `json:"retentionDays"` // 保留天数
+	Readonly      bool `json:"readonly"`      // 只读
+	Compress      bool `json:"compress"`      // 压缩归档
+	Freeze        bool `json:"freeze"`        // 冻结（最小内存占用）
+	Priority      int  `json:"priority"`      // 优先级
+}
+
+// IlmPolicy ILM 冷热归档策略（四阶段）
+type IlmPolicy struct {
+	Hot    IlmStage `json:"hot"`    // 热：SQLite 元数据索引，实时可查
+	Warm   IlmStage `json:"warm"`   // 温：压缩归档文件，可查
+	Cold   IlmStage `json:"cold"`   // 冷：深归档，按需载入
+	Delete IlmStage `json:"delete"` // 删除：到期清理
+}
+
+// LogIndex 索引实体（对标 Kibana Data View + ILM 策略）
+type LogIndex struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Source      string    `json:"source"`   // file/syslog/journal/http/loki/fluentbit/es
+	SourcePath  string    `json:"sourcePath"` // 采集路径/地址
+	Service     string    `json:"service"`  // 归属服务
+	Fields      []FieldMap `json:"fields"`  // 字段映射
+	Ilm         IlmPolicy `json:"ilm"`      // 冷热归档策略
+	DeleteAfter int       `json:"deleteAfter"` // 总保留天数（兜底）
+	CreatedAt   int64     `json:"createdAt"`
+	UpdatedAt   int64     `json:"updatedAt"`
+}
+
+// IndexStats 索引统计
+type IndexStats struct {
+	DocCount    int64  `json:"docCount"`
+	Bytes       int64  `json:"bytes"`
+	Oldest      *int64 `json:"oldest,omitempty"`
+	Newest      *int64 `json:"newest,omitempty"`
+	StorageStage string `json:"storageStage"` // hot/warm/cold
 }
 
 // LogStatsQuery 统计查询参数

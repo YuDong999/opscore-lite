@@ -16,14 +16,15 @@ const PluginID = "logmonitor"
 
 // Handlers HTTP handler 集合
 type Handlers struct {
-	store   *Store
-	service *Service
-	dataDir string // 日志数据根目录
+	store    *Store
+	service  *Service
+	archiver *Archiver
+	dataDir  string // 日志数据根目录
 }
 
 // Module 返回 registry.Module（供 main.go 集成）
-func Module(store *Store, service *Service, dataDir string) *registry.Module {
-	h := &Handlers{store: store, service: service, dataDir: dataDir}
+func Module(store *Store, service *Service, archiver *Archiver, dataDir string) *registry.Module {
+	h := &Handlers{store: store, service: service, archiver: archiver, dataDir: dataDir}
 	return &registry.Module{
 		Manifest: registry.Manifest{
 			ID:          PluginID,
@@ -43,8 +44,47 @@ func Module(store *Store, service *Service, dataDir string) *registry.Module {
 			{Path: "/api/logmonitor/scan", Handler: h.handleScan},
 			{Path: "/api/logmonitor/raw", Handler: h.handleRaw},
 			{Path: "/api/logmonitor/delete", Handler: h.handleDelete},
+			{Path: "/api/logmonitor/indexes", Handler: h.handleIndexes},
+			{Path: "/api/logmonitor/indexes/save", Handler: h.handleIndexSave},
+			{Path: "/api/logmonitor/indexes/get", Handler: h.handleIndexGet},
+			{Path: "/api/logmonitor/indexes/delete", Handler: h.handleIndexDelete},
+			{Path: "/api/logmonitor/indexes/stats", Handler: h.handleIndexStats},
+			{Path: "/api/logmonitor/ilm/run", Handler: h.handleIlmRun},
+			{Path: "/api/logmonitor/discover/containers", Handler: h.handleDiscoverContainers},
+			{Path: "/api/logmonitor/discover/k8s", Handler: h.handleDiscoverK8s},
+			{Path: "/api/logmonitor/discover/clusters", Handler: h.handleDiscoverClusters},
 		},
 	}
+}
+
+// DiscoverContainersHandler 列表本机可接入的 Docker 容器。GET
+func (h *Handlers) handleDiscoverContainers(w http.ResponseWriter, r *http.Request) {
+	list, err := DiscoverDockerContainers()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "发现容器失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"containers": list, "ok": true})
+}
+
+// DiscoverK8sHandler 列表某集群可接入的 pod。GET ?cluster=
+func (h *Handlers) handleDiscoverK8s(w http.ResponseWriter, r *http.Request) {
+	cluster := r.URL.Query().Get("cluster")
+	if cluster == "" {
+		writeErr(w, http.StatusBadRequest, "缺 cluster 参数")
+		return
+	}
+	list, err := DiscoverK8sLogTargets(h.dataDir, cluster)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "发现 K8S pod 失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"pods": list, "ok": true})
+}
+
+// DiscoverClustersHandler 列表已注册的 K8S 集群。GET
+func (h *Handlers) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": CollectClusters(h.dataDir), "ok": true})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
@@ -70,6 +110,7 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		Level:    q.Get("level"),
 		Source:   q.Get("source"),
 		Keyword:  q.Get("keyword"),
+		IndexID:  q.Get("indexId"),
 		Page:     atoiDefault(q.Get("page"), 1),
 		PageSize: atoiDefault(q.Get("pageSize"), 100),
 	}
@@ -137,6 +178,7 @@ func (h *Handlers) handleIngest(w http.ResponseWriter, r *http.Request) {
 		Lines   []string `json:"lines"`
 		Service string   `json:"service"`
 		Source  string   `json:"source"`
+		IndexID string   `json:"indexId"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
@@ -144,7 +186,7 @@ func (h *Handlers) handleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if payload.Line != "" {
-		e, err := h.service.Ingest(payload.Line, payload.Service, payload.Source)
+		e, err := h.service.Ingest(payload.Line, payload.Service, payload.Source, payload.IndexID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -153,7 +195,7 @@ func (h *Handlers) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(payload.Lines) > 0 {
-		n, err := h.service.IngestBatch(payload.Lines, payload.Service, payload.Source)
+		n, err := h.service.IngestBatch(payload.Lines, payload.Service, payload.Source, payload.IndexID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -222,7 +264,10 @@ func (h *Handlers) handleSourceDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
-// POST /api/logmonitor/scan  { "path":"...", "service":"", "source":"", "tailOnly":false }
+// POST /api/logmonitor/scan  { "path":"...", "service":"", "source":"", "tailOnly":false, "namespace":"", "cluster":"" }
+// source=file     → path 为本地文件路径
+// source=container→ path 为本机 docker 容器名
+// source=k8s      → path 为 K8S pod 名，namespace 指定命名空间，cluster 指定集群 ID
 func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "POST only")
@@ -234,6 +279,9 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 		Source      string `json:"source"`
 		TailOnly    bool   `json:"tailOnly"`
 		DefaultSvc  string `json:"defaultService"`
+		IndexID     string `json:"indexId"`
+		Namespace   string `json:"namespace"`
+		Cluster     string `json:"cluster"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
@@ -243,23 +291,62 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "path 不能为空")
 		return
 	}
-	if _, err := os.Stat(body.Path); err != nil {
-		writeErr(w, http.StatusBadRequest, "文件不存在: "+err.Error())
-		return
-	}
 	if body.Source == "" {
 		body.Source = "file"
 	}
+	body.Source = strings.ToLower(body.Source)
 	svc := body.Service
 	if svc == "" {
 		svc = body.DefaultSvc
 	}
-	n, err := h.service.ScanFile(body.Path, svc, body.Source, body.TailOnly)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if svc == "" {
+		svc = body.Source
+	}
+
+	var lines []string
+	var err error
+	switch body.Source {
+	case "container":
+		lines, err = CollectDockerLogs(body.Path, 500)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "读取容器日志失败: "+err.Error())
+			return
+		}
+	case "k8s", "k8spod":
+		kc := kubeconfigPathFor(h.dataDir, body.Cluster)
+		if kc == "" {
+			writeErr(w, http.StatusInternalServerError, "未找到集群 kubeconfig(cluster="+body.Cluster+")")
+			return
+		}
+		lines, err = CollectK8sPodLogs(kc, body.Namespace, body.Path, 500)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "读取 K8S pod 日志失败: "+err.Error())
+			return
+		}
+	default:
+		if _, err := os.Stat(body.Path); err != nil {
+			writeErr(w, http.StatusBadRequest, "文件不存在: "+err.Error())
+			return
+		}
+		n, serr := h.service.ScanFile(body.Path, svc, body.Source, body.TailOnly, body.IndexID)
+		if serr != nil {
+			writeErr(w, http.StatusInternalServerError, serr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"scanned": n, "path": body.Path})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"scanned": n, "path": body.Path})
+	// 容器 / K8S 采集: 批量 ingest 到目标索引(双写)
+	if len(lines) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"scanned": 0, "path": body.Path, "source": body.Source})
+		return
+	}
+	n, ierr := h.service.IngestBatch(lines, svc, body.Source, body.IndexID)
+	if ierr != nil {
+		writeErr(w, http.StatusInternalServerError, ierr.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"scanned": n, "path": body.Path, "source": body.Source})
 }
 
 // GET /api/logmonitor/raw?id=123  → 完整原始日志内容
@@ -309,8 +396,131 @@ func (h *Handlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(body.IDs)})
 }
 
-// readLogContent 按 metadata 读取文件指定偏移处的日志
+// GET /api/logmonitor/indexes  列表
+func (h *Handlers) handleIndexes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	indexes, err := h.store.ListIndexes()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, indexes)
+}
+
+// POST /api/logmonitor/indexes/save  新建/更新索引
+func (h *Handlers) handleIndexSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var idx LogIndex
+	if err := json.NewDecoder(r.Body).Decode(&idx); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if err := h.store.SaveIndex(&idx); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, idx)
+}
+
+// GET /api/logmonitor/indexes/get?id=...
+func (h *Handlers) handleIndexGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id 不能为空")
+		return
+	}
+	idx, err := h.store.GetIndex(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "索引不存在: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, idx)
+}
+
+// POST /api/logmonitor/indexes/delete  { "id": "..." }
+func (h *Handlers) handleIndexDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if err := h.store.DeleteIndex(body.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+// GET /api/logmonitor/indexes/stats?id=...
+func (h *Handlers) handleIndexStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id 不能为空")
+		return
+	}
+	st, err := h.store.IndexStatsFor(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// POST /api/logmonitor/ilm/run  手动触发 ILM 淘汰(删过期元数据 + 联动删过期归档文件)
+func (h *Handlers) handleIlmRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	cleanups, n, err := h.store.ApplyIlm()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 联动删除各索引过期归档文件
+	var archFiles int
+	if h.archiver != nil {
+		for _, c := range cleanups {
+			del, _ := h.archiver.deleteBeforeDate(c.IndexID, c.CutoffDate)
+			archFiles += del
+		}
+	}
+	na, _ := h.store.ApplyIlmAll()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deleted":          n,
+		"deletedUnassigned": na,
+		"archiveFiles":     archFiles,
+	})
+}
+
+// readLogContent 按 metadata 读取日志内容。
+// 优先：若该日志归属某索引且已归档, 从 zstd 归档读取原文；否则回读源文件。
 func (h *Handlers) readLogContent(e *LogEntry) string {
+	if e.IndexID != "" && h.archiver != nil {
+		if raw := h.archiver.readByID(e.IndexID, e.Ts, e.ID); raw != "" {
+			return raw
+		}
+	}
 	if e.FilePath == "" || e.FilePath == "http-ingest" {
 		return e.Summary
 	}

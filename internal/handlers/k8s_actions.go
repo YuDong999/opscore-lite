@@ -381,3 +381,89 @@ func K8sYamlSaveHandler(w http.ResponseWriter, r *http.Request) {
 	InvalidateRespCache("/api/plugins/containers/k8s")
 	WriteJSON(w, map[string]any{"ok": err == nil, "error": msg})
 }
+
+// ===== 批量资源写操作 =====
+
+type k8sBatchActionBody struct {
+	Cluster  string           `json:"cluster"`
+	Res      string           `json:"res"`
+	Targets  []map[string]string `json:"targets"`
+	Action   string           `json:"action"`
+	Replicas int32            `json:"replicas,omitempty"`
+	Force    bool             `json:"force,omitempty"`
+	Image    string           `json:"image,omitempty"`
+}
+
+// K8sBatchActionHandler POST {cluster,res,targets,action[,replicas,force,image]}
+// 批量操作多个资源: 逐个执行单资源动作, 汇总结果
+func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	var b k8sBatchActionBody
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil ||
+		!reK8sClusterID.MatchString(b.Cluster) || !kubernetes.ValidResource(b.Res) ||
+		!(b.Action == "delete" || b.Action == "restart" || b.Action == "rollback" || b.Action == "scale") ||
+		len(b.Targets) == 0 {
+		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	succeeded, failed := 0, 0
+	var errs []string
+	for _, t := range b.Targets {
+		name := t["name"]
+		tns := t["ns"]
+		if !reK8sResName.MatchString(name) {
+			failed++
+			continue
+		}
+		if tns != "" && !reK8sNamespace.MatchString(tns) {
+			failed++
+			continue
+		}
+		var err error
+		switch b.Action {
+		case "delete":
+			err = k8sMgr.DeleteResource(ctx, b.Cluster, b.Res, tns, name, b.Force)
+		case "restart":
+			if b.Res != "deployments" && b.Res != "statefulsets" {
+				failed++
+				continue
+			}
+			err = k8sMgr.RestartWorkload(ctx, b.Cluster, b.Res, tns, name)
+		case "rollback":
+			if b.Res != "deployments" && b.Res != "statefulsets" {
+				failed++
+				continue
+			}
+			err = k8sMgr.RolloutUndo(ctx, b.Cluster, tns, name, 0)
+		case "scale":
+			if b.Res != "deployments" && b.Res != "statefulsets" {
+				failed++
+				continue
+			}
+			err = k8sMgr.ScaleWorkload(ctx, b.Cluster, b.Res, tns, name, b.Replicas)
+		}
+		if err != nil {
+			failed++
+			errs = append(errs, fmt.Sprintf("%s: %s", name, err.Error()))
+		} else {
+			succeeded++
+		}
+	}
+	log.Printf("[K8S-AUDIT] batch action=%s res=%s cluster=%s count=%d ok=%d fail=%d",
+		b.Action, b.Res, b.Cluster, len(b.Targets), succeeded, failed)
+	InvalidateRespCache("/api/plugins/containers/k8s")
+	WriteJSON(w, map[string]any{
+		"ok": failed == 0,
+		"succeeded": succeeded,
+		"failed": failed,
+		"errors": errs,
+	})
+}
