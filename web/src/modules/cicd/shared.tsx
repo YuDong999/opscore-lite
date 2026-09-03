@@ -73,7 +73,7 @@ export interface PipelineView extends Pipeline {
   nextCron?: string
 }
 export interface Artifact { step: string; file: string; size: number; paths: string }
-export interface StepRun { name: string; command: string; status: string; exitCode: number; durationMs: number; artifacts?: Artifact[] }
+export interface StepRun { name: string; command: string; status: string; exitCode: number; startedAt?: string; durationMs: number; artifacts?: Artifact[] }
 export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string

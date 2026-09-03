@@ -3,7 +3,7 @@
 //              U1 AlertDialog 确认 · U2 异步按钮 busy 防抖 · U3 tabular-nums · U4 Dialog 动画
 //    日志面板保留 legacy 终端样式(log-text, 主题自适应), 其余全部 shadcn 组件。
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { postJSON } from '../api/client'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -16,17 +16,17 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
-  Upload, RefreshCw, X, Check, Package, FileCode2,
+  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus,
 } from 'lucide-react'
 import {
   API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
   fmtDur, fmtTime, fmtSize, TRIGGER_TEXT,
   type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
   type Credential, type Repo, type Registry, type Script,
+  type StageRun,
 } from './cicd/shared'
 
 const CRED_TYPE_TEXT: Record<string, string> = {
@@ -62,15 +62,90 @@ const STEP_TEMPLATES: { name: string; steps: Step[] }[] = [
   },
 ]
 
-// 进度条(U3: shadcn Progress, 颜色按状态引用主题变量)
-function RunProgress({ value, status, className }: { value: number; status: string; className?: string }) {
-  const color = status === 'failed' ? 'bg-danger' : status === 'success' ? 'bg-ok' : 'bg-warn'
+// ── Blue Ocean 式阶段节点 ──
+const STAGE_COLOR: Record<string, string> = {
+  success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
+  canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--border)',
+}
+
+// 阶段耗时: 已完成步骤累加 + 运行中步骤按 now 实时计算
+function stageElapsedMs(st: StageRun, now: number): number {
+  let total = 0
+  for (const sp of st.steps) {
+    if (sp.status === 'running' && sp.startedAt) {
+      total += Math.max(0, now - new Date(sp.startedAt).getTime())
+    } else {
+      total += sp.durationMs || 0
+    }
+  }
+  return total
+}
+
+function StageNodeIcon({ status }: { status: string }) {
+  if (status === 'success') return <Check className="size-4" />
+  if (status === 'failed') return <X className="size-4" />
+  if (status === 'running') return <LoaderCircle className="size-4 animate-spin" />
+  if (status === 'waiting') return <Pause className="size-3.5" />
+  if (status === 'canceled') return <Minus className="size-4" />
+  return <span className="size-1.5 rounded-full bg-current opacity-50" />
+}
+
+// 详情页横向节点流: 节点(状态色圆) + 连接线 + 名称 + 实时耗时
+function StageFlow({ stages, now }: { stages: StageRun[]; now: number }) {
   return (
-    <Progress
-      value={value}
-      title={`${value}%`}
-      className={cn('h-1.5 bg-muted', `[&>div]:${color}`, className)}
-    />
+    <div className="flex items-start w-full py-1 overflow-x-auto">
+      {stages.map((st, i) => {
+        const color = STAGE_COLOR[st.status] || 'var(--border)'
+        const solid = ['success', 'failed', 'running', 'waiting'].includes(st.status)
+        return (
+          <Fragment key={i}>
+            {i > 0 && (
+              <div
+                className="flex-1 min-w-6 h-0.5 rounded-full mt-[17px]"
+                style={{ background: stages[i - 1].status === 'success' ? 'var(--ok)' : 'var(--border)' }}
+              />
+            )}
+            <div className="flex flex-col items-center gap-1 w-20 shrink-0">
+              <div
+                className={cn('size-9 rounded-full border-2 flex items-center justify-center bg-background', st.status === 'running' && 'animate-pulse')}
+                style={{
+                  borderColor: color,
+                  color: solid ? color : 'var(--text-dim)',
+                  background: solid ? `color-mix(in srgb, ${color} 14%, var(--surface-solid))` : undefined,
+                }}
+              >
+                <StageNodeIcon status={st.status} />
+              </div>
+              <div className="text-xs font-medium text-center leading-tight break-all px-0.5">{st.name}</div>
+              <div className="text-[10px] text-muted-foreground tabular-nums">{fmtDur(stageElapsedMs(st, now))}</div>
+            </div>
+          </Fragment>
+        )
+      })}
+    </div>
+  )
+}
+
+// 列表用迷你分段条: 每阶段一段, 颜色即状态, 悬停看名称
+function StageSegments({ stages }: { stages: StageRun[] }) {
+  return (
+    <div className="flex gap-0.5 w-full min-w-20"
+      title={stages.map(s => `${s.name}: ${statusText(s.status)}`).join('\n')}>
+      {stages.map((st, i) => (
+        <div
+          key={i}
+          className={cn(
+            'h-1.5 flex-1 rounded-full',
+            st.status === 'success' && 'bg-ok',
+            st.status === 'failed' && 'bg-danger',
+            st.status === 'running' && 'bg-primary animate-pulse',
+            st.status === 'waiting' && 'bg-warn',
+            (st.status === 'skipped' || st.status === 'canceled') && 'bg-muted-foreground/40',
+            st.status === 'pending' && 'bg-border',
+          )}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -269,7 +344,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
             <TableHeader>
               <TableRow>
                 <TableHead>名称</TableHead><TableHead>阶段</TableHead><TableHead>触发器</TableHead>
-                <TableHead>最近运行</TableHead><TableHead className="w-60">操作</TableHead>
+                <TableHead>最近运行</TableHead><TableHead className="w-44">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -303,12 +378,12 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                     ) : <span className="text-xs text-muted-foreground">从未运行</span>}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      <Button size="sm" disabled={!!busy} onClick={() => run(p)}><Play />运行</Button>
-                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => copy(p)}>复制</Button>
-                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => loadOne(p, setWebhookOf)}><Link2 />Webhook</Button>
-                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => loadOne(p, setEditing)}><Pencil />编辑</Button>
-                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => remove(p)}><Trash2 />删除</Button>
+                    <div className="flex gap-1">
+                      <Button size="icon" className="size-8" disabled={!!busy} title="运行" onClick={() => run(p)}><Play /></Button>
+                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="复制" onClick={() => copy(p)}><Copy /></Button>
+                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="Webhook" onClick={() => loadOne(p, setWebhookOf)}><Link2 /></Button>
+                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="编辑" onClick={() => loadOne(p, setEditing)}><Pencil /></Button>
+                      <Button variant="destructive" size="icon" className="size-8" disabled={!!busy} title="删除" onClick={() => remove(p)}><Trash2 /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -672,9 +747,9 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
                     {r.error && <div className="text-xs text-muted-foreground max-w-64">{r.error}</div>}
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <RunProgress value={r.progress || 0} status={r.status} className="w-20" />
-                      <span className="text-xs text-muted-foreground tabular-nums">{r.progress || 0}%</span>
+                    <div className="flex items-center gap-2 min-w-36">
+                      <StageSegments stages={r.stages} />
+                      <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
                     </div>
                   </TableCell>
                   <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
@@ -705,6 +780,14 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
   const [err, setErr] = useState('')
   const logRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
+  const [now, setNow] = useState(Date.now())
+
+  // 运行中每秒跳表, 驱动节点流上的实时耗时
+  useEffect(() => {
+    if (!run || !['running', 'queued'].includes(run.status)) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [run?.status])
 
   const onScroll = () => {
     const el = logRef.current
@@ -779,7 +862,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-6xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             {run.pipeline}
@@ -790,9 +873,8 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
           </div>
         </DialogHeader>
 
-        <div className="flex items-center gap-2">
-          <RunProgress value={run.progress || 0} status={run.status} className="flex-1" />
-          <span className="text-xs text-muted-foreground tabular-nums min-w-10">{run.progress || 0}%</span>
+        <div className="rounded-lg border bg-background/60 px-4 py-2">
+          <StageFlow stages={run.stages} now={now} />
         </div>
 
         {run.error && <ErrBanner msg={run.error} />}
@@ -800,10 +882,13 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
 
         {run.stages.map((st, i) => (
           <div key={i} className={cn('rounded-lg border', st.status === 'waiting' && 'border-warn')}>
-            <div className="flex items-center justify-between gap-2 flex-wrap px-3 pt-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-b bg-muted/30 rounded-t-lg">
               <div className="flex items-center gap-2 font-semibold">
                 <StatusBadge status={st.status} />
                 阶段 {i + 1}: {st.name}
+                <span className="text-xs font-normal text-muted-foreground tabular-nums">
+                  {fmtDur(stageElapsedMs(st, now))}
+                </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {st.host ? `主机 ${st.host}` : '本机'}{st.workspace ? ` · ${st.workspace}` : ''}
@@ -819,7 +904,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                 )}
               </div>
             </div>
-            <div className="px-3 pb-2.5 pt-1">
+            <div className="px-3 py-1">
               {st.steps.map((sp, j) => (
                 <div key={j} className="flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap">
                   <span className="w-[38%] min-w-40">
@@ -1303,9 +1388,9 @@ function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) =
                   <TableCell>{TRIGGER_TEXT[r.trigger] || r.trigger}</TableCell>
                   <TableCell><StatusBadge status={r.status} /></TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <RunProgress value={r.progress || 0} status={r.status} className="w-20" />
-                      <span className="text-xs text-muted-foreground tabular-nums">{r.progress || 0}%</span>
+                    <div className="flex items-center gap-2 min-w-36">
+                      <StageSegments stages={r.stages} />
+                      <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
                     </div>
                   </TableCell>
                   <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
