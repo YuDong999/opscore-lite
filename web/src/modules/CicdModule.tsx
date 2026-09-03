@@ -457,11 +457,12 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-4xl h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle>{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
         <ErrBanner msg={err} onClose={() => setErr('')} />
 
         <div className="flex gap-3 flex-wrap">
@@ -644,7 +645,9 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
         </div>
 
         {confirmEl}
-        <DialogFooter>
+        </div>
+
+        <DialogFooter className="px-6 pb-4 pt-2 shrink-0">
           <Button variant="outline" onClick={onClose}>取消</Button>
           <Button disabled={saving} onClick={save}>{saving ? '保存中...' : '保存'}</Button>
         </DialogFooter>
@@ -667,7 +670,7 @@ function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
   const curl = `curl -X POST '${url}' -H 'X-Opscore-Token: ${pipeline.trigger.secret}'`
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader><DialogTitle>Webhook 触发: {pipeline.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
@@ -862,8 +865,8 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="sm:max-w-6xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-6xl h-[92vh] flex flex-col overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             {run.pipeline}
             <StatusBadge status={run.status} suffix={run.status === 'running' && run.canceling ? '(取消中)' : undefined} />
@@ -873,6 +876,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
           </div>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
         <div className="rounded-lg border bg-background/60 px-4 py-2">
           <StageFlow stages={run.stages} now={now} />
         </div>
@@ -907,10 +911,11 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
             <div className="px-3 py-1">
               {st.steps.map((sp, j) => (
                 <div key={j} className="flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap">
-                  <span className="w-[38%] min-w-40">
+                  <span className="min-w-36">
                     <span className="font-mono text-xs text-muted-foreground tabular-nums">{String(j + 1).padStart(2, '0')}</span>{' '}
                     <span className="font-medium">{sp.name}</span>
                   </span>
+                  <span className="flex-1 min-w-40 font-mono text-xs text-muted-foreground truncate" title={sp.command}>{sp.command}</span>
                   <span className="flex flex-col gap-1">
                     <StatusBadge status={sp.status} />
                     {sp.artifacts && sp.artifacts.length > 0 && (
@@ -945,7 +950,9 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
           {lines.map((l, i) => <div key={i} className="log-line">{l}</div>)}
         </div>
 
-        <DialogFooter>
+        </div>
+
+        <DialogFooter className="px-6 pb-4 pt-2 shrink-0">
           {active && <Button variant="destructive" onClick={cancel}>取消运行</Button>}
           <Button variant="outline" onClick={onClose}>关闭</Button>
         </DialogFooter>
@@ -1011,7 +1018,7 @@ function ScriptsTab() {
 
       {editing && (
         <Dialog open onOpenChange={o => !o && setEditing(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{editing.id ? `编辑脚本: ${editing.name}` : '新建脚本'}</DialogTitle>
             </DialogHeader>
@@ -1166,7 +1173,7 @@ function ReposTab() {
 
       {editingRepo && (
         <Dialog open onOpenChange={o => !o && setEditingRepo(null)}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="sm:max-w-xl">
             <DialogHeader><DialogTitle>{editingRepo.id ? '编辑代码仓库' : '新建代码仓库'}</DialogTitle></DialogHeader>
             <div className="flex gap-3">
               <div className="flex-1">
@@ -1197,7 +1204,7 @@ function ReposTab() {
 
       {editingReg && (
         <Dialog open onOpenChange={o => !o && setEditingReg(null)}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="sm:max-w-xl">
             <DialogHeader><DialogTitle>{editingReg.id ? '编辑镜像仓库' : '新建镜像仓库'}</DialogTitle></DialogHeader>
             <div className="flex gap-3">
               <div className="flex-1">
@@ -1282,7 +1289,7 @@ function CredentialsTab() {
 
       {editing && (
         <Dialog open onOpenChange={o => !o && setEditing(null)}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="sm:max-w-xl">
             <DialogHeader><DialogTitle>{editing.id ? `编辑凭据: ${editing.name}` : '新建凭据'}</DialogTitle></DialogHeader>
             <div className="flex gap-3 flex-wrap">
               <div className="flex-1 min-w-36">
