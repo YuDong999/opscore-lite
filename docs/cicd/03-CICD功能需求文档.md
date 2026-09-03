@@ -6,6 +6,7 @@
 > v2.1 增补: FR-19 阶段审批门禁
 > v2.2 增补: FR-20 制品收集与下载
 > v2.3 增补: FR-21 制品分发(拉取到目标主机)
+> v2.4 增补: FR-22 通知渠道 / FR-23 流水线导入导出 / FR-24 定时下次执行展示(概览含等待审批提醒)
 > 优先级: P0 = 必须, P2 = 未来版本
 
 ---
@@ -137,6 +138,27 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 6. 约束: 仅支持引用**同一次运行**内更早步骤的制品(跨流水线分发属未来规划); 制品体积受 FR-20 的 100MB 上限约束。
 7. 验收: 两阶段流水线(本机构建+收集 → 本机/远程拉取)运行成功, 目标工作目录出现制品文件, 日志有 📥 分发行; 引用不存在制品时步骤 failed 且命令未执行。
 
+### FR-22 通知渠道扩展 (P0, v2.4)
+
+1. 流水线通知配置: 通知地址 + 渠道(通用 JSON / 钉钉机器人 / 飞书机器人 / 企业微信机器人) + 钉钉加签密钥(SEC, 可空)。
+2. 渠道消息格式: 钉钉/企微为 markdown, 飞书为 text; 内容=标题(流水线名+状态 emoji)+触发方式+耗时+失败原因; 通用 JSON 保持原字段。
+3. 钉钉加签: 请求 URL 追加 timestamp+sign(HmacSHA256(secret, "ts
+secret") base64)。
+4. 失败处理: 非 2xx 记录响应体前 512 字节到服务端日志, 不重试不影响运行结果。
+5. 验收: 三渠道 body 结构正确; 校验"选了渠道必须填地址"; 渠道值白名单。
+
+### FR-23 流水线导入导出 (P1, v2.4)
+
+1. 导出: `GET /api/cicd/pipeline/export?id=`(空=全部), JSON 数组下载; **触发凭证永不导出**。
+2. 导入: `POST /api/cicd/pipeline/import`(JSON 数组): 重置 ID 与 webhook 凭据; 名称冲突自动加 `-2/-3` 后缀; 结构无效条目跳过并计数; 单次上限 100 条。
+3. 前端: 流水线列表头部"导出/导入"按钮(导入选择 JSON 文件, 结果 alert)。
+4. 验收: 导出→清空→导入可还原; 导入重名条目变 dup-2; 凭证字段被重置。
+
+### FR-24 定时下次执行展示 + 概览等待审批提醒 (P1, v2.4)
+
+1. 列表触发器列显示 cron 下次执行时间(`/pipeline/nextfire`, 引擎逐分钟预计算, 上限 366 天)。
+2. 概览 tab(v2 时被挤掉, 本次恢复): 统计卡(流水线/运行中·排队/等待审批/24h 成功·失败) + 等待审批提醒横幅 + 最近 10 次运行(进度条+详情直达)。
+
 ### FR-12 未来规划 (P2)
 
 阶段手动审批 / 制品收集与下载 / 步骤级 when 条件与 matrix / 并行阶段 DAG / 通知渠道扩展 / 流水线导入导出与模板库 / git commit 信息展示。
@@ -234,6 +256,7 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 | FR-08 | /runs · /run/get · /overview | GET |
 | FR-07 | /run/log · /run/stream(SSE) | GET/POST |
 | FR-20 | /artifact/download | GET |
+| FR-23 | /pipeline/export · /pipeline/import · /pipeline/nextfire | GET/POST |
 | FR-06 | /webhook/{id} | POST |
 | FR-13 | /credentials · /credential/save · /credential/delete | GET/POST |
 | FR-14 | /repos · /repo/save · /repo/delete · /repo/test | GET/POST |

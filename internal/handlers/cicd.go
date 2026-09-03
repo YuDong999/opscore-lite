@@ -51,6 +51,14 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 	if !reCicdNotify.MatchString(p.NotifyURL) {
 		return "通知 URL 无效(需 http/https 或留空)"
 	}
+	switch p.NotifyChannel {
+	case "", "dingtalk", "feishu", "wecom":
+	default:
+		return "通知渠道无效(支持 dingtalk/feishu/wecom 或留空)"
+	}
+	if p.NotifyChannel != "" && p.NotifyURL == "" {
+		return "选择通知渠道后需填写通知地址"
+	}
 	if p.Source.RepoID != "" && !reCicdID.MatchString(p.Source.RepoID) {
 		return "代码仓库引用无效"
 	}
@@ -252,14 +260,20 @@ func CicdPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	type pipeView struct {
 		cicd.Pipeline
-		StageCount int       `json:"stageCount"`
-		LastRun    *cicd.Run `json:"lastRun,omitempty"`
+		StageCount int        `json:"stageCount"`
+		LastRun    *cicd.Run  `json:"lastRun,omitempty"`
+		NextCron   *time.Time `json:"nextCron,omitempty"`
 	}
 	out := make([]pipeView, 0, len(pipes))
 	for _, p := range pipes {
 		v := pipeView{Pipeline: p, StageCount: len(p.Stages)}
 		if lr, ok := lastByPipe[p.ID]; ok {
 			v.LastRun = &lr
+		}
+		if p.Trigger.Cron != "" {
+			if t := cicdEngine.NextCronFire(p.ID); !t.IsZero() {
+				v.NextCron = &t
+			}
 		}
 		out = append(out, v)
 	}
@@ -670,6 +684,64 @@ func CicdArtifactDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
 	http.ServeFile(w, r, path)
+}
+
+// ── 导入/导出 ─────────────────────────────────────────────
+
+// CicdPipelineExport 导出流水线(JSON 数组; ?id= 单条, 空=全部)。触发凭证不导出。
+func CicdPipelineExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	var out []cicd.Pipeline
+	for _, p := range cicdEngine.ListPipelines() {
+		if id != "" && p.ID != id {
+			continue
+		}
+		p.Trigger.Secret = "" // 凭证永不导出
+		out = append(out, p)
+	}
+	if out == nil {
+		out = []cicd.Pipeline{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=opscore-cicd-pipelines.json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// CicdPipelineImport 导入流水线(JSON 数组; 重置 ID 与凭证, 名称冲突自动加后缀)
+func CicdPipelineImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var list []cicd.Pipeline
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&list); err != nil {
+		writeErr(w, "请求格式错误(需流水线 JSON 数组): "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	imported, skipped, err := cicdEngine.ImportPipeline(list)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true, "imported": imported, "skipped": skipped})
+}
+
+// CicdNextFire 流水线 cron 下次触发时间(?id=)
+func CicdNextFire(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	t := cicdEngine.NextCronFire(r.URL.Query().Get("id"))
+	if t.IsZero() {
+		WriteJSON(w, map[string]any{"next": nil})
+		return
+	}
+	WriteJSON(w, map[string]any{"next": t})
 }
 
 // ── 凭据中心 ───────────────────────────────────────────────

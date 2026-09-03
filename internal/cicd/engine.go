@@ -9,7 +9,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -100,9 +102,11 @@ type Pipeline struct {
 	KubeCredID  string    `json:"kubeCredId,omitempty"` // kubeconfig 凭据 → 注入 KUBECONFIG
 	TimeoutMin  int       `json:"timeoutMin"`
 	MaxRuns     int       `json:"maxRuns"`
-	NotifyURL   string    `json:"notifyURL"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	NotifyURL     string    `json:"notifyURL"`              // 完成通知地址
+	NotifyChannel string    `json:"notifyChannel"`           // 空=通用JSON / dingtalk / feishu / wecom
+	NotifySecret  string    `json:"notifySecret,omitempty"`  // 钉钉机器人加签密钥
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // Artifact 归档制品(每步骤一个 tar.gz)
@@ -1048,10 +1052,10 @@ func (e *Engine) pruneRuns(pipelineID string) {
 // notify 终态通知(notifyURL, 10s 超时, 失败不重试)
 func (e *Engine) notify(run *Run) {
 	e.mu.RLock()
-	var url string
+	var url, channel, secret string
 	for _, p := range e.pipes {
 		if p.ID == run.PipelineID {
-			url = p.NotifyURL
+			url, channel, secret = p.NotifyURL, p.NotifyChannel, p.NotifySecret
 			break
 		}
 	}
@@ -1060,11 +1064,20 @@ func (e *Engine) notify(run *Run) {
 		return
 	}
 	go func() {
-		body, _ := json.Marshal(map[string]any{
-			"runId": run.ID, "pipelineId": run.PipelineID, "pipeline": run.Pipeline,
-			"status": run.Status, "durationMs": run.DurationMs, "trigger": run.Trigger,
-			"finishedAt": run.FinishedAt, "error": run.Error,
-		})
+		body := buildNotifyBody(run, channel)
+		target := url
+		// 钉钉加签: timestamp+sign=HmacSHA256(secret, "<ts>\n<secret>") base64
+		if channel == "dingtalk" && secret != "" {
+			ts := time.Now().UnixMilli()
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write([]byte(fmt.Sprintf("%d\n%s", ts, secret)))
+			sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+			sep := "&"
+			if !strings.Contains(target, "?") {
+				sep = "?"
+			}
+			target = fmt.Sprintf("%s%stimestamp=%d&sign=%s", target, sep, ts, urlQueryEscape(sign))
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -1077,8 +1090,168 @@ func (e *Engine) notify(run *Run) {
 			log.Printf("[cicd] 通知失败 %s: %v", url, err)
 			return
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			log.Printf("[cicd] 通知渠道 %s 返回 HTTP %d: %s", channel, resp.StatusCode, strings.TrimSpace(string(b)))
+		}
 	}()
+}
+
+// notifyStatusText 状态中文文案(通知消息用)
+func notifyStatusText(status string) string {
+	switch status {
+	case StatusSuccess:
+		return "✅ 成功"
+	case StatusFailed:
+		return "❌ 失败"
+	case StatusCanceled:
+		return "⏹ 已取消"
+	default:
+		return status
+	}
+}
+
+// buildNotifyBody 按渠道组装消息体; 空 channel 为通用 JSON(webhook 自用)
+func buildNotifyBody(run *Run, channel string) []byte {
+	title := fmt.Sprintf("OpsCore 流水线「%s」%s", run.Pipeline, notifyStatusText(run.Status))
+	info := fmt.Sprintf("触发: %s · 耗时: %s", run.Trigger, time.Duration(run.DurationMs).Round(time.Second))
+	if run.Error != "" {
+		info += "\n失败原因: " + run.Error
+	}
+	switch channel {
+	case "dingtalk":
+		body, _ := json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{
+			"title": title, "text": "### " + title + "\n\n" + info,
+		}})
+		return body
+	case "feishu":
+		body, _ := json.Marshal(map[string]any{"msg_type": "text", "content": map[string]string{
+			"text": title + "\n" + info,
+		}})
+		return body
+	case "wecom":
+		body, _ := json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{
+			"content": title + "\n" + info,
+		}})
+		return body
+	default:
+		body, _ := json.Marshal(map[string]any{
+			"runId": run.ID, "pipelineId": run.PipelineID, "pipeline": run.Pipeline,
+			"status": run.Status, "durationMs": run.DurationMs, "trigger": run.Trigger,
+			"finishedAt": run.FinishedAt, "error": run.Error,
+		})
+		return body
+	}
+}
+
+// urlQueryEscape 百分号转义(钉钉 sign 用, 避免引入 net/url 到领域层)
+func urlQueryEscape(s string) string {
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
+
+// ImportPipeline 导入流水线(JSON 数组): 重置 ID 与触发凭证, 名称冲突自动加后缀。
+// 返回 (导入数, 跳过数, 错误)。
+func (e *Engine) ImportPipeline(list []Pipeline) (int, int, error) {
+	if len(list) == 0 {
+		return 0, 0, errors.New("导入内容为空")
+	}
+	if len(list) > 100 {
+		return 0, 0, errors.New("单次导入超过 100 条")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	imported, skipped := 0, 0
+	names := map[string]bool{}
+	for _, p := range e.pipes {
+		names[p.Name] = true
+	}
+	for i := range list {
+		p := list[i]
+		p.ID = "pl-" + randHex(3)
+		p.Trigger.Secret = ""
+		if p.Trigger.Webhook {
+			p.Trigger.Secret = NewSecret()
+		}
+		p.CreatedAt = time.Now()
+		p.UpdatedAt = p.CreatedAt
+		base := p.Name
+		for n := 2; names[p.Name]; n++ {
+			p.Name = fmt.Sprintf("%s-%d", base, n)
+		}
+		names[p.Name] = true
+		if msg := validatePipelineShape(&p); msg != "" {
+			log.Printf("[cicd] 导入跳过 %q: %s", base, msg)
+			skipped++
+			continue
+		}
+		e.pipes = append(e.pipes, &p)
+		if p.Trigger.Cron != "" {
+			if spec, err := ParseCron(p.Trigger.Cron); err == nil {
+				e.crons[p.ID] = spec
+			}
+		}
+		imported++
+	}
+	if imported > 0 {
+		e.persistPipesLocked()
+	}
+	return imported, skipped, nil
+}
+
+// validatePipelineShape 导入结构校验(引擎侧子集)
+func validatePipelineShape(p *Pipeline) string {
+	if p.Name == "" {
+		return "名称为空"
+	}
+	if len(p.Stages) == 0 {
+		return "无阶段"
+	}
+	for _, st := range p.Stages {
+		if st.Name == "" {
+			return "存在空阶段名"
+		}
+		if len(st.Steps) == 0 {
+			return "阶段 " + st.Name + " 无步骤"
+		}
+		for _, sp := range st.Steps {
+			if strings.TrimSpace(sp.Command) == "" {
+				return "步骤 " + sp.Name + " 命令为空"
+			}
+		}
+	}
+	if p.Trigger.Cron != "" {
+		if _, err := ParseCron(p.Trigger.Cron); err != nil {
+			return "cron 无效: " + p.Trigger.Cron
+		}
+	}
+	return ""
+}
+
+// NextCronFire 计算流水线 cron 的下次触发时间(无 cron 返回零值)
+func (e *Engine) NextCronFire(pipelineID string) time.Time {
+	e.mu.RLock()
+	spec, ok := e.crons[pipelineID]
+	e.mu.RUnlock()
+	if !ok {
+		return time.Time{}
+	}
+	t := time.Now().Add(time.Minute).Truncate(time.Minute)
+	for limit := 0; limit < 366*24*60; limit++ {
+		if spec.Match(t) {
+			return t
+		}
+		t = t.Add(time.Minute)
+	}
+	return time.Time{}
 }
 
 // ── 查询接口(HTTP 层用) ─────────────────────────────────────
@@ -1121,11 +1294,18 @@ func (e *Engine) Overview() map[string]any {
 	defer e.mu.RUnlock()
 	running, queued := 0, 0
 	ok24, fail24 := 0, 0
+	waitingApproval := 0
 	day := time.Now().Add(-24 * time.Hour)
 	for _, r := range e.runs {
 		switch r.Status {
 		case StatusRunning:
 			running++
+			for _, st := range r.Stages {
+				if st.Status == StatusWaiting {
+					waitingApproval++
+					break
+				}
+			}
 		case StatusQueued:
 			queued++
 		case StatusSuccess:
@@ -1145,12 +1325,13 @@ func (e *Engine) Overview() map[string]any {
 		recent = append(recent, r)
 	}
 	return map[string]any{
-		"pipelines":  len(e.pipes),
-		"running":    running,
-		"queued":     queued,
-		"success24h": ok24,
-		"failed24h":  fail24,
-		"recentRuns": recent,
+		"pipelines":       len(e.pipes),
+		"running":         running,
+		"queued":          queued,
+		"waitingApproval": waitingApproval,
+		"success24h":      ok24,
+		"failed24h":       fail24,
+		"recentRuns":      recent,
 	}
 }
 

@@ -16,10 +16,12 @@ interface Pipeline {
   env: Var[]; trigger: Trigger; stages: Stage[]
   source: Source; registryId: string; kubeCredId: string
   timeoutMin: number; maxRuns: number; notifyURL: string
+  notifyChannel?: string; notifySecret?: string
 }
 interface PipelineView extends Pipeline {
   stageCount: number
   lastRun?: Run
+  nextCron?: string
 }
 interface Artifact { step: string; file: string; size: number; paths: string }
 interface StepRun { name: string; command: string; status: string; exitCode: number; durationMs: number; artifacts?: Artifact[] }
@@ -117,6 +119,7 @@ const emptyPipeline = (): Pipeline => ({
 export default function CicdModule() {
   const [tab, setTab] = useState('pipelines')
   const [overview, setOverview] = useState<any>(null)
+  const [detailRunId, setDetailRunId] = useState('')
 
   const loadOverview = useCallback(() => {
     getJSON('/api/cicd/overview').then(setOverview).catch(() => {})
@@ -144,6 +147,7 @@ export default function CicdModule() {
           { id: 'scripts', label: '脚本库' },
           { id: 'repos', label: '仓库' },
           { id: 'creds', label: '凭据' },
+          { id: 'overview', label: '概览' },
         ].map(t => (
           <button key={t.id} className={`tab ${tab === t.id ? 'tab-on' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
@@ -154,6 +158,8 @@ export default function CicdModule() {
       {tab === 'scripts' && <ScriptsTab />}
       {tab === 'repos' && <ReposTab />}
       {tab === 'creds' && <CredentialsTab />}
+      {tab === 'overview' && <OverviewTab data={overview} onOpenRun={(id: string) => setDetailRunId(id)} />}
+      {detailRunId && <RunDetail runId={detailRunId} onClose={() => setDetailRunId('')} />}
     </div>
   )
 }
@@ -212,7 +218,27 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     <div className="section">
       {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
       <Card title={`流水线 (${pipes.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
+          <button className="btn btn-sm" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
+            const t = localStorage.getItem('opscore-token')
+            window.open(`/api/cicd/pipeline/export${t ? `?token=${encodeURIComponent(t)}` : ''}`)
+          }}>导出</button>
+          <label className="btn btn-sm" style={{ cursor: 'pointer' }} title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
+            导入<input type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={async ev => {
+              const f = ev.target.files?.[0]
+              ev.target.value = ''
+              if (!f) return
+              try {
+                const text = await f.text()
+                const d = await postJSON<{ imported: number; skipped: number }>('/api/cicd/pipeline/import', JSON.parse(text))
+                setErr('')
+                alert(`导入完成: 成功 ${d.imported} 条${d.skipped ? `, 跳过 ${d.skipped} 条(结构无效)` : ''}`)
+                load()
+              } catch (e: any) {
+                setErr('导入失败: ' + e.message)
+              }
+            }} />
+          </label>
           <button className="btn btn-sm btn-accent" onClick={() => setEditing(emptyPipeline())}>+ 新建流水线</button>
         </div>
         <div className="table-wrap">
@@ -239,6 +265,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                       {p.trigger.webhook && <span className="badge badge-on">Webhook</span>}
                       {p.trigger.cron && <span className="badge badge-on">定时</span>}
                     </div>
+                    {p.nextCron && <div className="small dim">下次 {fmtTime(p.nextCron)}</div>}
                   </td>
                   <td>
                     {p.lastRun ? (
@@ -385,9 +412,24 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
             <input className="input" type="number" min={5} max={500} value={p.maxRuns} onChange={e => set({ maxRuns: +e.target.value })} />
           </div>
           <div style={{ flex: 2 }}>
-            <div className="field-label">完成通知 URL(可选)</div>
-            <input className="input" value={p.notifyURL} onChange={e => set({ notifyURL: e.target.value })} placeholder="https://... 运行结束后 POST 结果 JSON" />
+            <div className="field-label">完成通知地址(可选)</div>
+            <input className="input" value={p.notifyURL} onChange={e => set({ notifyURL: e.target.value })} placeholder="https://... 机器人 webhook 地址" />
           </div>
+          <div style={{ flex: 1 }}>
+            <div className="field-label">通知渠道</div>
+            <select className="input" value={p.notifyChannel || ''} onChange={e => set({ notifyChannel: e.target.value })}>
+              <option value="">通用 JSON</option>
+              <option value="dingtalk">钉钉机器人</option>
+              <option value="feishu">飞书机器人</option>
+              <option value="wecom">企业微信机器人</option>
+            </select>
+          </div>
+          {p.notifyChannel === 'dingtalk' && (
+            <div style={{ flex: 2 }}>
+              <div className="field-label">钉钉加签密钥(SEC 开头, 可空)</div>
+              <input className="input mono" value={p.notifySecret || ''} onChange={e => set({ notifySecret: e.target.value })} placeholder="SEC..." />
+            </div>
+          )}
         </div>
 
         <div className="form-row" style={{ alignItems: 'flex-end', gap: 16 }}>
@@ -1187,6 +1229,63 @@ function CredentialsTab() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ==================== 概览 Tab(v2.4 恢复) ====================
+
+function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) => void }) {
+  if (!data) return <div className="log-loading">加载中...</div>
+  const stats = [
+    { label: '流水线总数', value: data.pipelines },
+    { label: '运行中 / 排队', value: `${data.running} / ${data.queued}` },
+    { label: '等待审批', value: data.waitingApproval ?? 0, warn: (data.waitingApproval ?? 0) > 0 },
+    { label: '24h 成功 / 失败', value: `${data.success24h} / ${data.failed24h}` },
+  ]
+  return (
+    <div className="section">
+      <div className="grid grid-4" style={{ marginBottom: 14 }}>
+        {stats.map(s => (
+          <Card key={s.label}>
+            <div className="small dim">{s.label}</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: s.warn ? 'var(--warn)' : undefined }}>{s.value}</div>
+          </Card>
+        ))}
+      </div>
+      {(data.waitingApproval ?? 0) > 0 && (
+        <div className="banner banner-info" style={{ marginBottom: 14 }}>
+          ⏸ 有 {data.waitingApproval} 个运行正在等待人工审批 —— 请到「运行历史」打开详情批准或拒绝
+        </div>
+      )}
+      <Card title="最近运行">
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>流水线</th><th>触发</th><th>状态</th><th>进度</th><th>开始时间</th><th>耗时</th><th style={{ width: 70 }}>操作</th></tr></thead>
+            <tbody>
+              {(data.recentRuns || []).length === 0 && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6, padding: 16 }}>暂无数据</td></tr>
+              )}
+              {(data.recentRuns || []).map((r: Run) => (
+                <tr key={r.id}>
+                  <td>{r.pipeline}</td>
+                  <td>{TRIGGER_TEXT[r.trigger] || r.trigger}</td>
+                  <td><span className={`badge ${badgeCls(r.status)}`}>{badgeText(r.status)}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <ProgressBar value={r.progress || 0} status={r.status} />
+                      <span className="small dim" style={{ minWidth: 32 }}>{r.progress || 0}%</span>
+                    </div>
+                  </td>
+                  <td className="small">{fmtTime(r.startedAt)}</td>
+                  <td>{fmtDur(r.durationMs)}</td>
+                  <td><button className="btn btn-sm" onClick={() => onOpenRun(r.id)}>详情</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   )
 }
