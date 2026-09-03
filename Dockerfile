@@ -8,9 +8,10 @@ COPY web/ ./
 RUN npm run build
 
 # ---------- Stage 2: 编译后端 (静态二进制) ----------
-FROM golang:1.24-bookworm AS go
+FROM golang:1.26-bookworm AS go
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY third_party/ ./third_party/
 RUN go mod download
 COPY . .
 # 静态链接,零 C 依赖,可在 scratch/alpine 直接跑

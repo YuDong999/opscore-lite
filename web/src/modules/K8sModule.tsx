@@ -160,6 +160,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [loading, setLoading] = useState(false)
   const [showReg, setShowReg] = useState(false)
   const [createKind, setCreateKind] = useState('Deployment')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: any } | null>(null)
+  const [clusterMenu, setClusterMenu] = useState<{ x: number; y: number; cluster: any } | null>(null)
   const [folded, setFolded] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}') } catch { return {} }
   })
@@ -197,6 +200,32 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
       return String(av ?? '').localeCompare(String(bv ?? '')) * dir
     })
   }, [rows, sortKey, sortDir, res])
+
+  const rowKey = (r: any, i: number) => `${r.namespace || ''}/${r.name || i}`
+
+  const isAllSelected = rows.length > 0 && rows.every((r, i) => selected.has(rowKey(r, i)))
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(rows.map((r, i) => rowKey(r, i))))
+    }
+  }
+
+  const batchAct = (action: string, confirmMsg: string) => {
+    if (selected.size === 0) return
+    if (!confirm(confirmMsg.replace('{count}', String(selected.size)))) return
+    const targets = Array.from(selected).map((k) => {
+      const [nsPart, namePart] = k.split('/')
+      return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: ns === 'all' ? nsPart : ns }) }
+    })
+    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action, targets })
+      .then((d: any) => {
+        onMsg?.(d.ok ? `✓ 批量 ${action} ${selected.size} 个资源完成` : '✗ ' + (d.error || '失败'))
+        if (d.ok) { setSelected(new Set()); setTimeout(loadRows, 600) }
+      })
+      .catch((e) => onMsg?.('✗ ' + String(e)))
+  }
 
   const dblRow = (r: any) => {
     if (res === 'pods') openModal('pod', r)
@@ -275,51 +304,87 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
 
   const cluster = clusters?.find((c) => c.id === clusterID)
 
+  const onRowContext = (e: React.MouseEvent, r: any) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCtxMenu({ x: e.clientX, y: e.clientY, row: r })
+  }
+
+  useEffect(() => {
+    if (ctxMenu) {
+      const h = (e: MouseEvent) => { if (!(e.target as HTMLElement)?.closest('.k8s-ctxmenu')) setCtxMenu(null) }
+      document.addEventListener('mousedown', h)
+      return () => document.removeEventListener('mousedown', h)
+    }
+    if (clusterMenu) {
+      const h = (e: MouseEvent) => { if (!(e.target as HTMLElement)?.closest('.k8s-cluster-ctxmenu')) setClusterMenu(null) }
+      document.addEventListener('mousedown', h)
+      return () => document.removeEventListener('mousedown', h)
+    }
+  }, [ctxMenu, clusterMenu])
+
+  const closeCtx = () => setCtxMenu(null)
+  const openClusterMenu = (c: any, x: number, y: number) => setClusterMenu({ x, y, cluster: c })
+  const closeClusterMenu = () => setClusterMenu(null)
+  const handleClusterAction = (action: string) => {
+    if (!clusterMenu) return
+    const c = clusterMenu.cluster
+    if (action === 'set-active') { setClusterID(c.id) }
+    else if (action === 'remove') {
+      if (!confirm(`移除集群「${c.name}」? (仅删除本地注册, 不影响集群本身)`)) return
+      postJSON('/api/plugins/containers/k8s/cluster/action', { id: c.id, action: 'delete' })
+        .then((d: any) => {
+          if (d.ok) { loadClusters(); if (clusterID === c.id) setClusterID('') }
+          else onMsg?.('✗ ' + (d.error || '删除失败'))
+        })
+        .catch((err) => onMsg?.('✗ ' + String(err)))
+    }
+    setClusterMenu(null)
+  }
+
   return (
-    <div className="k8s-shell">
+    <div className="k8s-shell" onClick={() => { closeCtx(); closeClusterMenu() }}>
       {/* ── 内嵌侧栏(固定高度独立滚动, 不随右侧内容移动) ── */}
       <aside className="k8s-side">
         <div className="k8s-side-clusters">
-          <div className="k8s-side-label">集群</div>
+          <div className="k8s-side-section-label">集群</div>
           {(clusters || []).map((c) => (
-            <div key={c.id} className={`k8s-side-item k8s-cluster-item ${c.id === clusterID ? 'active' : ''}`}
-              onClick={() => setClusterID(c.id)} title={c.apiServer}>
-            <span className={`k8s-dot ${c.status === 'ready' ? 'k8s-dot-ok' : 'k8s-dot-bad'}`} />
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-            <span style={{ fontSize: '0.625rem', opacity: 0.7, marginRight: 4 }}>{c.status === 'ready' ? c.version.replace(/^v/, '') : '离线'}</span>
-            <button className="k8s-del-cluster"
-              title="移除集群"
-              onClick={(e) => {
-                e.stopPropagation()
-                if (!confirm(`移除集群「${c.name}」? (仅删除本地注册, 不影响集群本身)`)) return
-                postJSON('/api/plugins/containers/k8s/cluster/action', { id: c.id, action: 'delete' })
-                  .then((d: any) => {
-                    if (d.ok) { loadClusters(); if (clusterID === c.id) setClusterID('') }
-                    else onMsg?.('✗ ' + (d.error || '删除失败'))
-                  })
-                  .catch((err) => onMsg?.('✗ ' + String(err)))
-              }}>✕</button>
-          </div>
-        ))}
-        <button className="btn-glass-soft btn-glass-soft-sm k8s-add-cluster" onClick={() => setShowReg(true)}>+ 注册集群</button>
-        <div className="k8s-side-divider" />
-
+            <div key={c.id}
+              className={`k8s-side-item k8s-cluster-item ${c.id === clusterID ? 'active' : ''}`}
+              onClick={() => setClusterID(c.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                openClusterMenu(c, e.clientX, e.clientY)
+              }}
+              title={c.apiServer}>
+              <span className={`k8s-dot ${c.status === 'ready' ? 'k8s-dot-ok' : 'k8s-dot-bad'}`} />
+              <span className="k8s-cluster-name" title={c.name}>{c.name}</span>
+              <span className={`k8s-cluster-version ${c.status === 'offline' ? 'offline' : ''}`}>
+                v{c.version.replace(/^v/, '')}
+              </span>
+            </div>
+          ))}
+          <button className="btn-glass-soft btn-glass-soft-sm k8s-add-cluster"
+            onClick={() => setShowReg(true)}>+ 注册集群</button>
+          <div className="k8s-side-divider" />
+        </div>
         <nav className="k8s-side-nav">
-          <div className={`k8s-side-item ${res === 'create' ? 'active' : ''}`} onClick={() => setRes('create' as any)}>
-            <span>➕ 创建资源</span>
+          <div className="k8s-side-item k8s-nav-item" onClick={() => setRes('create' as any)} data-res="create">
+            <span>创建资源</span>
           </div>
-          {/* 概览 */}
-          <div className={`k8s-side-item ${res === 'overview' ? 'active' : ''}`} onClick={() => setRes('overview')}>
+          <div className="k8s-side-item k8s-nav-item" onClick={() => setRes('overview' as any)} data-res="overview">
             <span>概览</span>
           </div>
           {RES_GROUPS.map((g) => (
-            <div key={g.key}>
+            <div key={g.key} className="k8s-nav-group">
               <div className="k8s-side-group" onClick={() => toggleFold(g.key)}>
-                <span>{g.label}</span>
+                <span className="k8s-group-label">{g.label}</span>
                 <span className={`k8s-fold-arrow ${isFolded(folded, g.key, g.defaultOpen) ? 'folded' : ''}`}>▾</span>
               </div>
               {!isFolded(folded, g.key, g.defaultOpen) && g.items.map((it) => (
-                <div key={it.res} className={`k8s-side-item ${it.res === res ? 'active' : ''}`}
+                <div key={it.res}
+                  className={`k8s-side-item k8s-nav-item ${it.res === res ? 'active' : ''}`}
+                  data-res={it.res}
                   onClick={() => setRes(it.res)}>
                   <span>{it.title}</span>
                 </div>
@@ -327,11 +392,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             </div>
           ))}
         </nav>
-        </div>
       </aside>
 
       {/* ── 主内容区 ── */}
-      <section className="k8s-main" style={{ minWidth: 0, flex: 1 }}>
+      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {!cluster ? (
           <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
             <p className="dim">尚未注册集群或未选择</p>
@@ -348,41 +412,88 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
         ) : res === 'overview' ? (
           <K8sOverview clusterID={clusterID} clusterName={cluster.name} />
         ) : (
-          <div className="card">
-            <div className="card-head" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
-              <span style={{ fontWeight: 700 }}>{titleOf(res)}</span>
-              <span className="dim" style={{ fontSize: '0.625rem' }}>双击行打开详情/操作</span>
-              {!NSLESS.has(res as K8sRes) && (
-                <select className="input sel" value={ns} onChange={(e) => setNs(e.target.value)} style={{ width: 200 }}>
-                  <option value="all">全部命名空间</option>
-                  {namespaces.map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              )}
-              <span className="pill pill-sub">{loading ? '加载中…' : `${rows.length} 条`}</span>
-              <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={loadRows}>刷新</button>
-              {CREATE_KIND_OF[res] && (
-                <button className="btn-glass is-accent btn-sm" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
-              )}
-            </div>
+            <div className="card k8s-table-card">
+              <div className="card-head k8s-card-head">
+                <div className="k8s-head-left">
+                  <span className="k8s-res-title">{titleOf(res)}</span>
+                  <span className="dim k8s-res-hint">双击行打开详情/操作</span>
+                  <span className="pill pill-sub">{loading ? '加载中…' : `${rows.length} 条`}</span>
+                </div>
+                {!NSLESS.has(res as K8sRes) && (
+                  <select className="input sel" value={ns} onChange={(e) => setNs(e.target.value)} style={{ width: 200 }}>
+                    <option value="all">全部命名空间</option>
+                    {namespaces.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                )}
+                <div className="k8s-head-actions">
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={loadRows}>刷新</button>
+                  {CREATE_KIND_OF[res] && (
+                    <button className="btn-glass is-accent btn-sm" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
+                  )}
+                </div>
+              </div>
             {note && <div className="banner banner-warn">{note}</div>}
+            {/* 批量操作工具条 — 始终在 DOM 中, 避免选择状态切换时布局跳动 */}
+            <div className={`k8s-batch-bar${selected.size === 0 ? ' k8s-batch-bar-hidden' : ''}`}>
+              <span className="mono" style={{ fontSize: '0.75rem' }}>已选 {selected.size} 个</span>
+              <div style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
+                {res === 'pods' && (
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
+                    onClick={() => batchAct('delete', '批量删除 {count} 个 Pod?')}>批量删除</button>
+                )}
+                {res === 'deployments' && (
+                  <button className="btn-glass-soft btn-glass-soft-sm"
+                    onClick={() => batchAct('restart', '滚动重启 {count} 个 Deployment?')}>批量重启</button>
+                )}
+                {res !== 'pods' && res !== 'deployments' && (
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
+                    onClick={() => batchAct('delete', '批量删除 {count} 个资源?')}>批量删除</button>
+                )}
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelected(new Set())}>取消选择</button>
+              </div>
+            </div>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
-                  <tr>{(COLS[res as K8sRes] || []).map(([k, t, w]) => (
-                    <th key={k} style={{ width: `${w}%`, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort(k)} title="点击排序">
-                      {t}
-                      <span style={{ opacity: sortKey === k ? 1 : 0.3, marginLeft: 3, fontSize: '0.5rem' }}>
-                        {sortKey === k ? (sortDir === 'desc' ? '▼' : '▲') : '↕'}
-                      </span>
+                  <tr>
+                    <th style={{ width: 36, padding: '0.5rem 0.375rem', textAlign: 'center' }}>
+                      <input type="checkbox" style={{ cursor: 'pointer' }}
+                        checked={isAllSelected}
+                        onChange={toggleSelectAll}
+                        disabled={rows.length === 0} />
                     </th>
-                  ))}<th style={{ width: 130, minWidth: 110, textAlign: 'right' }}>操作</th></tr>
-                </thead>
+                    {(COLS[res as K8sRes] || []).map(([k, t, w]) => (
+                      <th key={k} style={{ width: `${w}%`, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort(k)} title="点击排序">
+                        {t}
+                        <span style={{ opacity: sortKey === k ? 1 : 0.3, marginLeft: 3, fontSize: '0.5rem' }}>
+                          {sortKey === k ? (sortDir === 'desc' ? '▼' : '▲') : '↕'}
+                        </span>
+                      </th>
+                     ))}<th style={{ width: 130, minWidth: 110, textAlign: 'right' }}>操作</th>
+                   </tr>
+                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={(COLS[res as K8sRes] || []).length + 1} className="dim">{loading ? '加载中…' : '（无数据）'}</td></tr>
+                    <tr><td colSpan={(COLS[res as K8sRes] || []).length + 2} className="dim">{loading ? '加载中…' : '（无数据）'}</td></tr>
                   )}
-                  {sortedRows.map((r, i) => (
-                    <tr key={i} style={{ cursor: 'pointer' }} onDoubleClick={() => dblRow(r)} title="双击查看详情/操作">
+                  {sortedRows.map((r, i) => {
+                    const rk = rowKey(r, i)
+                    const checked = selected.has(rk)
+                    return (
+                    <tr key={rk} style={{ cursor: 'pointer' }} onDoubleClick={() => dblRow(r)}
+                      onContextMenu={(e) => onRowContext(e, r)}
+                      title="双击查看详情/操作 · 右键快速操作">
+                      <td style={{ padding: '0.5rem 0.375rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" style={{ cursor: 'pointer' }}
+                          checked={checked}
+                          onChange={(e) => {
+                            e.stopPropagation()
+                            const next = new Set(selected)
+                            if (e.target.checked) next.add(rk)
+                            else next.delete(rk)
+                            setSelected(next)
+                          }} />
+                      </td>
                       {(COLS[res as K8sRes] || []).map(([k, , , typ]) => (
                         <td key={k} className={`${typ === 'dim' ? 'dim' : typ === 'mono' ? 'mono' : ''}`}
                           style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -392,10 +503,14 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                         </td>
                       ))}
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <div className="k8s-row-actions" style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           {res === 'pods' && (
+                            <>
                             <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
                               onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete' }, `优雅删除 Pod ${r.name}? (30s 优雅期)`) }}>删除</button>
+                            <button className="btn-glass-soft btn-glass-soft-sm" title="滚动重启该 Pod(删除后由 Deployment 重新创建)"
+                              onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete', grace: 0 }, `重启 Pod ${r.name}? (立即删除, Deployment 将自动重建)`) }}>重启</button>
+                            </>
                           )}
                           {(res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') && (
                             <>
@@ -420,13 +535,47 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         )}
       </section>
+
+      {/* ── 右键上下文菜单 ── */}
+      {ctxMenu && (
+        <K8sContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          res={res as K8sRes}
+          ns={ns === 'all' ? ctxMenu.row.namespace || '' : ns}
+          name={ctxMenu.row.name}
+          row={ctxMenu.row}
+          onAction={(action, extra) => {
+            act({ res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns, name: ctxMenu.row.name, action, ...extra })
+          }}
+          onViewYaml={() => {
+            openModal('yaml' as any, ctxMenu.row)
+            setCtxMenu(null)
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+
+      {/* 集群右键菜单 */}
+      {clusterMenu && (
+        <div className="k8s-cluster-ctxmenu" style={{ left: clusterMenu.x, top: clusterMenu.y }}>
+          <div className="k8s-ctx-item" onClick={() => handleClusterAction('set-active')}>
+            设为当前集群
+          </div>
+          <div className="k8s-ctx-divider" />
+          <div className="k8s-ctx-item k8s-ctx-danger" onClick={() => handleClusterAction('remove')}>
+            移除集群
+          </div>
+        </div>
+      )}
 
       {/* 资源详情 / 工作负载管理 / YAML 弹层 */}
       {modal && cluster && (
@@ -444,7 +593,6 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           onDone={(ok, msg) => { setShowReg(false); onMsg?.(msg); if (ok) loadClusters() }}
         />
       )}
-
     </div>
   )
 }
@@ -1244,6 +1392,50 @@ function ResourceModal({ info, onClose, act, onMsg }: {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── 右键上下文菜单 ──
+function K8sContextMenu({ x, y, res, ns, name, row, onAction, onViewYaml, onClose }: {
+  x: number; y: number
+  res: K8sRes; ns: string; name: string; row: any
+  onAction: (action: string, extra?: Record<string, any>) => void
+  onViewYaml: () => void
+  onClose: () => void
+}) {
+  const items: { label: string; action: string; danger?: boolean; extra?: Record<string, any>; needsConfirm?: string; type?: string }[] = []
+  items.push({ label: '查看详情', action: 'noop' })
+  if (res === 'pods') {
+    items.push({ label: '重启 Pod', action: 'delete', danger: true, extra: { grace: 0 }, needsConfirm: `重启 Pod ${name}?` })
+  }
+  if (res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') {
+    items.push({ label: '滚动重启', action: 'restart', needsConfirm: `滚动重启 ${name}?` })
+  }
+  if (res === 'deployments' || res === 'statefulsets') {
+    items.push({ label: '扩缩容...', action: 'scale-prompt' })
+  }
+  items.push({ type: 'sep', label: '', action: '' })
+  items.push({ label: '编辑 YAML', action: 'view-yaml' })
+  items.push({ label: 'Describe', action: 'describe' })
+  items.push({ type: 'sep', label: '', action: '' })
+  items.push({ label: '删除资源', action: 'delete', danger: true, needsConfirm: `删除 ${name}?` })
+  return (
+    <div className="k8s-ctxmenu" style={{ left: x, top: y }} onClick={onClose}>
+      {items.map((it, i) =>
+        it.type === 'sep'
+          ? <div key={i} className="k8s-ctx-divider" />
+          : <div key={i} className={`k8s-ctx-item ${it.danger ? 'k8s-ctx-danger' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (it.needsConfirm && !confirm(it.needsConfirm)) return
+                if (it.action === 'noop') { onClose() }
+                else if (it.action === 'view-yaml') { onViewYaml() }
+                else onAction(it.action, it.extra)
+              }}>
+            {it.label}
+          </div>
+      )}
     </div>
   )
 }

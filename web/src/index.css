@@ -313,6 +313,30 @@ body {
 .card-head h3 { margin: 0; font-size: 0.9375rem; font-weight: 600; }
 .card-sub { font-size: 0.75rem; color: var(--text-dim); }
 
+/* K8S 卡片标题栏 — 左中右布局, 不再 flex-wrap */
+.k8s-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+.k8s-head-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.k8s-res-title { font-weight: 700; font-size: 0.9375rem; }
+.k8s-res-hint { font-size: 0.625rem; }
+.k8s-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.k8s-head-actions .btn-sm { padding: 0.25rem 0.625rem; }
+
 .stat-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 0.5rem; font-size: 0.875rem; font-weight: 600; }
 .stat-row .dim { font-weight: 400; }
 .dim { color: var(--text-dim); }
@@ -1069,60 +1093,103 @@ body {
 
 .login-box .btn-accent { background: var(--accent); }
 
-/* ── Docker/K8S 多视图: 内嵌侧栏布局(对齐 kubevision) ── */
-.k8s-shell { display: flex; gap: 1rem; align-items: stretch; }
+/* K8S 多视图: 内嵌侧栏布局(对齐 kubevision) */
+.k8s-shell {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
 .k8s-side {
   width: 200px; min-width: 200px;
   position: sticky; top: 0;
   height: calc(100vh - 96px);
   display: flex; flex-direction: column;
-  background: var(--bg-card, rgba(127,127,127,0.04));
-  border: 1px solid var(--border); border-radius: 0.75rem;
-  padding: 0.75rem 0.5rem;
-  overflow: hidden; /* 滚动收敛到内部 nav */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.375rem;
+  overflow: hidden;
 }
 .k8s-side-nav { flex: 1; overflow-y: auto; min-height: 0; padding-right: 2px; }
-.k8s-side-label { font-size: 0.6875rem; font-weight: 700; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.25rem 0.5rem; }
+.k8s-side-label {
+  font-size: 0.625rem; font-weight: 700;
+  opacity: 0.4; text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.5rem;
+}
 .k8s-side-group {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 0.75rem; font-weight: 700; opacity: 0.6;
-  padding: 0.5rem 0.5rem 0.125rem 1rem; cursor: pointer; user-select: none;
+  font-size: 0.7rem; font-weight: 700; opacity: 0.5;
+  padding: 0.4rem 0.5rem 0.125rem 0.75rem;
+  cursor: pointer; user-select: none;
+  transition: opacity 120ms ease;
 }
-.k8s-side-group:hover { opacity: 1; }
-.k8s-fold-arrow { font-size: 0.5625rem; opacity: 0.6; }
+.k8s-side-group:hover { opacity: 0.8; }
+.k8s-fold-arrow {
+  font-size: 0.5625rem; opacity: 0.5;
+  transition: transform 150ms ease;
+}
+.k8s-fold-arrow.folded { transform: rotate(-90deg); }
 .k8s-side-item {
-  display: flex; align-items: center; gap: 0.375rem;
-  padding: 0.3125rem 0.5rem 0.3125rem 1.25rem; border-radius: 0.5rem; cursor: pointer;
-  font-size: 0.75rem; color: inherit;
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0.5rem 0.25rem 1rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  font-size: 0.8125rem; font-weight: 500;
+  color: inherit;
+  transition: background-color 100ms ease, color 100ms ease;
 }
-.k8s-side-item:hover { background: rgba(127,127,127,0.10); }
-.k8s-side-item.active { background: var(--accent, #7c6cf6); color: #fff; }
-
-/* 集群区域：独立视觉区块 */
-.k8s-side-clusters {
-  font-size: 0.8125rem; font-weight: 600;
-  padding-bottom: 0.25rem;
+.k8s-side-item:hover { background: rgba(127,127,127,0.08); }
+.k8s-side-item.active {
+  background: color-mix(in srgb, var(--accent, #7c6cf6) 12%, transparent);
+  color: var(--accent, #7c6cf6);
+  font-weight: 600;
+}
+.k8s-nav-group + .k8s-nav-group { margin-top: 0.125rem; }
+.k8s-nav-group:not(:last-child) {
   border-bottom: 1px solid var(--border);
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.125rem;
+  padding-bottom: 0.125rem;
 }
+
+/* 集群列表项 */
 .k8s-cluster-item {
-  font-size: 0.8125rem; font-weight: 600;
+  font-size: 0.8125rem; font-weight: 500;
   padding: 0.375rem 0.5rem;
 }
-
-/* 集群移除按钮: 精致图标按钮, 行 hover 时显形, hover 变危险红 */
-.k8s-del-cluster {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.75rem; height: 1.75rem; margin-left: 0.25rem;
-  padding: 0; border: none; background: transparent;
-  color: var(--text-dim); cursor: pointer; border-radius: var(--radius-sm);
-  font-size: 0.875rem; line-height: 1; opacity: 0.35;
-  transition: color .15s ease, background-color .15s ease, transform .15s ease, opacity .15s ease;
+.k8s-cluster-item:hover { background: rgba(127,127,127,0.06); }
+.k8s-cluster-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.k8s-del-cluster:hover { color: #fff; background: var(--danger); opacity: 1; }
-.k8s-del-cluster:active { transform: scale(0.92); }
-.k8s-del-cluster:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.k8s-side-item:hover .k8s-del-cluster { opacity: 0.8; }
+.k8s-cluster-version {
+  font-size: 0.7rem; opacity: 0.5; white-space: nowrap;
+}
+
+/* 集群右键菜单 */
+.k8s-cluster-ctxmenu {
+  position: fixed; z-index: 999; min-width: 180px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 0.5rem; padding: 0.25rem 0;
+  box-shadow: var(--shadow);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.k8s-cluster-ctxmenu .k8s-ctx-item {
+  padding: 0.3rem 0.75rem; font-size: 0.78rem; cursor: pointer;
+  border-radius: 0.3rem; margin: 0 0.25rem;
+}
+.k8s-cluster-ctxmenu .k8s-ctx-item:hover { background: rgba(127,127,127,0.08); }
+.k8s-cluster-ctxmenu .k8s-ctx-danger:hover {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+.k8s-ctx-divider {
+  height: 1px; background: var(--border); margin: 0.25rem 0;
+}
 
 /* 数字等宽, 避免跳动 */
 .tabular, .toolbar-strip b, .data-table td, .badge, .usage-bar { font-variant-numeric: tabular-nums; }
@@ -1250,6 +1317,129 @@ body {
 /* 表格行 hover(仅容器管理作用域) */
 .k8s-main .data-table tbody tr { transition: background-color 90ms ease-out; }
 .k8s-main .data-table tbody tr:hover td { background: rgba(127,127,127,0.055); }
+
+/* ── K8s 表格: sticky 表头 + 复选框列 ── */
+.k8s-main .data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-solid, #15131e);
+  z-index: 10;
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.k8s-main .data-table thead th:first-child { left: 0; z-index: 11; }
+.k8s-main .data-table tbody tr td:first-child { position: sticky; left: 0; background: inherit; z-index: 2; }
+.k8s-main .data-table tbody tr:hover td:first-child { background: rgba(127,127,127,0.085); }
+
+/* 批量操作工具条 */
+.k8s-batch-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: rgba(91, 106, 191, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  padding: 0.4375rem 0.625rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.78125rem;
+  transition: all 150ms ease-out;
+  overflow: hidden;
+}
+.k8s-batch-bar-hidden {
+  max-height: 0;
+  padding: 0 0.625rem;
+  margin-bottom: 0;
+  opacity: 0;
+  border-color: transparent;
+  pointer-events: none;
+  background: transparent;
+}
+.k8s-batch-bar .mono { font-size: 0.75rem; }
+
+/* 右键上下文菜单 */
+.k8s-ctxmenu {
+  position: fixed; z-index: 200; min-width: 200px;
+  background: var(--surface-solid, #15131e);
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  box-shadow: var(--shadow), inset 0 1px 0 0.5px var(--border-glow);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  padding: 0.375rem 0.25rem;
+}
+.k8s-ctx-item {
+  padding: 0.375rem 0.875rem; font-size: 0.78125rem; cursor: pointer;
+  border-radius: 0.375rem; margin: 0 0.25rem;
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.k8s-ctx-item:hover { background: var(--row-hover); }
+.k8s-ctx-item.k8s-ctx-danger:hover { background: rgba(255, 69, 58, 0.12); color: var(--danger); }
+.k8s-ctx-divider {
+  height: 1px; background: var(--border);
+  margin: 0.25rem 0.25rem;
+}
+
+/* K8s 内嵌侧栏宽度自适应 */
+.k8s-shell { width: 100%; }
+
+/* K8s 主内容区高度管理 */
+.k8s-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 卡片在 k8s-main 内: 自然高度, 但 table-wrap 可滚动 */
+.k8s-main .card { min-height: 0; }
+.k8s-main .card-body { min-height: 0; }
+.k8s-main .table-wrap { min-height: 0; }
+.k8s-main .data-table { width: 100%; }
+
+/* K8s 表格卡片: 填满高度, 内部表滚动 */
+.k8s-main .k8s-table-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.k8s-main .k8s-table-card .card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.k8s-main .k8s-table-card .table-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+/* Docker 容器列表卡片: 表滚动 */
+.k8s-main .containers-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.k8s-main .containers-card .card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.k8s-main .containers-card .table-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+/* Docker 镜像列表卡片: 限制表格高度并滚动 */
+.k8s-main .images-card .table-wrap { max-height: 320px; overflow: auto; }
+
+/* 容器管理模块高度撑满 */
+.module { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 
 /* 侧栏小图标 */
 .side-ico { width: 0.875rem; height: 0.875rem; flex-shrink: 0; opacity: 0.75; }
@@ -2594,6 +2784,21 @@ body {
 .log-level { font-weight: 700; font-size: 0.75rem; }
 .log-svc { font-weight: 500; }
 .log-src { color: var(--text-dim); font-size: 0.75rem; }
+.log-index-badge {
+  display: inline-block;
+  padding: 0 0.4rem;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  border-radius: 4px;
+  background: var(--accent-soft, #eef2ff);
+  color: var(--accent, #4f6ef7);
+  border: 1px solid var(--accent-border, #d6ddfb);
+  white-space: nowrap;
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
 .log-summary {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;
