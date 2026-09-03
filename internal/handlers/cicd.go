@@ -383,6 +383,27 @@ func CicdRunCancel(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{"ok": true})
 }
 
+// CicdRunApprove 审批等待中的阶段(approve=true 放行, false 拒绝)
+func CicdRunApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		RunID   string `json:"runId"`
+		Approve bool   `json:"approve"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	if err := cicdEngine.Approve(body.RunID, body.Approve); err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true})
+}
+
 // ── 运行历史/详情/日志 ─────────────────────────────────────
 
 // CicdRuns 运行历史

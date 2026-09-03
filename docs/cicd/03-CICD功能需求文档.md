@@ -3,6 +3,7 @@
 > 版本 v2.0 · 更新于 2026-09-03
 > 配套: [02-CICD构建文档.md](./02-CICD构建文档.md)(技术实现) / [01-开源CI-CD项目调研分析.md](./01-开源CI-CD项目调研分析.md)(取舍依据)
 > v2 增补: FR-13 凭据中心 / FR-14 代码仓库 / FR-15 镜像仓库 / FR-16 发布模板(K8s·Docker·裸机) / FR-17 脚本库 / FR-18 环节进度
+> v2.1 增补: FR-19 阶段审批门禁
 > 优先级: P0 = 必须, P2 = 未来版本
 
 ---
@@ -89,6 +90,21 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 ### FR-11 流水线复制 (P1)
 
 列表"复制"操作: 以源流水线为蓝本新建(名称+"副本", secret 重新生成)。
+
+### FR-19 阶段审批门禁 (P0, v2.1)
+
+**描述**: 发布类阶段执行前强制暂停, 等待人工批准 —— 对标 Jenkins `input` / GitLab `manual job`, 是发布安全的核心门禁。
+
+**详细需求**:
+
+1. 阶段增加"执行前需审批"开关(`approval`), 编辑器阶段卡内勾选。
+2. 开启后运行到该阶段时: 阶段状态置 `waiting`(等待审批), 运行保持 running, 日志记录"等待人工审批"。
+3. 审批操作在运行详情页: waiting 阶段卡片显示"✓ 批准执行 / ✗ 拒绝"按钮(仅运行中可见); API 为 POST /api/cicd/run/approve {runId, approve}。
+4. 批准 → 阶段立即继续执行; 拒绝 → 该阶段 canceled、后续阶段 skipped、运行标记 canceled(错误信息"阶段 %q 人工拒绝")。
+5. 等待期间不占用全局并发名额(引擎让出槽位, 批准后重新竞争), 其他流水线不受阻塞。
+6. 等待中取消运行 → 与拒绝等效(阶段取消)。无超时限制(等待可以过夜)。
+7. 审批无独立用户体系, 与全站一致使用全局 Token; 日志记录批准/拒绝动作时间。
+8. 验收: 两阶段流水线(构建/带审批的发布)运行到第二阶段暂停; 批准后继续且运行 success; 拒绝后运行 canceled 且第三阶段 skipped; 等待期间另一条流水线可正常并发执行。
 
 ### FR-12 未来规划 (P2)
 
@@ -183,7 +199,7 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 | FR | 端点 | 方法 |
 |---|---|---|
 | FR-01/11 | /api/cicd/pipelines · /pipeline/get · /pipeline/save · /pipeline/delete | GET/POST |
-| FR-04/09 | /pipeline/run · /run/cancel | POST |
+| FR-04/09 | /pipeline/run · /run/cancel · /run/approve | POST |
 | FR-08 | /runs · /run/get · /overview | GET |
 | FR-07 | /run/log · /run/stream(SSE) | GET/POST |
 | FR-06 | /webhook/{id} | POST |

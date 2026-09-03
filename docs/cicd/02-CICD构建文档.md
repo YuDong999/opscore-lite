@@ -21,7 +21,7 @@
                ▼
 ┌────────────────────────── Go Server ───────────────────────────────────┐
 │  main.go registerCoreModules                                           │
-│    └─ modCfg{ man("cicd",...), routes[26 条] }   # 与其他 core 模块一致   │
+│    └─ modCfg{ man("cicd",...), routes[27 条] }   # 与其他 core 模块一致   │
 │                                                                        │
 │  internal/handlers/cicd.go        # HTTP 层: 参数校验/白名单/分发          │
 │    └─ internal/cicd (Engine)      # 引擎: 队列/并发/状态机/持久化/触发器    │
@@ -92,7 +92,22 @@ type Script struct {      // scripts.json — 脚本库
 
 ### 3.3 Run 与状态机
 
-Run 增加 `Progress int`(读取时计算: 终态步骤数/总步骤数×100)。状态机不变: Run(queued/running/success/failed/canceled), Stage(+skipped), Step(+skipped/canceled)。
+Run 增加 `Progress int`(读取时计算: 终态步骤数/总步骤数×100)。状态机:
+
+```
+Run:   queued → running → success | failed | canceled
+Stage: pending → (approval? waiting → running) → success | failed | skipped | canceled
+Step:  pending → running → success | failed | skipped | canceled
+```
+
+### 3.3.1 阶段审批门禁(v2.1)
+
+Stage 增加 `Approval bool`: 开启后该阶段执行前暂停在 `waiting`, 由人工在运行详情中批准或拒绝(POST /api/cicd/run/approve):
+
+- 等待期间**临时让出全局并发槽位**(`<-e.sem` / 取回), 不占并发名额(引擎槽位的获取/释放集中在 runWithSlot, 净变化为零);
+- 拒绝 → 阶段 canceled + 后续阶段 skipped + 运行 canceled(错误信息"阶段 %q 人工拒绝");
+- 等待中取消运行 → ctx 贯穿, waitApproval 视为拒绝;
+- 服务重启时 waiting 与其他非终态一样被孤儿恢复为 failed;
 
 ## 四、执行引擎(internal/cicd)
 
@@ -146,6 +161,7 @@ Trigger(校验/解析) → Run{queued} 落盘 → 队列 → 信号量(默认2) 
 | POST | /api/cicd/pipeline/delete | 删除(运行中 409) |
 | POST | /api/cicd/pipeline/run | 手动触发 |
 | POST | /api/cicd/run/cancel | 取消运行 |
+| POST | /api/cicd/run/approve | 审批等待中的阶段(approve=true 放行/false 拒绝) |
 | GET | /api/cicd/runs | 运行历史(?pipeline=&limit=) |
 | GET | /api/cicd/run/get | 运行详情(含 progress) |
 | GET | /api/cicd/run/log | 日志回填(?id=&offset=) |
@@ -189,7 +205,7 @@ CicdModule
 | 文件 | 改动 |
 |---|---|
 | internal/cicd/engine.go / cron.go / creds.go / cron_test.go | 新增: 引擎+触发器+资源层 |
-| internal/handlers/cicd.go | 新增: 26 个 handler + CicdExec 执行回调 |
+| internal/handlers/cicd.go | 新增: 27 个 handler + CicdExec 执行回调 |
 | main.go | 引擎初始化+Exec 注入+26 条路由注册+defer Stop |
 | internal/module/manifest.go | coreModules 增加 cicd 条目 |
 | web/src/modules/CicdModule.tsx | 新增: 模块页面(5 tabs) |

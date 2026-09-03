@@ -9,7 +9,7 @@ import Card from '../components/Card'
 interface Var { name: string; value: string; secret: boolean }
 interface Trigger { manual: boolean; webhook: boolean; secret: string; cron: string }
 interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number }
-interface Stage { name: string; host: string; workspace: string; steps: Step[] }
+interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 interface Source { repoId: string; branch: string }
 interface Pipeline {
   id: string; name: string; description: string
@@ -69,11 +69,11 @@ const STEP_TEMPLATES: { name: string; steps: Step[] }[] = [
 
 // ── 状态徽标与文案 ──
 const STATUS_TEXT: Record<string, string> = {
-  queued: '排队中', running: '运行中', success: '成功', failed: '失败',
+  queued: '排队中', running: '运行中', waiting: '等待审批', success: '成功', failed: '失败',
   canceled: '已取消', skipped: '已跳过', pending: '等待',
 }
 const STATUS_CLS: Record<string, string> = {
-  queued: 'badge-warn', running: 'badge-info', success: 'badge-ok',
+  queued: 'badge-warn', running: 'badge-info', waiting: 'badge-warn', success: 'badge-ok',
   failed: 'badge-danger', canceled: 'badge-off', skipped: 'badge-off', pending: 'badge-off',
 }
 const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时' }
@@ -103,7 +103,7 @@ function ProgressBar({ value, status }: { value: number; status: string }) {
 const emptyPipeline = (): Pipeline => ({
   id: '', name: '', description: '',
   env: [], trigger: { manual: true, webhook: false, secret: '', cron: '' },
-  stages: [{ name: '构建', host: '', workspace: '', steps: [{ name: '示例步骤', command: 'echo hello', continueOnFail: false, timeoutMin: 0 }] }],
+  stages: [{ name: '构建', host: '', workspace: '', approval: false, steps: [{ name: '示例步骤', command: 'echo hello', continueOnFail: false, timeoutMin: 0 }] }],
   source: { repoId: '', branch: '' }, registryId: '', kubeCredId: '',
   timeoutMin: 0, maxRuns: 50, notifyURL: '',
 })
@@ -455,6 +455,9 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
               <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`删除阶段「${st.name}」？`)) set({ stages: p.stages.filter((_, idx) => idx !== si) }) }}>×</button>
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+              <label className="chk" title="阶段执行前暂停, 等待人工批准(发布门禁)">
+                <input type="checkbox" checked={st.approval} onChange={e => setStage(si, { approval: e.target.checked })} /> 执行前需审批
+              </label>
               <span className="small dim">插入模板:</span>
               <select className="input sel-xs" value="" onChange={e => {
                 const tpl = STEP_TEMPLATES.find(t => t.name === e.target.value)
@@ -495,7 +498,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
             <button className="btn btn-sm" onClick={() => setStage(si, { steps: [...st.steps, { name: `步骤 ${st.steps.length + 1}`, command: '', continueOnFail: false, timeoutMin: 0 }] })}>+ 添加步骤</button>
           </div>
         ))}
-        <button className="btn btn-sm" onClick={() => set({ stages: [...p.stages, { name: `阶段 ${p.stages.length + 1}`, host: '', workspace: '', steps: [] }] })}>+ 添加阶段</button>
+        <button className="btn btn-sm" onClick={() => set({ stages: [...p.stages, { name: `阶段 ${p.stages.length + 1}`, host: '', workspace: '', approval: false, steps: [] }] })}>+ 添加阶段</button>
 
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>取消</button>
@@ -740,13 +743,21 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
         {err && <div className="banner banner-err">{err}</div>}
 
         {run.stages.map((st, i) => (
-          <div key={i} className="card glass" style={{ marginBottom: 10 }}>
+          <div key={i} className="card glass" style={{ marginBottom: 10, borderColor: st.status === 'waiting' ? 'var(--warn)' : undefined }}>
             <div className="card-head">
               <h3>
                 <span className={`badge ${badgeCls(st.status)}`} style={{ marginRight: 8 }}>{badgeText(st.status)}</span>
                 阶段 {i + 1}: {st.name}
               </h3>
-              <span className="card-sub">{st.host ? `主机 ${st.host}` : '本机'}{st.workspace ? ` · ${st.workspace}` : ''}</span>
+              <span className="card-sub">
+                {st.host ? `主机 ${st.host}` : '本机'}{st.workspace ? ` · ${st.workspace}` : ''}
+                {st.status === 'waiting' && active && (
+                  <span style={{ marginLeft: 10 }}>
+                    <button className="btn btn-sm btn-accent" onClick={() => postJSON('/api/cicd/run/approve', { runId, approve: true }).catch(e => setErr(e.message))}>✓ 批准执行</button>
+                    <button className="btn btn-sm btn-danger" style={{ marginLeft: 6 }} onClick={() => { if (confirm(`拒绝执行阶段「${st.name}」？该运行将标记为已取消。`)) postJSON('/api/cicd/run/approve', { runId, approve: false }).catch(e => setErr(e.message)) }}>✗ 拒绝</button>
+                  </span>
+                )}
+              </span>
             </div>
             <div className="card-body" style={{ padding: 0 }}>
               <table className="data-table">

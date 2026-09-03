@@ -28,6 +28,7 @@ import (
 const (
 	StatusQueued   = "queued"
 	StatusRunning  = "running"
+	StatusWaiting  = "waiting" // 阶段等待人工审批
 	StatusSuccess  = "success"
 	StatusFailed   = "failed"
 	StatusCanceled = "canceled"
@@ -70,6 +71,7 @@ type Stage struct {
 	Name      string `json:"name"`
 	Host      string `json:"host"`      // 目标主机 ID, 空=本机
 	Workspace string `json:"workspace"` // 工作目录, 空=默认
+	Approval  bool   `json:"approval"`  // 执行前需人工审批(发布门禁)
 	Steps     []Step `json:"steps"`
 }
 
@@ -291,6 +293,7 @@ type Engine struct {
 	registries []*Registry
 	scripts    []*Script
 	cancelFn   map[string]context.CancelFunc // runID → 取消函数(running 时有效)
+	approvals  map[string]chan bool          // runID → 审批信号(等待审批时存在)
 
 	sem   chan struct{}
 	queue chan runRequest
@@ -341,6 +344,7 @@ func NewEngine(dataDir string) (*Engine, error) {
 		scriptsFile:    sf,
 		logDir:         logDir,
 		cancelFn:       map[string]context.CancelFunc{},
+		approvals:      map[string]chan bool{},
 		sem:            make(chan struct{}, maxParallelFromEnv()),
 		queue:          make(chan runRequest, DefaultQueueSize),
 		stop:           make(chan struct{}),
@@ -657,14 +661,53 @@ func (e *Engine) worker() {
 	for {
 		select {
 		case req := <-e.queue:
-			go func(r runRequest) {
-				e.sem <- struct{}{}
-				defer func() { <-e.sem }()
-				e.execute(r)
-			}(req)
+			go e.runWithSlot(req)
 		case <-e.stop:
 			return
 		}
+	}
+}
+
+// runWithSlot 占用全局并发槽位后执行; 槽位的获取/释放集中在这一层,
+// 审批等待期间 execute 内部会临时让出槽位(<-e.sem)再取回, 净变化为零。
+func (e *Engine) runWithSlot(req runRequest) {
+	e.sem <- struct{}{}
+	defer func() { <-e.sem }()
+	e.execute(req)
+}
+
+// waitApproval 阻塞等待人工审批; ctx 取消(运行被取消)视为拒绝。
+func (e *Engine) waitApproval(runID string, ctx context.Context) bool {
+	ch := make(chan bool, 1)
+	e.mu.Lock()
+	e.approvals[runID] = ch
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		delete(e.approvals, runID)
+		e.mu.Unlock()
+	}()
+	select {
+	case ok := <-ch:
+		return ok
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Approve 审批等待中的阶段: approve=true 放行执行, false 拒绝(阶段取消, 后续跳过)
+func (e *Engine) Approve(runID string, approve bool) error {
+	e.mu.Lock()
+	ch, ok := e.approvals[runID]
+	e.mu.Unlock()
+	if !ok {
+		return errors.New("该运行当前没有等待审批的阶段")
+	}
+	select {
+	case ch <- approve:
+		return nil
+	default:
+		return errors.New("审批处理中, 请勿重复提交")
 	}
 }
 
@@ -751,6 +794,37 @@ overall:
 	for i := range p.Stages {
 		stage := &p.Stages[i]
 		sr := &run.Stages[i]
+
+		// 审批门禁: 标记 waiting → 让出并发槽位 → 等人工批准; 拒绝/取消则阶段取消、后续跳过
+		if stage.Approval {
+			e.mu.Lock()
+			sr.Status = StatusWaiting
+			e.mu.Unlock()
+			e.persistRuns()
+			writeLine(fmt.Sprintf("⏸ [阶段 %d/%d] %s 等待人工审批(在运行详情中批准或拒绝)", i+1, len(p.Stages), stage.Name))
+			<-e.sem // 临时让出全局并发槽位, 等待期间不占名额
+			approved := e.waitApproval(run.ID, ctx)
+			e.sem <- struct{}{}
+			if !approved {
+				reason := "人工拒绝"
+				if ctx.Err() != nil {
+					reason = "运行已取消"
+				}
+				writeLine(fmt.Sprintf("⏹ [阶段 %d/%d] %s → %s", i+1, len(p.Stages), stage.Name, reason))
+				e.mu.Lock()
+				sr.Status = StatusCanceled
+				for k := i + 1; k < len(p.Stages); k++ {
+					run.Stages[k].Status = StatusSkipped
+				}
+				e.mu.Unlock()
+				e.persistRuns()
+				runStatus = StatusCanceled
+				runErr = fmt.Sprintf("阶段 %q %s", stage.Name, reason)
+				break overall
+			}
+			writeLine(fmt.Sprintf("▶ [阶段 %d/%d] %s 已批准, 开始执行", i+1, len(p.Stages), stage.Name))
+		}
+
 		e.mu.Lock()
 		sr.Status = StatusRunning
 		e.mu.Unlock()
