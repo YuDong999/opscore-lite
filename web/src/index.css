@@ -19,7 +19,7 @@
 @theme inline {
   --color-background: var(--surface-solid);
   --color-foreground: var(--text);
-  --color-card: var(--surface-solid);
+  --color-card: var(--surface);
   --color-card-foreground: var(--text);
   --color-popover: var(--surface-solid);
   --color-popover-foreground: var(--text);
