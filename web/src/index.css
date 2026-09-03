@@ -1,3 +1,50 @@
+/* ── Tailwind v4 + shadcn 接入层(2026-09-04) ────────────────────────
+   1) 不引入 preflight, 避免重置破坏其余手写 CSS 模块;
+   2) 仅补 shadcn 组件依赖的 border 默认样式(border-width:0 solid);
+   3) 主题色全部引用既有 data-theme 变量(--text/--border/--accent...),
+      5 套主题自动适配, 不新增任何色值。 */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+
+*, ::before, ::after {
+  border: 0 solid;
+}
+
+:root {
+  --shadcn-radius: 0.75rem;
+}
+
+@theme inline {
+  --color-background: var(--surface-solid);
+  --color-foreground: var(--text);
+  --color-card: var(--surface-solid);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-solid);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--row-hover);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--row-hover);
+  --color-muted-foreground: var(--text-dim);
+  --color-accent: var(--row-hover);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --radius-sm: calc(var(--shadcn-radius) - 4px);
+  --radius-md: calc(var(--shadcn-radius) - 2px);
+  --radius-lg: var(--shadcn-radius);
+  --radius-xl: calc(var(--shadcn-radius) + 4px);
+}
+
 /* ── 响应式根字号: 视口 1600px 以上满尺寸(16px), 线性缩小, 下限 12.5px(≈78%) ── */
 html {
   font-size: clamp(12.5px, 1vw, 16px);

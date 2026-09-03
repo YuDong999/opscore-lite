@@ -1,41 +1,33 @@
-// ── CI/CD 流水线模块: 流水线编排(阶段/步骤) / 运行历史 / Webhook·定时·手动触发 / SSE 实时日志 ──
-//    v2: 代码仓库 / 镜像仓库 / 凭据中心 / 脚本库 / 发布模板 / 环节进度条
+// ── CI/CD 流水线模块(shadcn 版): 流水线编排 / 运行历史 / 脚本库 / 仓库 / 凭据 / 概览 ──
+//    审查落地: R1 API 常量 · R2 useResource · R3 Dialog 化 · R4 受控 Select 复位
+//              U1 AlertDialog 确认 · U2 异步按钮 busy 防抖 · U3 tabular-nums · U4 Dialog 动画
+//    日志面板保留 legacy 终端样式(log-text, 主题自适应), 其余全部 shadcn 组件。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getJSON, postJSON } from '../api/client'
-import Card from '../components/Card'
-
-// ── 类型(与 internal/cicd 模型对应) ──
-interface Var { name: string; value: string; secret: boolean }
-interface Trigger { manual: boolean; webhook: boolean; secret: string; cron: string }
-interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number; artifacts?: string[]; pullArtifact?: string }
-interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
-interface Source { repoId: string; branch: string }
-interface Pipeline {
-  id: string; name: string; description: string
-  env: Var[]; trigger: Trigger; stages: Stage[]
-  source: Source; registryId: string; kubeCredId: string
-  timeoutMin: number; maxRuns: number; notifyURL: string
-  notifyChannel?: string; notifySecret?: string
-}
-interface PipelineView extends Pipeline {
-  stageCount: number
-  lastRun?: Run
-  nextCron?: string
-}
-interface Artifact { step: string; file: string; size: number; paths: string }
-interface StepRun { name: string; command: string; status: string; exitCode: number; durationMs: number; artifacts?: Artifact[] }
-interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
-interface Run {
-  id: string; pipelineId: string; pipeline: string; trigger: string; status: string
-  canceling?: boolean; progress: number; stages: StageRun[]; startedAt?: string; finishedAt?: string
-  durationMs: number; error?: string
-}
-interface HostOpt { id: string; label: string }
-interface Credential { id: string; name: string; type: string; username?: string; server?: string; hasData: boolean; note?: string; updatedAt: string }
-interface Repo { id: string; name: string; url: string; credId: string; defaultBranch: string; note?: string }
-interface Registry { id: string; name: string; server: string; credId: string; note?: string }
-interface Script { id: string; name: string; description: string; content: string; updatedAt: string }
+import { postJSON } from '../api/client'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Progress } from '@/components/ui/progress'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
+  Upload, RefreshCw, X, Check, Package, FileCode2,
+} from 'lucide-react'
+import {
+  API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
+  fmtDur, fmtTime, fmtSize, TRIGGER_TEXT,
+  type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
+  type Credential, type Repo, type Registry, type Script,
+} from './cicd/shared'
 
 const CRED_TYPE_TEXT: Record<string, string> = {
   git: '代码库', registry: '镜像仓库', kubeconfig: 'K8s 配置', generic: '通用密文',
@@ -70,41 +62,15 @@ const STEP_TEMPLATES: { name: string; steps: Step[] }[] = [
   },
 ]
 
-// ── 状态徽标与文案 ──
-const STATUS_TEXT: Record<string, string> = {
-  queued: '排队中', running: '运行中', waiting: '等待审批', success: '成功', failed: '失败',
-  canceled: '已取消', skipped: '已跳过', pending: '等待',
-}
-const STATUS_CLS: Record<string, string> = {
-  queued: 'badge-warn', running: 'badge-info', waiting: 'badge-warn', success: 'badge-ok',
-  failed: 'badge-danger', canceled: 'badge-off', skipped: 'badge-off', pending: 'badge-off',
-}
-const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时' }
-
-function badgeCls(s: string) { return STATUS_CLS[s] || 'badge-off' }
-function badgeText(s: string) { return STATUS_TEXT[s] || s }
-
-function fmtDur(ms: number): string {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60000), s = Math.round((ms % 60000) / 1000)
-  return `${m}m${s}s`
-}
-function fmtTime(t?: string) { return t ? new Date(t).toLocaleString() : '-' }
-function fmtSize(n: number): string {
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)}KB`
-  return `${n}B`
-}
-
-// 进度条(usage-bar/usage-fill 为项目既有样式)
-function ProgressBar({ value, status }: { value: number; status: string }) {
+// 进度条(U3: shadcn Progress, 颜色按状态引用主题变量)
+function RunProgress({ value, status, className }: { value: number; status: string; className?: string }) {
   const color = status === 'failed' ? 'bg-danger' : status === 'success' ? 'bg-ok' : 'bg-warn'
   return (
-    <div className="usage-bar" title={`${value}%`}>
-      <span className={`usage-fill ${color}`} style={{ width: `${value}%` }} />
-    </div>
+    <Progress
+      value={value}
+      title={`${value}%`}
+      className={cn('h-1.5 bg-muted', `[&>div]:${color}`, className)}
+    />
   )
 }
 
@@ -122,7 +88,7 @@ export default function CicdModule() {
   const [detailRunId, setDetailRunId] = useState('')
 
   const loadOverview = useCallback(() => {
-    getJSON('/api/cicd/overview').then(setOverview).catch(() => {})
+    fetch(API.overview).then(r => r.json()).then(setOverview).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -131,34 +97,39 @@ export default function CicdModule() {
     return () => clearInterval(t)
   }, [loadOverview, tab])
 
+  const waiting = overview?.waitingApproval ?? 0
+
   return (
     <div className="module">
       <div className="module-head">
         <div className="module-head-row"><h2>CI/CD 流水线</h2></div>
-        <span className="pill">
-          {overview ? `运行中 ${overview.running} · 排队 ${overview.queued}` : '加载中...'}
-        </span>
+        <Badge variant="secondary" className="tabular-nums">
+          运行中 {overview?.running ?? '-'} · 排队 {overview?.queued ?? '-'}{waiting > 0 ? ` · 待审批 ${waiting}` : ''}
+        </Badge>
       </div>
 
-      <div className="tabs">
-        {[
-          { id: 'pipelines', label: '流水线' },
-          { id: 'runs', label: '运行历史' },
-          { id: 'scripts', label: '脚本库' },
-          { id: 'repos', label: '仓库' },
-          { id: 'creds', label: '凭据' },
-          { id: 'overview', label: '概览' },
-        ].map(t => (
-          <button key={t.id} className={`tab ${tab === t.id ? 'tab-on' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-3 flex-wrap h-auto">
+          <TabsTrigger value="pipelines">流水线</TabsTrigger>
+          <TabsTrigger value="runs">运行历史</TabsTrigger>
+          <TabsTrigger value="scripts">脚本库</TabsTrigger>
+          <TabsTrigger value="repos">仓库</TabsTrigger>
+          <TabsTrigger value="creds">
+            凭据
+          </TabsTrigger>
+          <TabsTrigger value="overview">
+            概览{waiting > 0 && <span className="ml-1 text-warn">•{waiting}</span>}
+          </TabsTrigger>
+        </TabsList>
 
-      {tab === 'pipelines' && <PipelinesTab onChanged={loadOverview} />}
-      {tab === 'runs' && <RunsTab onChanged={loadOverview} />}
-      {tab === 'scripts' && <ScriptsTab />}
-      {tab === 'repos' && <ReposTab />}
-      {tab === 'creds' && <CredentialsTab />}
-      {tab === 'overview' && <OverviewTab data={overview} onOpenRun={(id: string) => setDetailRunId(id)} />}
+        <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} /></TabsContent>
+        <TabsContent value="runs"><RunsTab onChanged={loadOverview} onOpenRun={setDetailRunId} /></TabsContent>
+        <TabsContent value="scripts"><ScriptsTab /></TabsContent>
+        <TabsContent value="repos"><ReposTab /></TabsContent>
+        <TabsContent value="creds"><CredentialsTab /></TabsContent>
+        <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} /></TabsContent>
+      </Tabs>
+
       {detailRunId && <RunDetail runId={detailRunId} onClose={() => setDetailRunId('')} />}
     </div>
   )
@@ -168,10 +139,10 @@ export default function CicdModule() {
 function useHosts(): HostOpt[] {
   const [hosts, setHosts] = useState<HostOpt[]>([{ id: '', label: '本机' }])
   useEffect(() => {
-    getJSON<any[]>('/api/ansible/hosts')
-      .then(list => {
-        const opts = list.map((h: any) => ({
-          id: h.id,
+    fetch(API.hosts).then(r => r.json())
+      .then((list: any[]) => {
+        const opts = list.map(h => ({
+          id: h.id as string,
           label: (h.alias || h.addr) + (h.alias && h.alias !== h.addr ? ` (${h.addr})` : ''),
         }))
         setHosts([{ id: '', label: '本机' }, ...opts])
@@ -181,131 +152,35 @@ function useHosts(): HostOpt[] {
   return hosts
 }
 
-// ==================== 流水线 Tab ====================
-
-function PipelinesTab({ onChanged }: { onChanged: () => void }) {
-  const [pipes, setPipes] = useState<PipelineView[]>([])
-  const [err, setErr] = useState('')
-  const [editing, setEditing] = useState<Pipeline | null>(null)
-  const [webhookOf, setWebhookOf] = useState<Pipeline | null>(null)
-  const [detailRun, setDetailRun] = useState('')
-
-  const load = useCallback(() => {
-    getJSON<PipelineView[]>('/api/cicd/pipelines').then(setPipes).catch(e => setErr(e.message))
-  }, [])
-  useEffect(load, [load])
-
-  const run = (id: string, name: string) => {
-    postJSON('/api/cicd/pipeline/run', { id })
-      .then((d: any) => { setErr(''); setDetailRun(d.run.id); onChanged() })
-      .catch(e => setErr(`触发 ${name} 失败: ${e.message}`))
-  }
-  const remove = (p: PipelineView) => {
-    if (!confirm(`删除流水线「${p.name}」？其运行历史与日志将一并删除。`)) return
-    postJSON('/api/cicd/pipeline/delete', { id: p.id })
-      .then(() => { load(); onChanged() })
-      .catch(e => setErr(e.message))
-  }
-  const copy = async (p: PipelineView) => {
-    try {
-      const full = await getJSON<Pipeline>(`/api/cicd/pipeline/get?id=${p.id}`)
-      const clone: Pipeline = { ...full, id: '', name: `${p.name} 副本`, trigger: { ...full.trigger, secret: '' } }
-      setEditing(clone)
-    } catch (e: any) { setErr(e.message) }
-  }
-
+// 主机下拉(阶段卡用; NONE 哨兵承载"本机"空串语义)
+function HostSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const hosts = useHosts()
   return (
-    <div className="section">
-      {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
-      <Card title={`流水线 (${pipes.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
-          <button className="btn btn-sm" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
-            const t = localStorage.getItem('opscore-token')
-            window.open(`/api/cicd/pipeline/export${t ? `?token=${encodeURIComponent(t)}` : ''}`)
-          }}>导出</button>
-          <label className="btn btn-sm" style={{ cursor: 'pointer' }} title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
-            导入<input type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={async ev => {
-              const f = ev.target.files?.[0]
-              ev.target.value = ''
-              if (!f) return
-              try {
-                const text = await f.text()
-                const d = await postJSON<{ imported: number; skipped: number }>('/api/cicd/pipeline/import', JSON.parse(text))
-                setErr('')
-                alert(`导入完成: 成功 ${d.imported} 条${d.skipped ? `, 跳过 ${d.skipped} 条(结构无效)` : ''}`)
-                load()
-              } catch (e: any) {
-                setErr('导入失败: ' + e.message)
-              }
-            }} />
-          </label>
-          <button className="btn btn-sm btn-accent" onClick={() => setEditing(emptyPipeline())}>+ 新建流水线</button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr><th>名称</th><th>阶段</th><th>触发器</th><th>最近运行</th><th style={{ width: 240 }}>操作</th></tr>
-            </thead>
-            <tbody>
-              {pipes.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', opacity: 0.6, padding: 24 }}>
-                  暂无流水线, 点击右上角「新建流水线」开始编排
-                </td></tr>
-              )}
-              {pipes.map(p => (
-                <tr key={p.id}>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{p.name}</div>
-                    {p.description && <div className="small dim">{p.description}</div>}
-                  </td>
-                  <td>{p.stageCount}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {p.trigger.manual && <span className="badge badge-info">手动</span>}
-                      {p.trigger.webhook && <span className="badge badge-on">Webhook</span>}
-                      {p.trigger.cron && <span className="badge badge-on">定时</span>}
-                    </div>
-                    {p.nextCron && <div className="small dim">下次 {fmtTime(p.nextCron)}</div>}
-                  </td>
-                  <td>
-                    {p.lastRun ? (
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <span className={`badge ${badgeCls(p.lastRun.status)}`}>{badgeText(p.lastRun.status)}</span>
-                        <span className="small dim">{fmtTime(p.lastRun.startedAt)}</span>
-                        <span className="small dim">{fmtDur(p.lastRun.durationMs)}</span>
-                      </div>
-                    ) : <span className="dim small">从未运行</span>}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button className="btn btn-sm btn-accent" onClick={() => run(p.id, p.name)}>运行</button>
-                      <button className="btn btn-sm" onClick={() => copy(p)}>复制</button>
-                      <button className="btn btn-sm" onClick={async () => {
-                        try { setWebhookOf(await getJSON<Pipeline>(`/api/cicd/pipeline/get?id=${p.id}`)) } catch (e: any) { setErr(e.message) }
-                      }}>Webhook</button>
-                      <button className="btn btn-sm" onClick={async () => {
-                        try { setEditing(await getJSON<Pipeline>(`/api/cicd/pipeline/get?id=${p.id}`)) } catch (e: any) { setErr(e.message) }
-                      }}>编辑</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>删除</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+    <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
+      <SelectTrigger><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {hosts.map(h => <SelectItem key={h.id || SELECT_NONE} value={h.id || SELECT_NONE}>{h.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
 
-      {editing && (
-        <PipelineEditor
-          value={editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); load(); onChanged() }}
-        />
-      )}
-      {webhookOf && <WebhookModal pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
-      {detailRun && <RunDetail runId={detailRun} onClose={() => { setDetailRun(''); load(); onChanged() }} />}
-    </div>
+// 可选值下拉(空串语义统一走哨兵, 消灭 onChange 手动复位 hack · R4)
+function OptSelect({ value, onChange, placeholder, items, className }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  items: { value: string; label: string }[]
+  className?: string
+}) {
+  return (
+    <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
+      <SelectTrigger className={className}><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value={SELECT_NONE}>{placeholder}</SelectItem>
+        {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -322,36 +197,160 @@ function priorArtifactSteps(p: Pipeline, si: number, i: number): { value: string
   return out
 }
 
+// ==================== 流水线 Tab ====================
+
+function PipelinesTab({ onChanged }: { onChanged: () => void }) {
+  const { data, err, setErr, reload } = useResource<PipelineView[]>(API.pipelines)
+  const pipes = data || []
+  const [editing, setEditing] = useState<Pipeline | null>(null)
+  const [webhookOf, setWebhookOf] = useState<Pipeline | null>(null)
+  const [detailRun, setDetailRun] = useState('')
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
+
+  const run = async (p: PipelineView) => {
+    setBusy(p.id)
+    try {
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: p.id })
+      setErr(''); setDetailRun(d.run.id); onChanged()
+    } catch (e: any) { setErr(`触发 ${p.name} 失败: ${e.message}`) } finally { setBusy('') }
+  }
+  const remove = async (p: PipelineView) => {
+    if (!(await confirm(`删除流水线「${p.name}」？`, { desc: '其运行历史、日志与制品将一并删除。', danger: true, okText: '删除' }))) return
+    setBusy(p.id)
+    try { await postJSON(API.pipelineDelete, { id: p.id }); reload(); onChanged() }
+    catch (e: any) { setErr(e.message) } finally { setBusy('') }
+  }
+  const copy = async (p: PipelineView) => {
+    try {
+      const full = await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json()) as Pipeline
+      setEditing({ ...full, id: '', name: `${p.name} 副本`, trigger: { ...full.trigger, secret: '' } })
+    } catch (e: any) { setErr(e.message) }
+  }
+  const loadOne = async (p: PipelineView, set: (v: Pipeline) => void) => {
+    try { set(await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json())) } catch (e: any) { setErr(e.message) }
+  }
+
+  return (
+    <div>
+      {confirmEl}
+      <ErrBanner msg={err} onClose={() => setErr('')} />
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="tabular-nums">流水线 ({pipes.length})</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
+                const t = localStorage.getItem('opscore-token')
+                window.open(`${API.pipelineExport}${t ? `?token=${encodeURIComponent(t)}` : ''}`)
+              }}><Download />导出</Button>
+              <Button asChild variant="outline" size="sm" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
+                <label className="cursor-pointer">
+                  导入
+                  <input type="file" accept=".json,application/json" className="hidden" onChange={async ev => {
+                    const f = ev.target.files?.[0]
+                    ev.target.value = ''
+                    if (!f) return
+                    try {
+                      const d = await postJSON<{ imported: number; skipped: number }>(API.pipelineImport, JSON.parse(await f.text()))
+                      setErr('')
+                      await confirm(`导入完成: 成功 ${d.imported} 条${d.skipped ? `, 跳过 ${d.skipped} 条(结构无效)` : ''}`)
+                      reload(); onChanged()
+                    } catch (e: any) { setErr('导入失败: ' + e.message) }
+                  }} />
+                </label>
+              </Button>
+              <Button size="sm" onClick={() => setEditing(emptyPipeline())}><Plus />新建流水线</Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>名称</TableHead><TableHead>阶段</TableHead><TableHead>触发器</TableHead>
+                <TableHead>最近运行</TableHead><TableHead className="w-60">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pipes.length === 0 && (
+                <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  暂无流水线, 点击右上角「新建流水线」开始编排
+                </TableCell></TableRow>
+              )}
+              {pipes.map(p => (
+                <TableRow key={p.id}>
+                  <TableCell>
+                    <div className="font-semibold">{p.name}</div>
+                    {p.description && <div className="text-xs text-muted-foreground">{p.description}</div>}
+                  </TableCell>
+                  <TableCell className="tabular-nums">{p.stageCount}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 flex-wrap">
+                      {p.trigger.manual && <Badge variant="secondary">手动</Badge>}
+                      {p.trigger.webhook && <Badge variant="outline">Webhook</Badge>}
+                      {p.trigger.cron && <Badge variant="outline">定时</Badge>}
+                    </div>
+                    {p.nextCron && <div className="text-xs text-muted-foreground tabular-nums">下次 {fmtTime(p.nextCron)}</div>}
+                  </TableCell>
+                  <TableCell>
+                    {p.lastRun ? (
+                      <div className="flex gap-2 items-center">
+                        <StatusBadge status={p.lastRun.status} />
+                        <span className="text-xs text-muted-foreground">{fmtTime(p.lastRun.startedAt)}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{fmtDur(p.lastRun.durationMs)}</span>
+                      </div>
+                    ) : <span className="text-xs text-muted-foreground">从未运行</span>}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 flex-wrap">
+                      <Button size="sm" disabled={!!busy} onClick={() => run(p)}><Play />运行</Button>
+                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => copy(p)}>复制</Button>
+                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => loadOne(p, setWebhookOf)}><Link2 />Webhook</Button>
+                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => loadOne(p, setEditing)}><Pencil />编辑</Button>
+                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => remove(p)}><Trash2 />删除</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {editing && (
+        <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
+      )}
+      {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
+      {detailRun && <RunDetail runId={detailRun} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
+    </div>
+  )
+}
+
 // ==================== 流水线编辑器 ====================
 
 function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose: () => void; onSaved: () => void }) {
   const [p, setP] = useState<Pipeline>(JSON.parse(JSON.stringify(value)))
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
-  const hosts = useHosts()
-  const [repos, setRepos] = useState<Repo[]>([])
-  const [registries, setRegistries] = useState<Registry[]>([])
-  const [creds, setCreds] = useState<Credential[]>([])
-  const [scripts, setScripts] = useState<Script[]>([])
+  const repos = useResource<Repo[]>(API.repos)
+  const registries = useResource<Registry[]>(API.registries)
+  const creds = useResource<Credential[]>(API.credentials)
+  const scripts = useResource<Script[]>(API.scripts)
+  const { confirm, confirmEl } = useConfirm()
   const isNew = !value.id
 
-  useEffect(() => {
-    getJSON<Repo[]>('/api/cicd/repos').then(setRepos).catch(() => {})
-    getJSON<Registry[]>('/api/cicd/registries').then(setRegistries).catch(() => {})
-    getJSON<Credential[]>('/api/cicd/credentials').then(setCreds).catch(() => {})
-    getJSON<Script[]>('/api/cicd/scripts').then(setScripts).catch(() => {})
-  }, [])
-
-  const set = (patch: Partial<Pipeline>) => setP({ ...p, ...patch })
+  const set = (patch: Partial<Pipeline>) => setP(x => ({ ...x, ...patch }))
   const setStage = (i: number, patch: Partial<Stage>) => {
-    const stages = p.stages.map((s, idx) => idx === i ? { ...s, ...patch } : s)
-    set({ stages })
+    setP(x => ({ ...x, stages: x.stages.map((s, idx) => idx === i ? { ...s, ...patch } : s) }))
   }
   const setStep = (si: number, i: number, patch: Partial<Step>) => {
-    const stages = p.stages.map((s, idx) => idx !== si ? s : {
-      ...s, steps: s.steps.map((sp, idx) => idx === i ? { ...sp, ...patch } : sp),
-    })
-    set({ stages })
+    setP(x => ({
+      ...x,
+      stages: x.stages.map((s, idx) => idx !== si ? s : {
+        ...s, steps: s.steps.map((sp, j) => j === i ? { ...sp, ...patch } : sp),
+      }),
+    }))
   }
   const move = (arr: any[], i: number, dir: number) => {
     const j = i + dir
@@ -369,9 +368,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
     }
     setSaving(true)
     setErr('')
-    postJSON('/api/cicd/pipeline/save', p)
-      .then(onSaved)
-      .catch(e => { setErr(e.message); setSaving(false) })
+    postJSON(API.pipelineSave, p).then(onSaved).catch(e => { setErr(e.message); setSaving(false) })
   }
 
   const regenerateSecret = () => {
@@ -384,213 +381,208 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
   }
 
   return (
-    <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 860, width: '92%', maxHeight: '88vh', overflowY: 'auto' }}>
-        <div className="modal-head">
-          <span className="modal-title">{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</span>
-        </div>
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</DialogTitle>
+        </DialogHeader>
 
-        {err && <div className="banner banner-err">{err}</div>}
+        <ErrBanner msg={err} onClose={() => setErr('')} />
 
-        <div className="form-row">
-          <div style={{ flex: 2 }}>
-            <div className="field-label">名称 *</div>
-            <input className="input" value={p.name} onChange={e => set({ name: e.target.value })} placeholder="如: 前端构建部署" />
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex-[2] min-w-48">
+            <Label>名称 *</Label>
+            <Input value={p.name} onChange={e => set({ name: e.target.value })} placeholder="如: 前端构建部署" />
           </div>
-          <div style={{ flex: 3 }}>
-            <div className="field-label">描述</div>
-            <input className="input" value={p.description} onChange={e => set({ description: e.target.value })} placeholder="可选" />
+          <div className="flex-[3] min-w-48">
+            <Label>描述</Label>
+            <Input value={p.description} onChange={e => set({ description: e.target.value })} placeholder="可选" />
           </div>
         </div>
-        <div className="form-row">
-          <div style={{ flex: 1 }}>
-            <div className="field-label">整体超时(分钟, 0=不限)</div>
-            <input className="input" type="number" min={0} max={1440} value={p.timeoutMin} onChange={e => set({ timeoutMin: +e.target.value })} />
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex-1 min-w-36">
+            <Label>整体超时(分钟, 0=不限)</Label>
+            <Input type="number" min={0} max={1440} value={p.timeoutMin} onChange={e => set({ timeoutMin: +e.target.value })} />
           </div>
-          <div style={{ flex: 1 }}>
-            <div className="field-label">历史保留条数(5-500)</div>
-            <input className="input" type="number" min={5} max={500} value={p.maxRuns} onChange={e => set({ maxRuns: +e.target.value })} />
+          <div className="flex-1 min-w-36">
+            <Label>历史保留条数(5-500)</Label>
+            <Input type="number" min={5} max={500} value={p.maxRuns} onChange={e => set({ maxRuns: +e.target.value })} />
           </div>
-          <div style={{ flex: 2 }}>
-            <div className="field-label">完成通知地址(可选)</div>
-            <input className="input" value={p.notifyURL} onChange={e => set({ notifyURL: e.target.value })} placeholder="https://... 机器人 webhook 地址" />
+          <div className="flex-[2] min-w-48">
+            <Label>完成通知地址(可选)</Label>
+            <Input value={p.notifyURL} onChange={e => set({ notifyURL: e.target.value })} placeholder="https://... 机器人 webhook 地址" />
           </div>
-          <div style={{ flex: 1 }}>
-            <div className="field-label">通知渠道</div>
-            <select className="input" value={p.notifyChannel || ''} onChange={e => set({ notifyChannel: e.target.value })}>
-              <option value="">通用 JSON</option>
-              <option value="dingtalk">钉钉机器人</option>
-              <option value="feishu">飞书机器人</option>
-              <option value="wecom">企业微信机器人</option>
-            </select>
+          <div className="flex-1 min-w-32">
+            <Label>通知渠道</Label>
+            <OptSelect value={p.notifyChannel || ''} onChange={v => set({ notifyChannel: v })} placeholder="通用 JSON"
+              items={[{ value: 'dingtalk', label: '钉钉机器人' }, { value: 'feishu', label: '飞书机器人' }, { value: 'wecom', label: '企业微信机器人' }]} />
           </div>
           {p.notifyChannel === 'dingtalk' && (
-            <div style={{ flex: 2 }}>
-              <div className="field-label">钉钉加签密钥(SEC 开头, 可空)</div>
-              <input className="input mono" value={p.notifySecret || ''} onChange={e => set({ notifySecret: e.target.value })} placeholder="SEC..." />
+            <div className="flex-[2] min-w-48">
+              <Label>钉钉加签密钥(SEC 开头, 可空)</Label>
+              <Input className="font-mono" value={p.notifySecret || ''} onChange={e => set({ notifySecret: e.target.value })} placeholder="SEC..." />
             </div>
           )}
         </div>
 
-        <div className="form-row" style={{ alignItems: 'flex-end', gap: 16 }}>
+        <div className="flex gap-4 items-end flex-wrap">
           <div>
-            <div className="field-label">触发方式</div>
-            <label className="chk"><input type="checkbox" checked={p.trigger.manual} onChange={e => set({ trigger: { ...p.trigger, manual: e.target.checked } })} /> 手动</label>
-            <label className="chk"><input type="checkbox" checked={p.trigger.webhook} onChange={e => set({ trigger: { ...p.trigger, webhook: e.target.checked } })} /> Webhook</label>
-            <label className="chk"><input type="checkbox" checked={!!p.trigger.cron} onChange={e => set({ trigger: { ...p.trigger, cron: e.target.checked ? '0 3 * * *' : '' } })} /> 定时</label>
+            <Label>触发方式</Label>
+            <div className="flex gap-4 h-9 items-center">
+              <label className="flex items-center gap-1.5 text-sm"><Checkbox checked={p.trigger.manual} onCheckedChange={c => set({ trigger: { ...p.trigger, manual: !!c } })} />手动</label>
+              <label className="flex items-center gap-1.5 text-sm"><Checkbox checked={p.trigger.webhook} onCheckedChange={c => set({ trigger: { ...p.trigger, webhook: !!c } })} />Webhook</label>
+              <label className="flex items-center gap-1.5 text-sm"><Checkbox checked={!!p.trigger.cron} onCheckedChange={c => set({ trigger: { ...p.trigger, cron: c ? '0 3 * * *' : '' } })} />定时</label>
+            </div>
           </div>
           {p.trigger.webhook && (
-            <div style={{ flex: 2 }}>
-              <div className="field-label">Webhook 凭证</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="input mono" value={p.trigger.secret} onChange={e => set({ trigger: { ...p.trigger, secret: e.target.value } })} placeholder="保存时自动生成" />
-                <button className="btn btn-sm" onClick={regenerateSecret}>重新生成</button>
+            <div className="flex-[2] min-w-48">
+              <Label>Webhook 凭证</Label>
+              <div className="flex gap-2">
+                <Input className="font-mono" value={p.trigger.secret} onChange={e => set({ trigger: { ...p.trigger, secret: e.target.value } })} placeholder="保存时自动生成" />
+                <Button variant="outline" size="icon" onClick={regenerateSecret} title="重新生成"><RefreshCw /></Button>
               </div>
             </div>
           )}
           {!!p.trigger.cron && (
-            <div style={{ flex: 2 }}>
-              <div className="field-label">cron 表达式(分 时 日 月 周)</div>
-              <input className="input mono" value={p.trigger.cron} onChange={e => set({ trigger: { ...p.trigger, cron: e.target.value } })} placeholder="0 3 * * *" />
-              <div className="small dim">支持 * 、*/n 、a-b 、a,b; 如 0 3 * * * = 每天 03:00</div>
+            <div className="flex-[2] min-w-48">
+              <Label>cron 表达式(分 时 日 月 周)</Label>
+              <Input className="font-mono" value={p.trigger.cron} onChange={e => set({ trigger: { ...p.trigger, cron: e.target.value } })} placeholder="0 3 * * *" />
+              <div className="text-xs text-muted-foreground">支持 * 、*/n 、a-b 、a,b; 如 0 3 * * * = 每天 03:00</div>
             </div>
           )}
         </div>
 
-        <div className="form-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-          <div className="field-label">代码源与凭据(内置变量: $BUILD_NUMBER $CICD_RUN_ID $CICD_BRANCH $REGISTRY $REGISTRY_USER $REGISTRY_PASS $GIT_REPO_USER $GIT_REPO_TOKEN)</div>
-          <div className="form-row" style={{ alignItems: 'flex-end' }}>
-            <div style={{ flex: 2 }}>
-              <div className="field-label">代码仓库(选择后首阶段自动拉取代码)</div>
-              <select className="input" value={p.source.repoId} onChange={e => set({ source: { ...p.source, repoId: e.target.value } })}>
-                <option value="">不自动拉取</option>
-                {repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+        <div>
+          <Label className="text-muted-foreground">代码源与凭据(内置变量: $BUILD_NUMBER $CICD_RUN_ID $CICD_BRANCH $REGISTRY $REGISTRY_USER $REGISTRY_PASS $GIT_REPO_USER $GIT_REPO_TOKEN)</Label>
+          <div className="flex gap-3 flex-wrap mt-1">
+            <div className="flex-[2] min-w-40">
+              <Label className="text-xs">代码仓库(选择后首阶段自动拉取代码)</Label>
+              <OptSelect value={p.source.repoId} onChange={v => set({ source: { ...p.source, repoId: v } })} placeholder="不自动拉取"
+                items={(repos.data || []).map(r => ({ value: r.id, label: r.name }))} />
             </div>
-            <div style={{ flex: 1 }}>
-              <div className="field-label">分支(空=默认)</div>
-              <input className="input" value={p.source.branch} onChange={e => set({ source: { ...p.source, branch: e.target.value } })} placeholder={repos.find(r => r.id === p.source.repoId)?.defaultBranch || 'master'} />
+            <div className="flex-1 min-w-28">
+              <Label className="text-xs">分支(空=默认)</Label>
+              <Input value={p.source.branch} onChange={e => set({ source: { ...p.source, branch: e.target.value } })}
+                placeholder={(repos.data || []).find(r => r.id === p.source.repoId)?.defaultBranch || 'master'} />
             </div>
-            <div style={{ flex: 2 }}>
-              <div className="field-label">镜像仓库</div>
-              <select className="input" value={p.registryId} onChange={e => set({ registryId: e.target.value })}>
-                <option value="">不使用</option>
-                {registries.map(r => <option key={r.id} value={r.id}>{r.name} ({r.server})</option>)}
-              </select>
+            <div className="flex-[2] min-w-40">
+              <Label className="text-xs">镜像仓库</Label>
+              <OptSelect value={p.registryId} onChange={v => set({ registryId: v })} placeholder="不使用"
+                items={(registries.data || []).map(r => ({ value: r.id, label: `${r.name} (${r.server})` }))} />
             </div>
-            <div style={{ flex: 2 }}>
-              <div className="field-label">KUBECONFIG 凭据(kubectl 发布用)</div>
-              <select className="input" value={p.kubeCredId} onChange={e => set({ kubeCredId: e.target.value })}>
-                <option value="">不使用</option>
-                {creds.filter(c => c.type === 'kubeconfig').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+            <div className="flex-[2] min-w-40">
+              <Label className="text-xs">KUBECONFIG 凭据(kubectl 发布用)</Label>
+              <OptSelect value={p.kubeCredId} onChange={v => set({ kubeCredId: v })} placeholder="不使用"
+                items={(creds.data || []).filter(c => c.type === 'kubeconfig').map(c => ({ value: c.id, label: c.name }))} />
             </div>
           </div>
         </div>
 
-        <div className="form-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-          <div className="field-label">环境变量(步骤命令中以 $NAME 引用; 敏感值日志自动掩码)</div>
-          {p.env.map((v, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-              <input className="input" style={{ flex: 1 }} value={v.name} placeholder="NAME" onChange={e => set({ env: p.env.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x) })} />
-              <input className="input" style={{ flex: 2 }} value={v.value} placeholder="值" onChange={e => set({ env: p.env.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x) })} />
-              <label className="chk"><input type="checkbox" checked={v.secret} onChange={e => set({ env: p.env.map((x, idx) => idx === i ? { ...x, secret: e.target.checked } : x) })} /> 敏感</label>
-              <button className="btn btn-sm btn-danger" onClick={() => set({ env: p.env.filter((_, idx) => idx !== i) })}>×</button>
-            </div>
-          ))}
-          <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ env: [...p.env, { name: '', value: '', secret: false }] })}>+ 添加变量</button>
-        </div>
-
-        <div className="field-label" style={{ marginTop: 8 }}>阶段(顺序执行, 任一失败后后续阶段跳过)</div>
-        {p.stages.map((st, si) => (
-          <div key={si} className="card glass" style={{ marginBottom: 10, padding: 12 }}>
-            <div className="form-row" style={{ alignItems: 'center' }}>
-              <b style={{ whiteSpace: 'nowrap' }}>阶段 {si + 1}</b>
-              <input className="input" style={{ flex: 1 }} value={st.name} placeholder="阶段名" onChange={e => setStage(si, { name: e.target.value })} />
-              <select className="input" style={{ flex: 1 }} value={st.host} onChange={e => setStage(si, { host: e.target.value })}>
-                {hosts.map(h => <option key={h.id} value={h.id}>{h.label}</option>)}
-              </select>
-              <input className="input" style={{ flex: 1 }} value={st.workspace} placeholder="工作目录(可选)" onChange={e => setStage(si, { workspace: e.target.value })} />
-              <button className="btn btn-sm" onClick={() => set({ stages: move(p.stages, si, -1) })}>↑</button>
-              <button className="btn btn-sm" onClick={() => set({ stages: move(p.stages, si, 1) })}>↓</button>
-              <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`删除阶段「${st.name}」？`)) set({ stages: p.stages.filter((_, idx) => idx !== si) }) }}>×</button>
-            </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-              <label className="chk" title="阶段执行前暂停, 等待人工批准(发布门禁)">
-                <input type="checkbox" checked={st.approval} onChange={e => setStage(si, { approval: e.target.checked })} /> 执行前需审批
-              </label>
-              <span className="small dim">插入模板:</span>
-              <select className="input sel-xs" value="" onChange={e => {
-                const tpl = STEP_TEMPLATES.find(t => t.name === e.target.value)
-                if (!tpl) return
-                setStage(si, { steps: [...st.steps, ...tpl.steps.map(s => ({ ...s }))] })
-                e.target.value = ''
-              }}>
-                <option value="">选择发布模板…</option>
-                {STEP_TEMPLATES.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-              </select>
-              <span className="small dim" style={{ marginLeft: 8 }}>裸机=重启脚本 · Docker=镜像步骤 · K8s=需选 kubeconfig 凭据</span>
-            </div>
-            {st.steps.map((sp, i) => (
-              <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 8, marginBottom: 6 }}>
-                <div className="form-row" style={{ alignItems: 'center', marginBottom: 4 }}>
-                  <input className="input" style={{ flex: 1 }} value={sp.name} placeholder="步骤名" onChange={e => setStep(si, i, { name: e.target.value })} />
-                  <input className="input" style={{ width: 110 }} type="number" min={0} max={1440} title="步骤超时(分钟)" value={sp.timeoutMin} onChange={e => setStep(si, i, { timeoutMin: +e.target.value })} />
-                  <label className="chk" title="失败后继续执行后续步骤"><input type="checkbox" checked={sp.continueOnFail} onChange={e => setStep(si, i, { continueOnFail: e.target.checked })} /> 失败继续</label>
-                  <select className="input sel-xs" title="从脚本库插入" value="" onChange={e => {
-                    const sc = scripts.find(s => s.id === e.target.value)
-                    if (sc) setStep(si, i, { command: sc.content })
-                    e.target.value = ''
-                  }}>
-                    <option value="">脚本库…</option>
-                    {scripts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                  <button className="btn btn-sm" onClick={() => setStage(si, { steps: move(st.steps, i, -1) })}>↑</button>
-                  <button className="btn btn-sm" onClick={() => setStage(si, { steps: move(st.steps, i, 1) })}>↓</button>
-                  <button className="btn btn-sm btn-danger" onClick={() => setStage(si, { steps: st.steps.filter((_, idx) => idx !== i) })}>×</button>
-                </div>
-                <textarea
-                  className="editor-textarea mono" rows={2}
-                  value={sp.command} placeholder="shell 命令, 如: make build"
-                  onChange={e => setStep(si, i, { command: e.target.value })}
-                />
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
-                  <span className="small dim" style={{ whiteSpace: 'nowrap' }}>📦 制品:</span>
-                  <input
-                    className="input" value={(sp.artifacts || []).join(', ')}
-                    placeholder="构建产物路径, 逗号分隔, 支持 * 通配; 步骤成功后自动归档到服务端可下载"
-                    onChange={e => setStep(si, i, { artifacts: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })}
-                  />
-                  <select
-                    className="input sel-xs" title="执行前把已收集制品推送到本步骤主机工作目录, 命令中用 $CICD_ARTIFACT 引用"
-                    value={sp.pullArtifact || ''}
-                    onChange={e => setStep(si, i, { pullArtifact: e.target.value || undefined })}
-                  >
-                    <option value="">不拉取制品</option>
-                    {priorArtifactSteps(p, si, i).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
+        <div>
+          <Label className="text-muted-foreground">环境变量(步骤命令中以 $NAME 引用; 敏感值日志自动掩码)</Label>
+          <div className="mt-1">
+            {p.env.map((v, i) => (
+              <div key={i} className="flex gap-2 mb-2">
+                <Input className="flex-1" value={v.name} placeholder="NAME" onChange={e => set({ env: p.env.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x) })} />
+                <Input className="flex-[2]" value={v.value} placeholder="值" onChange={e => set({ env: p.env.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x) })} />
+                <label className="flex items-center gap-1.5 text-sm px-1"><Checkbox checked={v.secret} onCheckedChange={c => set({ env: p.env.map((x, idx) => idx === i ? { ...x, secret: !!c } : x) })} />敏感</label>
+                <Button variant="ghost" size="icon" onClick={() => set({ env: p.env.filter((_, idx) => idx !== i) })}><X /></Button>
               </div>
             ))}
-            <button className="btn btn-sm" onClick={() => setStage(si, { steps: [...st.steps, { name: `步骤 ${st.steps.length + 1}`, command: '', continueOnFail: false, timeoutMin: 0 }] })}>+ 添加步骤</button>
+            <Button variant="outline" size="sm" onClick={() => set({ env: [...p.env, { name: '', value: '', secret: false }] })}><Plus />添加变量</Button>
           </div>
-        ))}
-        <button className="btn btn-sm" onClick={() => set({ stages: [...p.stages, { name: `阶段 ${p.stages.length + 1}`, host: '', workspace: '', approval: false, steps: [] }] })}>+ 添加阶段</button>
-
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-accent" disabled={saving} onClick={save}>{saving ? '保存中...' : '保存'}</button>
         </div>
-      </div>
-    </div>
+
+        <div>
+          <Label className="text-muted-foreground">阶段(顺序执行, 任一失败后后续阶段跳过)</Label>
+          <div className="mt-2 space-y-3">
+            {p.stages.map((st, si) => (
+              <div key={si} className="rounded-lg border p-3">
+                <div className="flex gap-2 items-center flex-wrap">
+                  <Badge variant="secondary" className="tabular-nums">阶段 {si + 1}</Badge>
+                  <Input className="flex-1 min-w-32" value={st.name} placeholder="阶段名" onChange={e => setStage(si, { name: e.target.value })} />
+                  <div className="w-40"><HostSelect value={st.host} onChange={v => setStage(si, { host: v })} /></div>
+                  <Input className="flex-1 min-w-36" value={st.workspace} placeholder="工作目录(可选)" onChange={e => setStage(si, { workspace: e.target.value })} />
+                  <Button variant="ghost" size="icon" onClick={() => set({ stages: move(p.stages, si, -1) })}><ChevronUp /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => set({ stages: move(p.stages, si, 1) })}><ChevronDown /></Button>
+                  <Button variant="ghost" size="icon" className="text-destructive" onClick={async () => {
+                    if (await confirm(`删除阶段「${st.name}」？`, { danger: true, okText: '删除' })) set({ stages: p.stages.filter((_, idx) => idx !== si) })
+                  }}><Trash2 /></Button>
+                </div>
+                <div className="flex gap-3 items-center my-2 flex-wrap">
+                  <label className="flex items-center gap-1.5 text-sm" title="阶段执行前暂停, 等待人工批准(发布门禁)">
+                    <Checkbox checked={st.approval} onCheckedChange={c => setStage(si, { approval: !!c })} />执行前需审批
+                  </label>
+                  <Select onValueChange={v => {
+                    const tpl = STEP_TEMPLATES.find(t => t.name === v)
+                    if (tpl) setStage(si, { steps: [...st.steps, ...tpl.steps.map(s => ({ ...s }))] })
+                  }}>
+                    <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="插入发布模板…" /></SelectTrigger>
+                    <SelectContent>{STEP_TEMPLATES.map(t => <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">裸机=重启脚本 · Docker=镜像步骤 · K8s=需选 kubeconfig 凭据</span>
+                </div>
+                {st.steps.map((sp, i) => (
+                  <div key={i} className="border rounded-lg p-2 mb-2">
+                    <div className="flex gap-2 items-center mb-1.5 flex-wrap">
+                      <Input className="flex-1 min-w-32" value={sp.name} placeholder="步骤名" onChange={e => setStep(si, i, { name: e.target.value })} />
+                      <Input className="w-24" type="number" min={0} max={1440} title="步骤超时(分钟)" value={sp.timeoutMin} onChange={e => setStep(si, i, { timeoutMin: +e.target.value })} />
+                      <label className="flex items-center gap-1.5 text-sm" title="失败后继续执行后续步骤">
+                        <Checkbox checked={sp.continueOnFail} onCheckedChange={c => setStep(si, i, { continueOnFail: !!c })} />失败继续
+                      </label>
+                      <Select onValueChange={v => {
+                        const sc = (scripts.data || []).find(s => s.id === v)
+                        if (sc) setStep(si, i, { command: sc.content })
+                      }}>
+                        <SelectTrigger className="h-8 w-32 text-xs" title="从脚本库插入"><SelectValue placeholder="脚本库…" /></SelectTrigger>
+                        <SelectContent>{(scripts.data || []).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Button variant="ghost" size="icon" onClick={() => setStage(si, { steps: move(st.steps, i, -1) })}><ChevronUp /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => setStage(si, { steps: move(st.steps, i, 1) })}><ChevronDown /></Button>
+                      <Button variant="ghost" size="icon" className="text-destructive" onClick={() => setStage(si, { steps: st.steps.filter((_, idx) => idx !== i) })}><Trash2 /></Button>
+                    </div>
+                    <Textarea className="font-mono min-h-16" rows={2} value={sp.command} placeholder="shell 命令, 如: make build"
+                      onChange={e => setStep(si, i, { command: e.target.value })} />
+                    <div className="flex gap-2 items-center mt-1.5 flex-wrap">
+                      <span className="text-xs text-muted-foreground whitespace-nowrap"><Package className="inline size-3.5 mr-0.5" />制品:</span>
+                      <Input className="flex-1 min-w-48" value={(sp.artifacts || []).join(', ')}
+                        placeholder="构建产物路径, 逗号分隔, 支持 * 通配; 步骤成功后自动归档到服务端可下载"
+                        onChange={e => setStep(si, i, { artifacts: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} />
+                      <Select value={sp.pullArtifact || SELECT_NONE}
+                        onValueChange={v => setStep(si, i, { pullArtifact: v === SELECT_NONE ? undefined : v })}>
+                        <SelectTrigger className="h-8 w-48 text-xs" title="执行前把已收集制品推送到本步骤主机工作目录, 命令中用 $CICD_ARTIFACT 引用">
+                          <SelectValue placeholder="不拉取制品" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={SELECT_NONE}>不拉取制品</SelectItem>
+                          {priorArtifactSteps(p, si, i).map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={() => setStage(si, { steps: [...st.steps, { name: `步骤 ${st.steps.length + 1}`, command: '', continueOnFail: false, timeoutMin: 0 }] })}><Plus />添加步骤</Button>
+              </div>
+            ))}
+            <Button variant="outline" size="sm" onClick={() => set({ stages: [...p.stages, { name: `阶段 ${p.stages.length + 1}`, host: '', workspace: '', approval: false, steps: [] }] })}><Plus />添加阶段</Button>
+          </div>
+        </div>
+
+        {confirmEl}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button disabled={saving} onClick={save}>{saving ? '保存中...' : '保存'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 // ==================== Webhook 弹窗 ====================
 
-function WebhookModal({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
+function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
   const [copied, setCopied] = useState('')
-  const url = `${location.origin}/api/cicd/webhook/${pipeline.id}`
+  const url = `${location.origin}${API.webhook(pipeline.id)}`
   const copy = async (text: string, tag: string) => {
     try {
       await navigator.clipboard.writeText(text)
@@ -599,117 +591,108 @@ function WebhookModal({ pipeline, onClose }: { pipeline: Pipeline; onClose: () =
   }
   const curl = `curl -X POST '${url}' -H 'X-Opscore-Token: ${pipeline.trigger.secret}'`
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 640, width: '92%' }} onClick={e => e.stopPropagation()}>
-        <div className="modal-head"><span className="modal-title">Webhook 触发: {pipeline.name}</span></div>
-        <div className="form-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader><DialogTitle>Webhook 触发: {pipeline.name}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
           <div>
-            <div className="field-label">触发地址</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input className="input mono" readOnly value={url} onFocus={e => e.target.select()} />
-              <button className="btn btn-sm" onClick={() => copy(url, 'url')}>{copied === 'url' ? '已复制' : '复制'}</button>
+            <Label>触发地址</Label>
+            <div className="flex gap-2">
+              <Input className="font-mono" readOnly value={url} onFocus={e => e.target.select()} />
+              <Button variant="outline" size="sm" onClick={() => copy(url, 'url')}>{copied === 'url' ? '已复制' : '复制'}</Button>
             </div>
           </div>
           <div>
-            <div className="field-label">凭证(X-Opscore-Token)</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input className="input mono" readOnly value={pipeline.trigger.secret} onFocus={e => e.target.select()} />
-              <button className="btn btn-sm" onClick={() => copy(pipeline.trigger.secret, 'secret')}>{copied === 'secret' ? '已复制' : '复制'}</button>
+            <Label>凭证(X-Opscore-Token)</Label>
+            <div className="flex gap-2">
+              <Input className="font-mono" readOnly value={pipeline.trigger.secret} onFocus={e => e.target.select()} />
+              <Button variant="outline" size="sm" onClick={() => copy(pipeline.trigger.secret, 'secret')}>{copied === 'secret' ? '已复制' : '复制'}</Button>
             </div>
-            <div className="small dim">也可经 ?token= 或 body.secret 传递; 在 Git 仓库 Webhook 设置中填入地址与凭证即可 push 自动触发</div>
+            <div className="text-xs text-muted-foreground mt-1">也可经 ?token= 或 body.secret 传递; 在 Git 仓库 Webhook 设置中填入地址与凭证即可 push 自动触发</div>
           </div>
           <div>
-            <div className="field-label">curl 示例</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <textarea className="editor-textarea mono" rows={2} readOnly value={curl} />
-              <button className="btn btn-sm" onClick={() => copy(curl, 'curl')}>{copied === 'curl' ? '已复制' : '复制'}</button>
-            </div>
+            <Label>curl 示例</Label>
+            <Textarea className="font-mono" rows={2} readOnly value={curl} onClick={e => (e.target as HTMLTextAreaElement).select()} />
           </div>
         </div>
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>关闭</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>关闭</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 // ==================== 运行历史 Tab ====================
 
-function RunsTab({ onChanged }: { onChanged: () => void }) {
-  const [runs, setRuns] = useState<Run[]>([])
-  const [pipes, setPipes] = useState<PipelineView[]>([])
+function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (id: string) => void }) {
   const [filter, setFilter] = useState('')
-  const [detailRun, setDetailRun] = useState('')
-  const [err, setErr] = useState('')
+  const { data, err, setErr, reload } = useResource<Run[]>(`${API.runs}?limit=100${filter ? `&pipeline=${filter}` : ''}`)
+  const pipes = useResource<PipelineView[]>(API.pipelines)
+  const runs = data || []
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
 
-  const load = useCallback(() => {
-    getJSON<Run[]>(`/api/cicd/runs?limit=100${filter ? `&pipeline=${filter}` : ''}`).then(setRuns).catch(e => setErr(e.message))
-  }, [filter])
-  useEffect(load, [load])
-  useEffect(() => {
-    getJSON<PipelineView[]>('/api/cicd/pipelines').then(setPipes).catch(() => {})
-  }, [])
-
-  const cancel = (run: Run) => {
-    if (!confirm(`取消运行 ${run.pipeline}（${run.id}）？`)) return
-    postJSON('/api/cicd/run/cancel', { runId: run.id })
-      .then(() => { load(); onChanged() })
-      .catch(e => setErr(e.message))
+  const cancel = async (r: Run) => {
+    if (!(await confirm(`取消运行 ${r.pipeline}?`, { desc: r.id, danger: true, okText: '取消运行' }))) return
+    setBusy(r.id)
+    try { await postJSON(API.runCancel, { runId: r.id }); reload(); onChanged() }
+    catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
 
   return (
-    <div className="section">
-      {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
-      <Card title={`运行历史 (${runs.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <select className="input sel-xs" value={filter} onChange={e => setFilter(e.target.value)}>
-            <option value="">全部流水线</option>
-            {pipes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr><th>流水线</th><th>触发</th><th>状态</th><th style={{ minWidth: 90 }}>进度</th><th>开始时间</th><th>耗时</th><th style={{ width: 150 }}>操作</th></tr>
-            </thead>
-            <tbody>
+    <div>
+      {confirmEl}
+      <ErrBanner msg={err} onClose={() => setErr('')} />
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="tabular-nums">运行历史 ({runs.length})</CardTitle>
+            <OptSelect className="w-52" value={filter} onChange={setFilter} placeholder="全部流水线"
+              items={(pipes.data || []).map(p => ({ value: p.id, label: p.name }))} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>流水线</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead>
+                <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
+                <TableHead>耗时</TableHead><TableHead className="w-32">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {runs.length === 0 && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6, padding: 24 }}>暂无运行记录</td></tr>
+                <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无运行记录</TableCell></TableRow>
               )}
               {runs.map(r => (
-                <tr key={r.id}>
-                  <td style={{ fontWeight: 600 }}>{r.pipeline}</td>
-                  <td><span className="badge badge-info">{TRIGGER_TEXT[r.trigger] || r.trigger}</span></td>
-                  <td>
-                    <span className={`badge ${badgeCls(r.status)}`}>
-                      {badgeText(r.status)}{r.status === 'running' && r.canceling ? '(取消中)' : ''}
-                    </span>
-                    {r.error && <div className="small dim" style={{ maxWidth: 260 }}>{r.error}</div>}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <ProgressBar value={r.progress || 0} status={r.status} />
-                      <span className="small dim" style={{ minWidth: 32 }}>{r.progress || 0}%</span>
+                <TableRow key={r.id}>
+                  <TableCell className="font-semibold">{r.pipeline}</TableCell>
+                  <TableCell><Badge variant="secondary">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge></TableCell>
+                  <TableCell>
+                    <StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} />
+                    {r.error && <div className="text-xs text-muted-foreground max-w-64">{r.error}</div>}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <RunProgress value={r.progress || 0} status={r.status} className="w-20" />
+                      <span className="text-xs text-muted-foreground tabular-nums">{r.progress || 0}%</span>
                     </div>
-                  </td>
-                  <td className="small">{fmtTime(r.startedAt)}</td>
-                  <td>{fmtDur(r.durationMs)}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" onClick={() => setDetailRun(r.id)}>详情</button>
+                  </TableCell>
+                  <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
+                  <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button>
                       {(r.status === 'running' || r.status === 'queued') && (
-                        <button className="btn btn-sm btn-danger" onClick={() => cancel(r)}>取消</button>
+                        <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => cancel(r)}>取消</Button>
                       )}
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
-      {detailRun && <RunDetail runId={detailRun} onClose={() => { setDetailRun(''); load(); onChanged() }} />}
     </div>
   )
 }
@@ -723,7 +706,6 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
   const logRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
 
-  // 自动滚动: 用户上滚时暂停
   const onScroll = () => {
     const el = logRef.current
     if (!el) return
@@ -737,10 +719,9 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
   useEffect(() => {
     let alive = true
     const ctrl = new AbortController()
-    // ① 立即拉取状态 + 全量回填已有日志, 再增量接 SSE
-    getJSON<Run>(`/api/cicd/run/get?id=${runId}`).then(setRun).catch(() => {})
-    getJSON<{ content: string; offset: number }>(`/api/cicd/run/log?id=${runId}`)
-      .then(d => {
+    fetch(`${API.runGet}?id=${runId}`).then(r => r.json()).then(setRun).catch(() => {})
+    fetch(`${API.runLog}?id=${runId}`).then(r => r.json())
+      .then((d: { content: string; offset: number }) => {
         if (!alive) return
         if (d.content) setLines(d.content.replace(/\n$/, '').split('\n'))
         stream(d.offset)
@@ -751,7 +732,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       const t = localStorage.getItem('opscore-token')
       if (t) headers.Authorization = `Bearer ${t}`
-      fetch('/api/cicd/run/stream', {
+      fetch(API.runStream, {
         method: 'POST', headers, body: JSON.stringify({ runId }), signal: ctrl.signal,
       }).then(async resp => {
         if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
@@ -781,191 +762,200 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
     return () => { alive = false; ctrl.abort() }
   }, [runId])
 
-  // 无运行中流时兜底轮询状态(历史记录直接 GET)
   useEffect(() => {
     if (run && ['success', 'failed', 'canceled'].includes(run.status)) return
     const t = setInterval(() => {
-      getJSON<Run>(`/api/cicd/run/get?id=${runId}`).then(setRun).catch(() => {})
+      fetch(`${API.runGet}?id=${runId}`).then(r => r.json()).then(setRun).catch(() => {})
     }, 1500)
     return () => clearInterval(t)
   }, [runId, run?.status])
 
   const cancel = () => {
-    postJSON('/api/cicd/run/cancel', { runId }).catch(e => setErr(e.message))
+    postJSON(API.runCancel, { runId }).catch(e => setErr(e.message))
   }
 
   if (!run) return null
   const active = run.status === 'running' || run.status === 'queued'
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 980, width: '94%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-        <div className="modal-head">
-          <span className="modal-title">
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             {run.pipeline}
-            <span className={`badge ${badgeCls(run.status)}`} style={{ marginLeft: 8 }}>
-              {badgeText(run.status)}{run.status === 'running' && run.canceling ? '(取消中)' : ''}
-            </span>
-          </span>
-          <span className="small dim">
+            <StatusBadge status={run.status} suffix={run.status === 'running' && run.canceling ? '(取消中)' : undefined} />
+          </DialogTitle>
+          <div className="text-xs text-muted-foreground font-normal tabular-nums">
             {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)} · {run.id}
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <ProgressBar value={run.progress || 0} status={run.status} />
-          <span className="small dim" style={{ minWidth: 38 }}>{run.progress || 0}%</span>
+          </div>
+        </DialogHeader>
+
+        <div className="flex items-center gap-2">
+          <RunProgress value={run.progress || 0} status={run.status} className="flex-1" />
+          <span className="text-xs text-muted-foreground tabular-nums min-w-10">{run.progress || 0}%</span>
         </div>
 
-        {run.error && <div className="banner banner-err">{run.error}</div>}
-        {err && <div className="banner banner-err">{err}</div>}
+        {run.error && <ErrBanner msg={run.error} />}
+        <ErrBanner msg={err} onClose={() => setErr('')} />
 
         {run.stages.map((st, i) => (
-          <div key={i} className="card glass" style={{ marginBottom: 10, borderColor: st.status === 'waiting' ? 'var(--warn)' : undefined }}>
-            <div className="card-head">
-              <h3>
-                <span className={`badge ${badgeCls(st.status)}`} style={{ marginRight: 8 }}>{badgeText(st.status)}</span>
+          <div key={i} className={cn('rounded-lg border', st.status === 'waiting' && 'border-warn')}>
+            <div className="flex items-center justify-between gap-2 flex-wrap px-3 pt-2.5">
+              <div className="flex items-center gap-2 font-semibold">
+                <StatusBadge status={st.status} />
                 阶段 {i + 1}: {st.name}
-              </h3>
-              <span className="card-sub">
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {st.host ? `主机 ${st.host}` : '本机'}{st.workspace ? ` · ${st.workspace}` : ''}
                 {st.status === 'waiting' && active && (
-                  <span style={{ marginLeft: 10 }}>
-                    <button className="btn btn-sm btn-accent" onClick={() => postJSON('/api/cicd/run/approve', { runId, approve: true }).catch(e => setErr(e.message))}>✓ 批准执行</button>
-                    <button className="btn btn-sm btn-danger" style={{ marginLeft: 6 }} onClick={() => { if (confirm(`拒绝执行阶段「${st.name}」？该运行将标记为已取消。`)) postJSON('/api/cicd/run/approve', { runId, approve: false }).catch(e => setErr(e.message)) }}>✗ 拒绝</button>
+                  <span className="flex gap-1.5">
+                    <Button size="sm" onClick={() => postJSON(API.runApprove, { runId, approve: true }).catch(e => setErr(e.message))}>
+                      <Check />批准执行
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => postJSON(API.runApprove, { runId, approve: false }).catch(e => setErr(e.message))}>
+                      <X />拒绝
+                    </Button>
                   </span>
                 )}
-              </span>
+              </div>
             </div>
-            <div className="card-body" style={{ padding: 0 }}>
-              <table className="data-table">
-                <tbody>
-                  {st.steps.map((sp, j) => (
-                    <tr key={j}>
-                      <td style={{ width: '40%' }}>
-                        <span className="mono small dim">{String(j + 1).padStart(2, '0')}</span>{' '}
-                        <b>{sp.name}</b>
-                      </td>
-                      <td>
-                        <span className={`badge ${badgeCls(sp.status)}`}>{badgeText(sp.status)}</span>
-                        {sp.artifacts && sp.artifacts.length > 0 && (
-                          <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {sp.artifacts.map(a => (
-                              <button
-                                key={a.file} className="btn btn-sm" title={`${a.paths} · 点击下载 ${a.file}`}
-                                onClick={() => {
-                                  const t = localStorage.getItem('opscore-token')
-                                  window.open(`/api/cicd/artifact/download?run=${run.id}&file=${a.file}${t ? `&token=${encodeURIComponent(t)}` : ''}`)
-                                }}
-                              >📦 {fmtSize(a.size)}</button>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="small dim">exit {sp.status === 'pending' ? '-' : sp.exitCode}</td>
-                      <td className="small dim">{fmtDur(sp.durationMs)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="px-3 pb-2.5 pt-1">
+              {st.steps.map((sp, j) => (
+                <div key={j} className="flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap">
+                  <span className="w-[38%] min-w-40">
+                    <span className="font-mono text-xs text-muted-foreground tabular-nums">{String(j + 1).padStart(2, '0')}</span>{' '}
+                    <span className="font-medium">{sp.name}</span>
+                  </span>
+                  <span className="flex flex-col gap-1">
+                    <StatusBadge status={sp.status} />
+                    {sp.artifacts && sp.artifacts.length > 0 && (
+                      <span className="flex gap-1.5 flex-wrap">
+                        {sp.artifacts.map(a => (
+                          <Button key={a.file} variant="outline" size="sm" className="h-6 text-xs tabular-nums"
+                            title={`${a.paths} · 点击下载 ${a.file}`}
+                            onClick={() => {
+                              const t = localStorage.getItem('opscore-token')
+                              window.open(`${API.artifactDownload}?run=${run.id}&file=${a.file}${t ? `&token=${encodeURIComponent(t)}` : ''}`)
+                            }}
+                          ><Package />{fmtSize(a.size)}</Button>
+                        ))}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-muted-foreground tabular-nums">exit {sp.status === 'pending' ? '-' : sp.exitCode}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{fmtDur(sp.durationMs)}</span>
+                </div>
+              ))}
             </div>
           </div>
         ))}
 
-        <div className="log-panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3>执行日志({lines.length} 行)</h3>
-          {active && <span className="small dim">实时跟随时勿上滚</span>}
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm tabular-nums">执行日志({lines.length} 行)</h3>
+          {active && <span className="text-xs text-muted-foreground">实时跟随时勿上滚</span>}
         </div>
+        {/* 终端样式保留 legacy 主题适配类 */}
         <div className="log-text" ref={logRef} onScroll={onScroll} style={{ maxHeight: 320, overflowY: 'auto' }}>
           {lines.length === 0 && <div className="log-loading">暂无日志输出</div>}
           {lines.map((l, i) => <div key={i} className="log-line">{l}</div>)}
         </div>
 
-        <div className="modal-actions">
-          {active && <button className="btn btn-danger" onClick={cancel}>取消运行</button>}
-          <button className="btn" onClick={onClose}>关闭</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          {active && <Button variant="destructive" onClick={cancel}>取消运行</Button>}
+          <Button variant="outline" onClick={onClose}>关闭</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 // ==================== 脚本库 Tab ====================
 
 function ScriptsTab() {
-  const [scripts, setScripts] = useState<Script[]>([])
+  const { data, err, setErr, reload } = useResource<Script[]>(API.scripts)
+  const scripts = data || []
   const [editing, setEditing] = useState<Script | null>(null)
-  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
 
-  const load = useCallback(() => {
-    getJSON<Script[]>('/api/cicd/scripts').then(setScripts).catch(e => setErr(e.message))
-  }, [])
-  useEffect(load, [load])
-
-  const remove = (s: Script) => {
-    if (!confirm(`删除脚本「${s.name}」？`)) return
-    postJSON('/api/cicd/script/delete', { id: s.id }).then(load).catch(e => setErr(e.message))
+  const remove = async (s: Script) => {
+    if (!(await confirm(`删除脚本「${s.name}」？`, { danger: true, okText: '删除' }))) return
+    setBusy(s.id)
+    try { await postJSON(API.scriptDelete, { id: s.id }); reload() } catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
 
   return (
-    <div className="section">
-      {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
-      <Card title={`脚本库 (${scripts.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button className="btn btn-sm btn-accent" onClick={() => setEditing({ id: '', name: '', description: '', content: '', updatedAt: '' })}>+ 新建脚本</button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>名称</th><th>描述</th><th>更新时间</th><th style={{ width: 140 }}>操作</th></tr></thead>
-            <tbody>
+    <div>
+      {confirmEl}
+      <ErrBanner msg={err} onClose={() => setErr('')} />
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="tabular-nums">脚本库 ({scripts.length})</CardTitle>
+            <Button size="sm" onClick={() => setEditing({ id: '', name: '', description: '', content: '', updatedAt: '' })}>
+              <FileCode2 />新建脚本
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>名称</TableHead><TableHead>描述</TableHead><TableHead>更新时间</TableHead><TableHead className="w-36">操作</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
               {scripts.length === 0 && (
-                <tr><td colSpan={4} style={{ textAlign: 'center', opacity: 0.6, padding: 24 }}>暂无脚本; 流水线步骤中可直接引用</td></tr>
+                <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">暂无脚本; 流水线步骤中可直接引用</TableCell></TableRow>
               )}
               {scripts.map(s => (
-                <tr key={s.id}>
-                  <td style={{ fontWeight: 600 }}>{s.name}</td>
-                  <td className="small dim">{s.description}</td>
-                  <td className="small">{s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '-'}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" onClick={() => setEditing(s)}>编辑</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => remove(s)}>删除</button>
+                <TableRow key={s.id}>
+                  <TableCell className="font-semibold">{s.name}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{s.description}</TableCell>
+                  <TableCell className="text-xs">{s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '-'}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" onClick={() => setEditing(s)}>编辑</Button>
+                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => remove(s)}>删除</Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
 
       {editing && (
-        <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: 720, width: '92%' }}>
-            <div className="modal-head">
-              <span className="modal-title">{editing.id ? `编辑脚本: ${editing.name}` : '新建脚本'}</span>
-            </div>
-            <div className="form-row">
-              <div style={{ flex: 1 }}>
-                <div className="field-label">名称 *</div>
-                <input className="input" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} />
+        <Dialog open onOpenChange={o => !o && setEditing(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{editing.id ? `编辑脚本: ${editing.name}` : '新建脚本'}</DialogTitle>
+            </DialogHeader>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label>名称 *</Label>
+                <Input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} />
               </div>
-              <div style={{ flex: 2 }}>
-                <div className="field-label">描述</div>
-                <input className="input" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
+              <div className="flex-[2]">
+                <Label>描述</Label>
+                <Input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
               </div>
             </div>
-            <div className="field-label">脚本内容(POSIX shell, 可使用流水线注入的环境变量)</div>
-            <textarea className="editor-textarea mono" rows={12} value={editing.content} onChange={e => setEditing({ ...editing, content: e.target.value })} placeholder={'#!/bin/sh\nset -e\ndocker compose pull && docker compose up -d'} />
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setEditing(null)}>取消</button>
-              <button className="btn btn-accent" onClick={() => {
-                postJSON('/api/cicd/script/save', editing)
-                  .then(() => { setEditing(null); load() })
+            <div>
+              <Label>脚本内容(POSIX shell, 可使用流水线注入的环境变量)</Label>
+              <Textarea className="font-mono" rows={12} value={editing.content}
+                onChange={e => setEditing({ ...editing, content: e.target.value })}
+                placeholder={'#!/bin/sh\nset -e\ndocker compose pull && docker compose up -d'} />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditing(null)}>取消</Button>
+              <Button onClick={() => {
+                postJSON(API.scriptSave, editing)
+                  .then(() => { setEditing(null); reload() })
                   .catch(e => setErr(e.message))
-              }}>保存</button>
-            </div>
-          </div>
-        </div>
+              }}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )
@@ -974,151 +964,177 @@ function ScriptsTab() {
 // ==================== 仓库 Tab(代码仓库 + 镜像仓库) ====================
 
 function ReposTab() {
-  const [repos, setRepos] = useState<Repo[]>([])
-  const [registries, setRegistries] = useState<Registry[]>([])
-  const [creds, setCreds] = useState<Credential[]>([])
+  const repos = useResource<Repo[]>(API.repos)
+  const registries = useResource<Registry[]>(API.registries)
+  const creds = useResource<Credential[]>(API.credentials)
   const [editingRepo, setEditingRepo] = useState<Repo | null>(null)
   const [editingReg, setEditingReg] = useState<Registry | null>(null)
   const [err, setErr] = useState('')
   const [testMsg, setTestMsg] = useState('')
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
 
-  const load = useCallback(() => {
-    getJSON<Repo[]>('/api/cicd/repos').then(setRepos).catch(e => setErr(e.message))
-    getJSON<Registry[]>('/api/cicd/registries').then(setRegistries).catch(() => {})
-    getJSON<Credential[]>('/api/cicd/credentials').then(setCreds).catch(() => {})
-  }, [])
-  useEffect(load, [load])
+  const reloadAll = () => { repos.reload(); registries.reload(); creds.reload() }
 
   const testRepo = (r: Repo) => {
     setTestMsg('测试中...')
-    postJSON<{ ok: boolean; output?: string; error?: string }>('/api/cicd/repo/test', { id: r.id })
+    postJSON<{ ok: boolean; output?: string; error?: string }>(API.repoTest, { id: r.id })
       .then(d => setTestMsg(d.ok ? `✓ 连接成功\n${d.output || ''}` : `✗ ${d.error}\n${d.output || ''}`))
       .catch(e => setTestMsg(`✗ ${e.message}`))
   }
   const testReg = (r: Registry) => {
     setTestMsg('测试中...')
-    postJSON<{ ok: boolean; output?: string; error?: string }>('/api/cicd/registry/test', { id: r.id })
+    postJSON<{ ok: boolean; output?: string; error?: string }>(API.registryTest, { id: r.id })
       .then(d => setTestMsg(d.ok ? `✓ ${d.output || '服务存活'}` : `✗ ${d.error}`))
       .catch(e => setTestMsg(`✗ ${e.message}`))
   }
+  const removeRepo = async (r: Repo) => {
+    if (!(await confirm(`删除仓库「${r.name}」？`, { danger: true, okText: '删除' }))) return
+    setBusy(r.id)
+    try { await postJSON(API.repoDelete, { id: r.id }); repos.reload() } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+  }
+  const removeReg = async (r: Registry) => {
+    if (!(await confirm(`删除镜像仓库「${r.name}」？`, { danger: true, okText: '删除' }))) return
+    setBusy(r.id)
+    try { await postJSON(API.registryDelete, { id: r.id }); registries.reload() } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+  }
 
-  const credName = (id: string) => creds.find(c => c.id === id)?.name || '-'
+  const credName = (id: string) => (creds.data || []).find(c => c.id === id)?.name || '-'
 
   return (
-    <div className="section">
-      {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
+    <div>
+      {confirmEl}
+      <ErrBanner msg={err} onClose={() => setErr('')} />
       {testMsg && (
-        <div className={`banner ${testMsg.startsWith('✓') ? 'banner-ok' : 'banner-info'}`} style={{ marginBottom: 12, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+        <div className={`rounded-lg border px-3 py-2 mb-3 text-xs font-mono whitespace-pre-wrap ${testMsg.startsWith('✓') ? 'border-ok/40 text-ok' : 'border-border'}`}>
           {testMsg}
-          <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={() => setTestMsg('')}>关闭</button>
+          <Button variant="ghost" size="sm" className="ml-2 h-6" onClick={() => setTestMsg('')}>关闭</Button>
         </div>
       )}
 
-      <Card title={`代码仓库 (${repos.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button className="btn btn-sm btn-accent" onClick={() => setEditingRepo({ id: '', name: '', url: '', credId: '', defaultBranch: 'master' })}>+ 新建代码仓库</button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>名称</th><th>地址</th><th>凭据</th><th>默认分支</th><th style={{ width: 200 }}>操作</th></tr></thead>
-            <tbody>
-              {repos.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', opacity: 0.6, padding: 16 }}>暂无代码仓库</td></tr>}
-              {repos.map(r => (
-                <tr key={r.id}>
-                  <td style={{ fontWeight: 600 }}>{r.name}</td>
-                  <td className="small mono">{r.url}</td>
-                  <td className="small">{credName(r.credId)}</td>
-                  <td className="small">{r.defaultBranch}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" onClick={() => testRepo(r)}>测试</button>
-                      <button className="btn btn-sm" onClick={() => setEditingRepo(r)}>编辑</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`删除仓库「${r.name}」？`)) postJSON('/api/cicd/repo/delete', { id: r.id }).then(load).catch(e => setErr(e.message)) }}>删除</button>
+      <Card className="mb-4">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="tabular-nums">代码仓库 ({(repos.data || []).length})</CardTitle>
+            <Button size="sm" onClick={() => setEditingRepo({ id: '', name: '', url: '', credId: '', defaultBranch: 'master' })}><Plus />新建代码仓库</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>名称</TableHead><TableHead>地址</TableHead><TableHead>凭据</TableHead><TableHead>默认分支</TableHead><TableHead className="w-52">操作</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {(repos.data || []).length === 0 && <TableRow><TableCell colSpan={5} className="h-16 text-center text-muted-foreground">暂无代码仓库</TableCell></TableRow>}
+              {(repos.data || []).map(r => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-semibold">{r.name}</TableCell>
+                  <TableCell className="text-xs font-mono">{r.url}</TableCell>
+                  <TableCell className="text-xs">{credName(r.credId)}</TableCell>
+                  <TableCell className="text-xs">{r.defaultBranch}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => testRepo(r)}>测试</Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditingRepo(r)}>编辑</Button>
+                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => removeRepo(r)}>删除</Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
 
-      <Card title={`镜像仓库 (${registries.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button className="btn btn-sm btn-accent" onClick={() => setEditingReg({ id: '', name: '', server: '', credId: '' })}>+ 新建镜像仓库</button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>名称</th><th>地址</th><th>凭据</th><th style={{ width: 200 }}>操作</th></tr></thead>
-            <tbody>
-              {registries.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', opacity: 0.6, padding: 16 }}>暂无镜像仓库</td></tr>}
-              {registries.map(r => (
-                <tr key={r.id}>
-                  <td style={{ fontWeight: 600 }}>{r.name}</td>
-                  <td className="small mono">{r.server}</td>
-                  <td className="small">{credName(r.credId)}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" onClick={() => testReg(r)}>测试</button>
-                      <button className="btn btn-sm" onClick={() => setEditingReg(r)}>编辑</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`删除镜像仓库「${r.name}」？`)) postJSON('/api/cicd/registry/delete', { id: r.id }).then(load).catch(e => setErr(e.message)) }}>删除</button>
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="tabular-nums">镜像仓库 ({(registries.data || []).length})</CardTitle>
+            <Button size="sm" onClick={() => setEditingReg({ id: '', name: '', server: '', credId: '' })}><Plus />新建镜像仓库</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>名称</TableHead><TableHead>地址</TableHead><TableHead>凭据</TableHead><TableHead className="w-52">操作</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {(registries.data || []).length === 0 && <TableRow><TableCell colSpan={4} className="h-16 text-center text-muted-foreground">暂无镜像仓库</TableCell></TableRow>}
+              {(registries.data || []).map(r => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-semibold">{r.name}</TableCell>
+                  <TableCell className="text-xs font-mono">{r.server}</TableCell>
+                  <TableCell className="text-xs">{credName(r.credId)}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" disabled={!!busy} onClick={() => testReg(r)}>测试</Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditingReg(r)}>编辑</Button>
+                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => removeReg(r)}>删除</Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
 
       {editingRepo && (
-        <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: 620, width: '92%' }}>
-            <div className="modal-head"><span className="modal-title">{editingRepo.id ? '编辑代码仓库' : '新建代码仓库'}</span></div>
-            <div className="form-row"><div style={{ flex: 1 }}>
-              <div className="field-label">名称 *</div>
-              <input className="input" value={editingRepo.name} onChange={e => setEditingRepo({ ...editingRepo, name: e.target.value })} placeholder="如: 业务后端" />
-            </div><div style={{ flex: 1 }}>
-              <div className="field-label">默认分支</div>
-              <input className="input" value={editingRepo.defaultBranch} onChange={e => setEditingRepo({ ...editingRepo, defaultBranch: e.target.value })} placeholder="master" />
-            </div></div>
-            <div className="field-label">仓库地址 *(https:// 或 git@ / ssh://)</div>
-            <input className="input mono" value={editingRepo.url} onChange={e => setEditingRepo({ ...editingRepo, url: e.target.value })} placeholder="https://git.example.com/team/app.git" />
-            <div className="field-label" style={{ marginTop: 8 }}>访问凭据(https 私有库需 git 类型凭据; ssh 形态依赖主机 ssh key)</div>
-            <select className="input" value={editingRepo.credId} onChange={e => setEditingRepo({ ...editingRepo, credId: e.target.value })}>
-              <option value="">无(公开库 / 主机 ssh key)</option>
-              {creds.filter(c => c.type === 'git').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setEditingRepo(null)}>取消</button>
-              <button className="btn btn-accent" onClick={() => postJSON('/api/cicd/repo/save', editingRepo).then(() => { setEditingRepo(null); load() }).catch(e => setErr(e.message))}>保存</button>
+        <Dialog open onOpenChange={o => !o && setEditingRepo(null)}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader><DialogTitle>{editingRepo.id ? '编辑代码仓库' : '新建代码仓库'}</DialogTitle></DialogHeader>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label>名称 *</Label>
+                <Input value={editingRepo.name} onChange={e => setEditingRepo({ ...editingRepo, name: e.target.value })} placeholder="如: 业务后端" />
+              </div>
+              <div className="flex-1">
+                <Label>默认分支</Label>
+                <Input value={editingRepo.defaultBranch} onChange={e => setEditingRepo({ ...editingRepo, defaultBranch: e.target.value })} placeholder="master" />
+              </div>
             </div>
-          </div>
-        </div>
+            <div>
+              <Label>仓库地址 *(https:// 或 git@ / ssh://)</Label>
+              <Input className="font-mono" value={editingRepo.url} onChange={e => setEditingRepo({ ...editingRepo, url: e.target.value })} placeholder="https://git.example.com/team/app.git" />
+            </div>
+            <div>
+              <Label>访问凭据(https 私有库需 git 类型凭据; ssh 形态依赖主机 ssh key)</Label>
+              <OptSelect value={editingRepo.credId} onChange={v => setEditingRepo({ ...editingRepo, credId: v })} placeholder="无(公开库 / 主机 ssh key)"
+                items={(creds.data || []).filter(c => c.type === 'git').map(c => ({ value: c.id, label: c.name }))} />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingRepo(null)}>取消</Button>
+              <Button onClick={() => postJSON(API.repoSave, editingRepo).then(() => { setEditingRepo(null); reloadAll() }).catch(e => setErr(e.message))}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {editingReg && (
-        <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: 620, width: '92%' }}>
-            <div className="modal-head"><span className="modal-title">{editingReg.id ? '编辑镜像仓库' : '新建镜像仓库'}</span></div>
-            <div className="form-row"><div style={{ flex: 1 }}>
-              <div className="field-label">名称 *</div>
-              <input className="input" value={editingReg.name} onChange={e => setEditingReg({ ...editingReg, name: e.target.value })} placeholder="如: 生产 Harbor" />
-            </div><div style={{ flex: 1 }}>
-              <div className="field-label">地址 *(域名[:端口], 不含协议)</div>
-              <input className="input mono" value={editingReg.server} onChange={e => setEditingReg({ ...editingReg, server: e.target.value })} placeholder="registry.example.com:5000" />
-            </div></div>
-            <div className="field-label" style={{ marginTop: 8 }}>访问凭据</div>
-            <select className="input" value={editingReg.credId} onChange={e => setEditingReg({ ...editingReg, credId: e.target.value })}>
-              <option value="">无(匿名)</option>
-              {creds.filter(c => c.type === 'registry').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setEditingReg(null)}>取消</button>
-              <button className="btn btn-accent" onClick={() => postJSON('/api/cicd/registry/save', editingReg).then(() => { setEditingReg(null); load() }).catch(e => setErr(e.message))}>保存</button>
+        <Dialog open onOpenChange={o => !o && setEditingReg(null)}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader><DialogTitle>{editingReg.id ? '编辑镜像仓库' : '新建镜像仓库'}</DialogTitle></DialogHeader>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label>名称 *</Label>
+                <Input value={editingReg.name} onChange={e => setEditingReg({ ...editingReg, name: e.target.value })} placeholder="如: 生产 Harbor" />
+              </div>
+              <div className="flex-1">
+                <Label>地址 *(域名[:端口], 不含协议)</Label>
+                <Input className="font-mono" value={editingReg.server} onChange={e => setEditingReg({ ...editingReg, server: e.target.value })} placeholder="registry.example.com:5000" />
+              </div>
             </div>
-          </div>
-        </div>
+            <div>
+              <Label>访问凭据</Label>
+              <OptSelect value={editingReg.credId} onChange={v => setEditingReg({ ...editingReg, credId: v })} placeholder="无(匿名)"
+                items={(creds.data || []).filter(c => c.type === 'registry').map(c => ({ value: c.id, label: c.name }))} />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingReg(null)}>取消</Button>
+              <Button onClick={() => postJSON(API.registrySave, editingReg).then(() => { setEditingReg(null); reloadAll() }).catch(e => setErr(e.message))}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )
@@ -1127,164 +1143,179 @@ function ReposTab() {
 // ==================== 凭据 Tab ====================
 
 function CredentialsTab() {
-  const [creds, setCreds] = useState<Credential[]>([])
+  const { data, err, setErr, reload } = useResource<Credential[]>(API.credentials)
+  const creds = data || []
   const [editing, setEditing] = useState<(Credential & { data?: string }) | null>(null)
-  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
 
-  const load = useCallback(() => {
-    getJSON<Credential[]>('/api/cicd/credentials').then(setCreds).catch(e => setErr(e.message))
-  }, [])
-  useEffect(load, [load])
-
-  const remove = (c: Credential) => {
-    if (!confirm(`删除凭据「${c.name}」？引用它的仓库/流水线将回退为无凭据。`)) return
-    postJSON('/api/cicd/credential/delete', { id: c.id }).then(load).catch(e => setErr(e.message))
+  const remove = async (c: Credential) => {
+    if (!(await confirm(`删除凭据「${c.name}」？`, { desc: '引用它的仓库/流水线将回退为无凭据。', danger: true, okText: '删除' }))) return
+    setBusy(c.id)
+    try { await postJSON(API.credentialDelete, { id: c.id }); reload() } catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
 
   const isKube = editing?.type === 'kubeconfig'
 
   return (
-    <div className="section">
-      {err && <div className="banner banner-err" style={{ marginBottom: 12 }}>{err}</div>}
-      <Card title={`凭据中心 (${creds.length})`}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button className="btn btn-sm btn-accent" onClick={() => setEditing({ id: '', name: '', type: 'git', username: '', server: '', hasData: false, note: '', updatedAt: '', data: '' })}>+ 新建凭据</button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>名称</th><th>类型</th><th>用户名</th><th>备注</th><th>更新时间</th><th style={{ width: 140 }}>操作</th></tr></thead>
-            <tbody>
-              {creds.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', opacity: 0.6, padding: 24 }}>暂无凭据; 密文保存后仅写不读, 日志中自动掩码</td></tr>}
+    <div>
+      {confirmEl}
+      <ErrBanner msg={err} onClose={() => setErr('')} />
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="tabular-nums">凭据中心 ({creds.length})</CardTitle>
+            <Button size="sm" onClick={() => setEditing({ id: '', name: '', type: 'git', username: '', server: '', hasData: false, note: '', updatedAt: '', data: '' })}><Plus />新建凭据</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>用户名</TableHead><TableHead>备注</TableHead><TableHead>更新时间</TableHead><TableHead className="w-36">操作</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {creds.length === 0 && <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">暂无凭据; 密文保存后仅写不读, 日志中自动掩码</TableCell></TableRow>}
               {creds.map(c => (
-                <tr key={c.id}>
-                  <td style={{ fontWeight: 600 }}>{c.name}</td>
-                  <td><span className="badge badge-info">{CRED_TYPE_TEXT[c.type] || c.type}</span></td>
-                  <td className="small">{c.username || '-'}</td>
-                  <td className="small dim">{c.note || c.server || '-'}</td>
-                  <td className="small">{c.updatedAt ? new Date(c.updatedAt).toLocaleString() : '-'}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" onClick={() => setEditing({ ...c, data: '' })}>编辑</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => remove(c)}>删除</button>
+                <TableRow key={c.id}>
+                  <TableCell className="font-semibold">{c.name}</TableCell>
+                  <TableCell><Badge variant="secondary">{CRED_TYPE_TEXT[c.type] || c.type}</Badge></TableCell>
+                  <TableCell className="text-xs">{c.username || '-'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{c.note || c.server || '-'}</TableCell>
+                  <TableCell className="text-xs">{c.updatedAt ? new Date(c.updatedAt).toLocaleString() : '-'}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" onClick={() => setEditing({ ...c, data: '' })}>编辑</Button>
+                      <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => remove(c)}>删除</Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
 
       {editing && (
-        <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: 640, width: '92%' }}>
-            <div className="modal-head"><span className="modal-title">{editing.id ? `编辑凭据: ${editing.name}` : '新建凭据'}</span></div>
-            <div className="form-row">
-              <div style={{ flex: 1 }}>
-                <div className="field-label">名称 *</div>
-                <input className="input" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="如: gitlab-ci-token" />
+        <Dialog open onOpenChange={o => !o && setEditing(null)}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader><DialogTitle>{editing.id ? `编辑凭据: ${editing.name}` : '新建凭据'}</DialogTitle></DialogHeader>
+            <div className="flex gap-3 flex-wrap">
+              <div className="flex-1 min-w-36">
+                <Label>名称 *</Label>
+                <Input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="如: gitlab-ci-token" />
               </div>
-              <div style={{ flex: 1 }}>
-                <div className="field-label">类型 *</div>
-                <select className="input" value={editing.type} onChange={e => setEditing({ ...editing, type: e.target.value })} disabled={!!editing.id}>
-                  <option value="git">代码库(token/密码)</option>
-                  <option value="registry">镜像仓库(用户名+密码)</option>
-                  <option value="kubeconfig">K8s kubeconfig</option>
-                  <option value="generic">通用密文</option>
-                </select>
+              <div className="flex-1 min-w-40">
+                <Label>类型 *</Label>
+                <Select value={editing.type} onValueChange={v => setEditing({ ...editing, type: v })} disabled={!!editing.id}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="git">代码库(token/密码)</SelectItem>
+                    <SelectItem value="registry">镜像仓库(用户名+密码)</SelectItem>
+                    <SelectItem value="kubeconfig">K8s kubeconfig</SelectItem>
+                    <SelectItem value="generic">通用密文</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               {(editing.type === 'git' || editing.type === 'registry') && (
-                <div style={{ flex: 1 }}>
-                  <div className="field-label">用户名</div>
-                  <input className="input" value={editing.username || ''} onChange={e => setEditing({ ...editing, username: e.target.value })} placeholder={editing.type === 'registry' ? '如: robot$ci' : '可空(纯 token)'} />
+                <div className="flex-1 min-w-36">
+                  <Label>用户名</Label>
+                  <Input value={editing.username || ''} onChange={e => setEditing({ ...editing, username: e.target.value })}
+                    placeholder={editing.type === 'registry' ? '如: robot$ci' : '可空(纯 token)'} />
                 </div>
               )}
             </div>
-            <div className="field-label">{isKube ? 'kubeconfig 内容 *' : '密文 *'}{editing.id ? ' (留空保持原值)' : ''}</div>
-            {isKube ? (
-              <textarea className="editor-textarea mono" rows={10} value={editing.data || ''} onChange={e => setEditing({ ...editing, data: e.target.value })} placeholder="apiVersion: v1&#10;clusters: ..." />
-            ) : (
-              <input className="input mono" type="password" value={editing.data || ''} onChange={e => setEditing({ ...editing, data: e.target.value })} placeholder={editing.id ? '留空保持原值' : 'token / 密码'} />
-            )}
-            {editing.type === 'generic' && (
-              <>
-                <div className="field-label" style={{ marginTop: 8 }}>备注</div>
-                <input className="input" value={editing.note || ''} onChange={e => setEditing({ ...editing, note: e.target.value })} placeholder="用途说明" />
-              </>
-            )}
-            <div className="small dim" style={{ marginTop: 8 }}>
-              安全说明: 密文保存后不可回读(仅可覆盖); 列表只显示"已配置"标记; 运行日志中自动掩码; kubeconfig 在目标主机落盘为 600 权限临时文件并在运行后清理。
+            <div>
+              <Label>{isKube ? 'kubeconfig 内容 *' : '密文 *'}{editing.id ? ' (留空保持原值)' : ''}</Label>
+              {isKube ? (
+                <Textarea className="font-mono" rows={10} value={editing.data || ''} onChange={e => setEditing({ ...editing, data: e.target.value })} placeholder={'apiVersion: v1\nclusters: ...'} />
+              ) : (
+                <Input className="font-mono" type="password" value={editing.data || ''} onChange={e => setEditing({ ...editing, data: e.target.value })} placeholder={editing.id ? '留空保持原值' : 'token / 密码'} />
+              )}
             </div>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setEditing(null)}>取消</button>
-              <button className="btn btn-accent" onClick={() => {
+            {editing.type === 'generic' && (
+              <div>
+                <Label>备注</Label>
+                <Input value={editing.note || ''} onChange={e => setEditing({ ...editing, note: e.target.value })} placeholder="用途说明" />
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              安全说明: 密文保存后不可回读(仅可覆盖); 列表只显示"已配置"标记; 运行日志中自动掩码; kubeconfig 在目标主机落盘为 600 权限临时文件并在运行后清理。
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditing(null)}>取消</Button>
+              <Button onClick={() => {
                 const payload: any = { ...editing }
                 delete payload.hasData
                 delete payload.updatedAt
-                postJSON('/api/cicd/credential/save', payload)
-                  .then(() => { setEditing(null); load() })
+                postJSON(API.credentialSave, payload)
+                  .then(() => { setEditing(null); reload() })
                   .catch(e => setErr(e.message))
-              }}>保存</button>
-            </div>
-          </div>
-        </div>
+              }}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )
 }
 
-// ==================== 概览 Tab(v2.4 恢复) ====================
+// ==================== 概览 Tab ====================
 
 function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) => void }) {
-  if (!data) return <div className="log-loading">加载中...</div>
+  if (!data) return <div className="text-center text-muted-foreground py-8">加载中...</div>
   const stats = [
-    { label: '流水线总数', value: data.pipelines },
+    { label: '流水线总数', value: String(data.pipelines) },
     { label: '运行中 / 排队', value: `${data.running} / ${data.queued}` },
-    { label: '等待审批', value: data.waitingApproval ?? 0, warn: (data.waitingApproval ?? 0) > 0 },
+    { label: '等待审批', value: String(data.waitingApproval ?? 0), warn: (data.waitingApproval ?? 0) > 0 },
     { label: '24h 成功 / 失败', value: `${data.success24h} / ${data.failed24h}` },
   ]
   return (
-    <div className="section">
-      <div className="grid grid-4" style={{ marginBottom: 14 }}>
+    <div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {stats.map(s => (
           <Card key={s.label}>
-            <div className="small dim">{s.label}</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: s.warn ? 'var(--warn)' : undefined }}>{s.value}</div>
+            <CardContent className="pt-4">
+              <div className="text-xs text-muted-foreground">{s.label}</div>
+              <div className={cn('text-3xl font-bold tabular-nums', s.warn && 'text-warn')}>{s.value}</div>
+            </CardContent>
           </Card>
         ))}
       </div>
       {(data.waitingApproval ?? 0) > 0 && (
-        <div className="banner banner-info" style={{ marginBottom: 14 }}>
+        <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 mb-4 text-sm">
           ⏸ 有 {data.waitingApproval} 个运行正在等待人工审批 —— 请到「运行历史」打开详情批准或拒绝
         </div>
       )}
-      <Card title="最近运行">
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>流水线</th><th>触发</th><th>状态</th><th>进度</th><th>开始时间</th><th>耗时</th><th style={{ width: 70 }}>操作</th></tr></thead>
-            <tbody>
+      <Card>
+        <CardHeader className="pb-3"><CardTitle>最近运行</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>流水线</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead><TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead><TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
               {(data.recentRuns || []).length === 0 && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6, padding: 16 }}>暂无数据</td></tr>
+                <TableRow><TableCell colSpan={7} className="h-16 text-center text-muted-foreground">暂无数据</TableCell></TableRow>
               )}
               {(data.recentRuns || []).map((r: Run) => (
-                <tr key={r.id}>
-                  <td>{r.pipeline}</td>
-                  <td>{TRIGGER_TEXT[r.trigger] || r.trigger}</td>
-                  <td><span className={`badge ${badgeCls(r.status)}`}>{badgeText(r.status)}</span></td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <ProgressBar value={r.progress || 0} status={r.status} />
-                      <span className="small dim" style={{ minWidth: 32 }}>{r.progress || 0}%</span>
+                <TableRow key={r.id}>
+                  <TableCell>{r.pipeline}</TableCell>
+                  <TableCell>{TRIGGER_TEXT[r.trigger] || r.trigger}</TableCell>
+                  <TableCell><StatusBadge status={r.status} /></TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <RunProgress value={r.progress || 0} status={r.status} className="w-20" />
+                      <span className="text-xs text-muted-foreground tabular-nums">{r.progress || 0}%</span>
                     </div>
-                  </td>
-                  <td className="small">{fmtTime(r.startedAt)}</td>
-                  <td>{fmtDur(r.durationMs)}</td>
-                  <td><button className="btn btn-sm" onClick={() => onOpenRun(r.id)}>详情</button></td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
+                  <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
+                  <TableCell><Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button></TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
     </div>
   )

@@ -86,3 +86,14 @@
 - 定时下次执行(FR-24): 列表触发器列显示 cron 下次触发时间(/pipeline/nextfire)。
 - 概览 tab 恢复并增强: 等待审批统计卡+提醒横幅(可直达运行详情), 统计含 waitingApproval。
 - 单测: NextCronFire/buildNotifyBody(三渠道)/Import 冲突重命名与凭证重置。
+
+---
+
+## 九、v2.5: 前端 shadcn/ui 试点迁移(feat/cicd 分支)
+
+- 前端代码审查(debug-and-refactor + make-interfaces-feel-better 两个 skill)发现 R1-R4 复用问题与 U1-U5 交互细节问题, 本次迁移同步修复。
+- 基础设施: Tailwind v4(@tailwindcss/vite, **不引 preflight** 保护其余手写 CSS 模块) + tw-animate-css + components.json + `@/` 别名; shadcn 主题变量**全部引用既有 data-theme 变量**, 5 套主题自动适配零新增色值。
+- 14 个 shadcn 组件入库(button/card/dialog/table/tabs/input/textarea/select/badge/checkbox/progress/alert/alert-dialog/separator/label)。
+- 新增 `web/src/modules/cicd/shared.tsx`: API 路径常量单一来源 / useResource 列表加载 hook / Promise 化 AlertDialog 确认(替代 8 处原生 confirm) / StatusBadge 主题变量徽标 / ErrBanner / 格式化函数。
+- CicdModule.tsx 全量重写为 shadcn: Tabs/Card/Table/Dialog/Input/Select/Checkbox/Progress/Badge; 修复项 — R1 API 常量, R2 五处加载样板收敛, R3 五套 modal 骨架换 Dialog(自带进出动画), R4 受控 Select 哨兵值替代手动复位 hack, U1 原生 confirm→AlertDialog, U2 异步按钮 busy 防抖, U3 数字 tabular-nums, U4 Dialog 动画(tw-animate-css); 日志面板保留 legacy 终端样式(主题自适应)。
+- 验证: tsc 新文件 0 错误; vite build 通过; 其余模块不受影响。
