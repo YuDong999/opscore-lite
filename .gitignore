@@ -12,13 +12,13 @@ data/
 *.bak-*
 nul
 
-# 实验性前端参考源码(未接入构建, 与 web/src 重复)
-src/
+# 实验性前端参考源码(未接入构建)。注: 用 /src/ 锚定根目录, 否则会误伤 web/src/ 下所有新文件
+/src/
 
 # 构建产物
-bin/
+/bin/
 web/dist
-dist/
+/dist/
 node_modules/
 *.exe
 *.exe~
