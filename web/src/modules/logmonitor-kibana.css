@@ -7,7 +7,11 @@
 /* 一、整体：全屏自适应三段式 */
 /* 外层页面容器：纵向铺满视口高度，让内部 .kib 的 100% 真正生效 */
 .kib-page {
-  height: calc(100vh - 120px); /* 扣除页头标题/tab/操作栏的大致高度，贴近真实屏幕尺寸(参照 db-module) */
+  /* 高度交给 .module 的 flex:1 精确填充 .content 剩余空间(与 db-module 同模式),
+     不再用 calc(100vh-120px) 魔法数 —— 估算偏差会造成外层+内层双重滚动 */
+  height: auto;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
