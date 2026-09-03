@@ -4,6 +4,7 @@
 > 配套: [02-CICD构建文档.md](./02-CICD构建文档.md)(技术实现) / [01-开源CI-CD项目调研分析.md](./01-开源CI-CD项目调研分析.md)(取舍依据)
 > v2 增补: FR-13 凭据中心 / FR-14 代码仓库 / FR-15 镜像仓库 / FR-16 发布模板(K8s·Docker·裸机) / FR-17 脚本库 / FR-18 环节进度
 > v2.1 增补: FR-19 阶段审批门禁
+> v2.2 增补: FR-20 制品收集与下载
 > 优先级: P0 = 必须, P2 = 未来版本
 
 ---
@@ -106,6 +107,21 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 7. 审批无独立用户体系, 与全站一致使用全局 Token; 日志记录批准/拒绝动作时间。
 8. 验收: 两阶段流水线(构建/带审批的发布)运行到第二阶段暂停; 批准后继续且运行 success; 拒绝后运行 canceled 且第三阶段 skipped; 等待期间另一条流水线可正常并发执行。
 
+### FR-20 制品收集与下载 (P0, v2.2)
+
+**描述**: 构建产物自动归档到服务端, 运行详情一键下载 —— 构建机与部署机分离场景的刚需(发布阶段/人工取用)。
+
+**详细需求**:
+
+1. 步骤声明制品路径(编辑器步骤行"📦 制品"输入, 逗号分隔多个, 支持 `* ? [ ]` 通配, 相对阶段工作目录)。
+2. 收集时机: 步骤**成功后**自动执行; 失败/跳过/取消的步骤不收集。
+3. 归档格式: 每步骤一个 tar.gz, 命名 `s<阶段序号>-step<步骤序号>.tar.gz`, 存 `data/cicd/artifacts/<runID>/`; 归档内保留相对路径; 只收集普通文件(目录需用户自行打包)。
+4. 本机步骤: 纯 Go 归档; 远程步骤: 先 `du` 量体积再 `tar|base64` 传输, 单步上限 100MB, 超限/未匹配在日志中明确提示(warn/error)且不影响运行结果。
+5. 展示与下载: 运行详情步骤行显示 `📦 大小` 按钮(悬停显示声明路径与文件名), 点击经 `/api/cicd/artifact/download?run=&file=` 下载(支持 ?token= 配合浏览器)。
+6. 安全: 制品路径白名单(禁 shell 元字符); 下载路径严格校验防穿越; 制品受全局 Token 保护。
+7. 清理: 删除流水线 / 历史滚动裁剪时同步删除制品; 运行记录保留制品清单(步骤/文件/大小/路径)。
+8. 验收: `echo built > dist/app.js` + 制品 `dist/*` 的本机流水线运行后, 详情出现下载按钮, 下载得到合法 tar.gz 且含 dist/app.js 与 dist/style.css; 穿越请求(`run=../x` / `file=../x`)返回 404。
+
 ### FR-12 未来规划 (P2)
 
 阶段手动审批 / 制品收集与下载 / 步骤级 when 条件与 matrix / 并行阶段 DAG / 通知渠道扩展 / 流水线导入导出与模板库 / git commit 信息展示。
@@ -202,6 +218,7 @@ OpsCore 的 CI/CD 模块走"精简链路"(对标 Jenkins 做减法): **代码库
 | FR-04/09 | /pipeline/run · /run/cancel · /run/approve | POST |
 | FR-08 | /runs · /run/get · /overview | GET |
 | FR-07 | /run/log · /run/stream(SSE) | GET/POST |
+| FR-20 | /artifact/download | GET |
 | FR-06 | /webhook/{id} | POST |
 | FR-13 | /credentials · /credential/save · /credential/delete | GET/POST |
 | FR-14 | /repos · /repo/save · /repo/delete · /repo/test | GET/POST |

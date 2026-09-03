@@ -5,7 +5,9 @@ package cicd
 // (main.go 绑定 handlers.CicdExec → 本机 exec / 远程 SSH, 见构建文档)。
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -13,10 +15,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -60,10 +64,11 @@ type Trigger struct {
 
 // Step 阶段内的最小执行单元
 type Step struct {
-	Name           string `json:"name"`
-	Command        string `json:"command"`
-	ContinueOnFail bool   `json:"continueOnFail"`
-	TimeoutMin     int    `json:"timeoutMin"`
+	Name           string   `json:"name"`
+	Command        string   `json:"command"`
+	ContinueOnFail bool     `json:"continueOnFail"`
+	TimeoutMin     int      `json:"timeoutMin"`
+	Artifacts      []string `json:"artifacts"` // 制品路径(相对工作目录, 支持 * 通配), 步骤成功后归档
 }
 
 // Stage 顺序执行的阶段, 回答"在哪台主机上做什么"
@@ -99,15 +104,24 @@ type Pipeline struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// Artifact 归档制品(每步骤一个 tar.gz)
+type Artifact struct {
+	Step  string `json:"step"`           // 步骤名
+	File  string `json:"file"`           // 服务器侧文件名 s<i>-step<j>.tar.gz
+	Size  int64  `json:"size"`           // 归档字节数
+	Paths string `json:"paths"`          // 声明的收集路径
+}
+
 // StepRun / StageRun / Run 运行实例(含定义快照)
 type StepRun struct {
-	Name       string    `json:"name"`
-	Command    string    `json:"command"`
-	Status     string    `json:"status"`
-	ExitCode   int       `json:"exitCode"`
-	StartedAt  time.Time `json:"startedAt,omitempty"`
-	FinishedAt time.Time `json:"finishedAt,omitempty"`
-	DurationMs int64     `json:"durationMs"`
+	Name       string     `json:"name"`
+	Command    string     `json:"command"`
+	Status     string     `json:"status"`
+	ExitCode   int        `json:"exitCode"`
+	StartedAt  time.Time  `json:"startedAt,omitempty"`
+	FinishedAt time.Time  `json:"finishedAt,omitempty"`
+	DurationMs int64      `json:"durationMs"`
+	Artifacts  []Artifact `json:"artifacts,omitempty"`
 }
 
 type StageRun struct {
@@ -154,6 +168,11 @@ func runProgress(r *Run) int {
 // ExecFunc 在目标主机上执行一条 shell 命令; onLine 逐行回传输出(远程步骤可能整块一次回传)。
 // 返回退出码; ctx 取消时应尽快中断(本机 kill, 远程放弃等待)。
 type ExecFunc func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error)
+
+// CollectFunc 在目标主机上执行命令并返回原始 stdout 字节(制品归档专用):
+// 本机直接捕获; 远程经 base64 文本通道传输后由实现方解码。
+// 未注入(nil)时制品收集自动跳过并记日志。
+type CollectFunc func(ctx context.Context, hostID, workspace, command string) ([]byte, error)
 
 // 默认并发与队列参数
 const (
@@ -278,12 +297,14 @@ type Engine struct {
 	pipelinesFile  *store.JSONFile
 	runsFile       *store.JSONFile
 	logDir         string
+	artDir         string // 制品归档根目录 <data>/cicd/artifacts
 	credsFile      *store.JSONFile
 	reposFile      *store.JSONFile
 	registriesFile *store.JSONFile
 	scriptsFile    *store.JSONFile
 
-	Exec ExecFunc // main.go 注入
+	Exec    ExecFunc    // main.go 注入
+	Collect CollectFunc // main.go 注入(制品归档; nil=跳过收集)
 
 	mu         sync.RWMutex
 	pipes      []*Pipeline
@@ -335,6 +356,10 @@ func NewEngine(dataDir string) (*Engine, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, err
 	}
+	artDir := filepath.Join(dir, "artifacts")
+	if err := os.MkdirAll(artDir, 0755); err != nil {
+		return nil, err
+	}
 	e := &Engine{
 		pipelinesFile:  pf,
 		runsFile:       rf,
@@ -343,6 +368,7 @@ func NewEngine(dataDir string) (*Engine, error) {
 		registriesFile: rgf,
 		scriptsFile:    sf,
 		logDir:         logDir,
+		artDir:         artDir,
 		cancelFn:       map[string]context.CancelFunc{},
 		approvals:      map[string]chan bool{},
 		sem:            make(chan struct{}, maxParallelFromEnv()),
@@ -547,6 +573,7 @@ func (e *Engine) DeletePipeline(id string) error {
 	for _, r := range e.runs {
 		if r.PipelineID == id {
 			os.Remove(e.logPath(r.ID))
+			os.RemoveAll(filepath.Join(e.artDir, r.ID))
 			continue
 		}
 		rest = append(rest, r)
@@ -884,6 +911,10 @@ overall:
 			writeLine(fmt.Sprintf("──── [步骤 %d/%d] %s → %s (exit %d, %s) ────",
 				j+1, len(defs), step.Name, spr.Status, exit, time.Duration(spr.DurationMs).Round(time.Millisecond)))
 
+			if spr.Status == StatusSuccess && len(step.Artifacts) > 0 {
+				e.collectArtifacts(ctx, run.ID, i, j, step, stage, writeLine, spr)
+			}
+
 			if failed && !step.ContinueOnFail {
 				stepStatus = StatusFailed
 				// 同阶段后续步骤全部跳过
@@ -978,6 +1009,7 @@ func (e *Engine) pruneRuns(pipelineID string) {
 		// mine 按 append 顺序即时间顺序, 裁掉最旧
 		for _, old := range mine[:len(mine)-maxN] {
 			os.Remove(e.logPath(old.ID))
+			os.RemoveAll(filepath.Join(e.artDir, old.ID))
 		}
 		mine = mine[len(mine)-maxN:]
 	}
@@ -1186,6 +1218,184 @@ func randHex(nBytes int) string {
 
 // NewSecret 生成 32 位 webhook 凭证
 func NewSecret() string { return randHex(16) }
+
+// ── 制品归档 ────────────────────────────────────────────────
+
+// 单步骤制品归档字节上限(经内存传输, 防超限)
+const artifactMaxBytes = 100 << 20
+
+// reArtifactPattern 制品路径白名单: 禁止引号/空白/shell 元字符; 允许 * ? [ ] 通配。
+// 远程侧路径会以未加引号形式交给 shell 展开(通配语义所需), 该白名单是防注入边界。
+var reArtifactPattern = regexp.MustCompile(`^[^"'\s;$&|<>()+\\` + "`" + `]{1,256}$`)
+
+// collectArtifacts 步骤成功后收集声明的制品路径, 打包 tar.gz 归档到服务端。
+// 本机: 纯 Go 归档(filepath.Glob 展开天然安全); 远程: 经 Collect 回调 tar|base64 传输。
+func (e *Engine) collectArtifacts(ctx context.Context, runID string, si, sj int, step *Step, stage *Stage, writeLine func(string), spr *StepRun) {
+	pats := make([]string, 0, len(step.Artifacts))
+	for _, a := range step.Artifacts {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if !reArtifactPattern.MatchString(a) {
+			writeLine(fmt.Sprintf("[error] 制品路径含非法字符, 跳过本次收集: %q", a))
+			return
+		}
+		pats = append(pats, a)
+	}
+	if len(pats) == 0 {
+		return
+	}
+	var (
+		data []byte
+		err  error
+	)
+	if stage.Host == "" { // 本机: 纯 Go 归档
+		data, err = tarLocal(stage.Workspace, pats)
+	} else {
+		if e.Collect == nil {
+			writeLine("[error] 制品收集回调未初始化, 跳过")
+			return
+		}
+		data, err = e.tarRemote(ctx, stage.Host, stage.Workspace, pats)
+	}
+	if err != nil {
+		writeLine("[error] 制品收集失败: " + err.Error())
+		return
+	}
+	if len(data) == 0 {
+		writeLine("[warn] 制品路径未匹配到任何文件: " + strings.Join(pats, ", "))
+		return
+	}
+	if int64(len(data)) > artifactMaxBytes {
+		writeLine(fmt.Sprintf("[error] 制品归档 %s 超过单步上限(%d MB), 未收集", humanBytes(int64(len(data))), artifactMaxBytes>>20))
+		return
+	}
+	runDir := filepath.Join(e.artDir, runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		writeLine("[error] 创建制品目录失败: " + err.Error())
+		return
+	}
+	name := fmt.Sprintf("s%d-step%d.tar.gz", si+1, sj+1)
+	if err := os.WriteFile(filepath.Join(runDir, name), data, 0644); err != nil {
+		writeLine("[error] 写入制品失败: " + err.Error())
+		return
+	}
+	art := Artifact{Step: step.Name, File: name, Size: int64(len(data)), Paths: strings.Join(pats, ", ")}
+	e.mu.Lock()
+	spr.Artifacts = append(spr.Artifacts, art)
+	e.mu.Unlock()
+	e.persistRuns()
+	writeLine(fmt.Sprintf("📦 [制品] %s → %s (%s)", art.Paths, name, humanBytes(art.Size)))
+}
+
+// tarLocal 本机制品归档: 展开通配后用 archive/tar+gzip 打包(纯 Go, 无外部依赖)。
+// v1 只收集普通文件; 目录请先自行打包成 tar.gz 再声明路径。
+func tarLocal(base string, patterns []string) ([]byte, error) {
+	if base == "" {
+		base = "."
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	n := 0
+	for _, pat := range patterns {
+		matches, err := filepath.Glob(filepath.Join(base, pat))
+		if err != nil {
+			return nil, fmt.Errorf("通配 %q 无效: %w", pat, err)
+		}
+		for _, m := range matches {
+			st, err := os.Stat(m)
+			if err != nil || st.IsDir() {
+				continue
+			}
+			rel, err := filepath.Rel(base, m)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				rel = filepath.Base(m)
+			}
+			hdr, err := tar.FileInfoHeader(st, "")
+			if err != nil {
+				return nil, err
+			}
+			hdr.Name = filepath.ToSlash(rel)
+			if err := tw.WriteHeader(hdr); err != nil {
+				return nil, err
+			}
+			f, err := os.Open(m)
+			if err != nil {
+				return nil, err
+			}
+			_, err = io.Copy(tw, f)
+			f.Close()
+			if err != nil {
+				return nil, err
+			}
+			n++
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// tarRemote 远程制品归档: 先量体积(du -sk 便携写法), 再 tar|base64 经 SSH 文本通道传输。
+func (e *Engine) tarRemote(ctx context.Context, hostID, workspace string, patterns []string) ([]byte, error) {
+	cdPart := ""
+	if workspace != "" {
+		cdPart = "cd " + shq(workspace) + " || exit 64; "
+	}
+	pats := strings.Join(patterns, " ")
+	duOut, err := e.Collect(ctx, hostID, "", cdPart+"du -sk "+pats+" 2>/dev/null | awk '{s+=$1} END {print s+0}'")
+	if err != nil {
+		return nil, err
+	}
+	if kb := parseInt(strings.TrimSpace(string(duOut))); kb > 0 {
+		if int64(kb)*1024 > artifactMaxBytes {
+			return nil, fmt.Errorf("制品总体积 %s 超过单步上限(%d MB)", humanBytes(int64(kb)*1024), artifactMaxBytes>>20)
+		}
+	}
+	b64, err := e.Collect(ctx, hostID, "", cdPart+"tar czf - "+pats+" 2>/dev/null | base64")
+	if err != nil {
+		return nil, err
+	}
+	dec, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b64)))
+	if derr != nil {
+		return nil, fmt.Errorf("制品 base64 解码失败: %w", derr)
+	}
+	return dec, nil
+}
+
+// ArtifactFile 返回制品归档绝对路径(严格校验文件名, 防目录穿越)
+var reArtifactFile = regexp.MustCompile(`^s\d+-step\d+\.tar\.gz$`)
+
+func (e *Engine) ArtifactFile(runID, file string) (string, error) {
+	if runID == "" || strings.ContainsAny(runID, "/.") || !reArtifactFile.MatchString(file) {
+		return "", errors.New("非法的制品路径")
+	}
+	p := filepath.Join(e.artDir, runID, file)
+	if _, err := os.Stat(p); err != nil {
+		return "", errors.New("制品不存在(可能已被历史清理)")
+	}
+	return p, nil
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fMB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fKB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
+}
 
 // execCall Exec 回调包装: 未注入时返回明确错误(单测场景)
 func (e *Engine) execCall(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {

@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -576,6 +577,76 @@ func CicdOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, cicdEngine.Overview())
+}
+
+// ── 制品归档 ───────────────────────────────────────────────
+
+// CicdCollect 引擎制品收集回调: 本机直接捕获 stdout 字节; 远程走 base64 文本通道
+// (命令由引擎拼好, 已含 cd/量体积/base64 后缀; 此处不重复加工)。
+func CicdCollect(ctx context.Context, hostID, workspace, command string) ([]byte, error) {
+	_ = workspace // 引擎已在 command 内处理 cd, 此参数保留以对齐回调签名
+	if IsLocalTarget(hostID) {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			return nil, errors.New("本机未找到 sh(Windows 需 Git Bash)")
+		}
+		cmd := exec.CommandContext(ctx, sh, "-c", command)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				return stdout.Bytes(), fmt.Errorf("exit %d: %s", ee.ExitCode(), firstLine(stderr.String()))
+			}
+			return nil, err
+		}
+		return stdout.Bytes(), nil
+	}
+	h := resolveAnsibleHost(hostID)
+	if h == nil {
+		return nil, fmt.Errorf("目标主机不存在: %s", hostID)
+	}
+	if remotePool == nil {
+		return nil, errors.New("远程执行池未初始化")
+	}
+	rm := resolveRemoteHost(*h)
+	out, rc, err := remotePool.ExecLine(rm, ArgsToLine([]string{"sh", "-c", command}))
+	if err != nil {
+		return nil, err
+	}
+	if rc != 0 {
+		return []byte(out), fmt.Errorf("exit %d: %s", rc, firstLine(out))
+	}
+	return []byte(out), nil
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
+}
+
+// CicdArtifactDownload 下载运行制品(GET, 支持 ?token= 认证以配合浏览器直接下载)
+func CicdArtifactDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID := r.URL.Query().Get("run")
+	file := r.URL.Query().Get("file")
+	path, err := cicdEngine.ArtifactFile(runID, file)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
+	http.ServeFile(w, r, path)
 }
 
 // ── 凭据中心 ───────────────────────────────────────────────

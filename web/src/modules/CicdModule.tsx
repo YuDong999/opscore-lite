@@ -8,7 +8,7 @@ import Card from '../components/Card'
 // ── 类型(与 internal/cicd 模型对应) ──
 interface Var { name: string; value: string; secret: boolean }
 interface Trigger { manual: boolean; webhook: boolean; secret: string; cron: string }
-interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number }
+interface Step { name: string; command: string; continueOnFail: boolean; timeoutMin: number; artifacts?: string[] }
 interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 interface Source { repoId: string; branch: string }
 interface Pipeline {
@@ -21,7 +21,8 @@ interface PipelineView extends Pipeline {
   stageCount: number
   lastRun?: Run
 }
-interface StepRun { name: string; command: string; status: string; exitCode: number; durationMs: number }
+interface Artifact { step: string; file: string; size: number; paths: string }
+interface StepRun { name: string; command: string; status: string; exitCode: number; durationMs: number; artifacts?: Artifact[] }
 interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
@@ -89,6 +90,11 @@ function fmtDur(ms: number): string {
   return `${m}m${s}s`
 }
 function fmtTime(t?: string) { return t ? new Date(t).toLocaleString() : '-' }
+function fmtSize(n: number): string {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)}KB`
+  return `${n}B`
+}
 
 // 进度条(usage-bar/usage-fill 为项目既有样式)
 function ProgressBar({ value, status }: { value: number; status: string }) {
@@ -493,6 +499,14 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
                   value={sp.command} placeholder="shell 命令, 如: make build"
                   onChange={e => setStep(si, i, { command: e.target.value })}
                 />
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+                  <span className="small dim" style={{ whiteSpace: 'nowrap' }}>📦 制品:</span>
+                  <input
+                    className="input" value={(sp.artifacts || []).join(', ')}
+                    placeholder="构建产物路径, 逗号分隔, 支持 * 通配; 步骤成功后自动归档到服务端可下载"
+                    onChange={e => setStep(si, i, { artifacts: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })}
+                  />
+                </div>
               </div>
             ))}
             <button className="btn btn-sm" onClick={() => setStage(si, { steps: [...st.steps, { name: `步骤 ${st.steps.length + 1}`, command: '', continueOnFail: false, timeoutMin: 0 }] })}>+ 添加步骤</button>
@@ -768,7 +782,22 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                         <span className="mono small dim">{String(j + 1).padStart(2, '0')}</span>{' '}
                         <b>{sp.name}</b>
                       </td>
-                      <td><span className={`badge ${badgeCls(sp.status)}`}>{badgeText(sp.status)}</span></td>
+                      <td>
+                        <span className={`badge ${badgeCls(sp.status)}`}>{badgeText(sp.status)}</span>
+                        {sp.artifacts && sp.artifacts.length > 0 && (
+                          <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {sp.artifacts.map(a => (
+                              <button
+                                key={a.file} className="btn btn-sm" title={`${a.paths} · 点击下载 ${a.file}`}
+                                onClick={() => {
+                                  const t = localStorage.getItem('opscore-token')
+                                  window.open(`/api/cicd/artifact/download?run=${run.id}&file=${a.file}${t ? `&token=${encodeURIComponent(t)}` : ''}`)
+                                }}
+                              >📦 {fmtSize(a.size)}</button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="small dim">exit {sp.status === 'pending' ? '-' : sp.exitCode}</td>
                       <td className="small dim">{fmtDur(sp.durationMs)}</td>
                     </tr>

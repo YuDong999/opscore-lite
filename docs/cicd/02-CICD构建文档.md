@@ -21,7 +21,7 @@
                ▼
 ┌────────────────────────── Go Server ───────────────────────────────────┐
 │  main.go registerCoreModules                                           │
-│    └─ modCfg{ man("cicd",...), routes[27 条] }   # 与其他 core 模块一致   │
+│    └─ modCfg{ man("cicd",...), routes[28 条] }   # 与其他 core 模块一致   │
 │                                                                        │
 │  internal/handlers/cicd.go        # HTTP 层: 参数校验/白名单/分发          │
 │    └─ internal/cicd (Engine)      # 引擎: 队列/并发/状态机/持久化/触发器    │
@@ -100,6 +100,15 @@ Stage: pending → (approval? waiting → running) → success | failed | skippe
 Step:  pending → running → success | failed | skipped | canceled
 ```
 
+### 3.3.2 制品归档(v2.2)
+
+Step 增加 `Artifacts []string`(制品路径, 相对工作目录, 支持 `* ? [ ]` 通配): 步骤**成功后**自动收集打包为 tar.gz 存 `data/cicd/artifacts/<runID>/s<i>-step<j>.tar.gz`, 运行详情中可下载(StepRun.Artifacts 记录 step/file/size/paths)。
+
+- **本机**: 纯 Go 归档(archive/tar+gzip, filepath.Glob 展开, 只收集普通文件);
+- **远程**: 经 Collect 回调执行 `du -sk`(先量体积) + `tar czf - <paths> | base64` 文本通道传输, 引擎解码落盘; 单步归档上限 100MB(超限明确报错不收集);
+- **白名单防注入**: 制品路径正则禁止引号/空白/`; $ & | < > \` 等元字符(通配符需要 shell 展开, 白名单即边界); 下载端点对 runID(禁 `/` `.`)与文件名(`s\d+-step\d+\.tar\.gz`)严格校验防目录穿越;
+- **清理**: 删除流水线与历史裁剪时同步删除制品目录。
+
 ### 3.3.1 阶段审批门禁(v2.1)
 
 Stage 增加 `Approval bool`: 开启后该阶段执行前暂停在 `waiting`, 由人工在运行详情中批准或拒绝(POST /api/cicd/run/approve):
@@ -161,7 +170,8 @@ Trigger(校验/解析) → Run{queued} 落盘 → 队列 → 信号量(默认2) 
 | POST | /api/cicd/pipeline/delete | 删除(运行中 409) |
 | POST | /api/cicd/pipeline/run | 手动触发 |
 | POST | /api/cicd/run/cancel | 取消运行 |
-| POST | /api/cicd/run/approve | 审批等待中的阶段(approve=true 放行/false 拒绝) |
+| POST | /api/cicd/run/approve | 审批等待中的阶段(approve=true 放行/false 拒则) |
+| GET | /api/cicd/artifact/download | 下载运行制品(?run=&file=, 支持 ?token= 认证) |
 | GET | /api/cicd/runs | 运行历史(?pipeline=&limit=) |
 | GET | /api/cicd/run/get | 运行详情(含 progress) |
 | GET | /api/cicd/run/log | 日志回填(?id=&offset=) |
@@ -205,7 +215,7 @@ CicdModule
 | 文件 | 改动 |
 |---|---|
 | internal/cicd/engine.go / cron.go / creds.go / cron_test.go | 新增: 引擎+触发器+资源层 |
-| internal/handlers/cicd.go | 新增: 27 个 handler + CicdExec 执行回调 |
+| internal/handlers/cicd.go | 新增: 28 个 handler + CicdExec 执行回调 |
 | main.go | 引擎初始化+Exec 注入+26 条路由注册+defer Stop |
 | internal/module/manifest.go | coreModules 增加 cicd 条目 |
 | web/src/modules/CicdModule.tsx | 新增: 模块页面(5 tabs) |

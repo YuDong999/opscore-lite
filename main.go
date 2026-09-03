@@ -110,6 +110,7 @@ func main() {
 		log.Fatalf("init cicd engine: %v", err)
 	}
 	cicdEngine.Exec = handlers.CicdExec
+	cicdEngine.Collect = handlers.CicdCollect
 	handlers.InitCicd(cicdEngine)
 	defer cicdEngine.Stop()
 
@@ -440,6 +441,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/pipeline/run", Handler: handlers.CicdPipelineRun},
 			{Path: "/api/cicd/run/cancel", Handler: handlers.CicdRunCancel},
 			{Path: "/api/cicd/run/approve", Handler: handlers.CicdRunApprove},
+			{Path: "/api/cicd/artifact/download", Handler: handlers.CicdArtifactDownload},
 			{Path: "/api/cicd/runs", Handler: handlers.CicdRuns},
 			{Path: "/api/cicd/run/get", Handler: handlers.CicdRunGet},
 			{Path: "/api/cicd/run/log", Handler: handlers.CicdRunLog},

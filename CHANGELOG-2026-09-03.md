@@ -57,3 +57,12 @@
 - 引擎: 审批等待期间让出全局并发槽位(runWithSlot 统一管理槽位, 净变化为零), 等待不阻塞其他流水线; 拒绝 → 阶段 canceled + 后续 skipped + 运行 canceled; 等待中取消运行等效拒绝; 无超时限制。
 - 前端: 编辑器阶段卡"执行前需审批"开关; 运行详情 waiting 阶段高亮 + 批准/拒绝按钮; 状态徽标新增"等待审批"。
 - 单测: 批准放行/拒绝跳过/等待中取消/无门禁报错 四条路径(approval_test.go)。
+
+---
+
+## 六、v2.2: 制品收集与下载(feat/cicd 分支)
+
+- Step 新增 `artifacts` 制品路径声明(逗号分隔, 支持 * ? [ ] 通配): 步骤成功后自动归档 tar.gz 到 `data/cicd/artifacts/<runID>/`, 运行详情步骤行 📦 按钮一键下载(`/api/cicd/artifact/download`, 支持 ?token=)。
+- 本机纯 Go 归档(archive/tar+gzip); 远程经 Collect 回调 `du` 预检 + `tar|base64` 文本通道; 单步上限 100MB; 未匹配/超限仅记日志不影响运行结果。
+- 安全: 制品路径白名单(禁 shell 元字符, 通配展开的注入边界); 下载端点 runID/文件名严格校验防目录穿越; 删除流水线与历史裁剪同步清理制品。
+- 单测: 通配归档内容/无匹配返回 nil/路径白名单/下载路径安全(artifact_test.go); 端到端冒烟: 本机 dist/* 收集 → 下载合法 gzip → 穿越请求 404。
