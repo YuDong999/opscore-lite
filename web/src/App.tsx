@@ -176,6 +176,9 @@ export default function App() {
               const Comp = MODULE_MAP[m.id]
               return Comp ? <Route key={m.id} path={m.routePath} element={<Comp />} /> : null
             })}
+            {/* 旧版容器管理深链接兼容(routePath 已改为 /containers, 老书签仍指 /containers/docker|k8s) */}
+            <Route path="/containers/docker" element={<Navigate to="/containers" replace />} />
+            <Route path="/containers/k8s" element={<Navigate to="/containers" replace />} />
             <Route path="/settings" element={<SettingsModule />} />
             <Route path="*" element={modules.length === 0 ? <div className="log-loading">加载中...</div> : <Navigate to="/resources" replace />} />
           </Routes>

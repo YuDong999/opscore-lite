@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
-  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus,
+  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal,
 } from 'lucide-react'
 import {
   API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
@@ -374,6 +374,11 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                         <StatusBadge status={p.lastRun.status} />
                         <span className="text-xs text-muted-foreground">{fmtTime(p.lastRun.startedAt)}</span>
                         <span className="text-xs text-muted-foreground tabular-nums">{fmtDur(p.lastRun.durationMs)}</span>
+                        {p.lastRun.commit && (
+                          <span className="text-xs text-muted-foreground font-mono truncate max-w-52" title={p.lastRun.commit}>
+                            <GitCommitHorizontal className="inline size-3.5 mr-0.5 -mt-0.5" />{p.lastRun.commit}
+                          </span>
+                        )}
                       </div>
                     ) : <span className="text-xs text-muted-foreground">从未运行</span>}
                   </TableCell>
@@ -880,6 +885,11 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
         <div className="rounded-lg border bg-background/60 px-4 py-2">
           <StageFlow stages={run.stages} now={now} />
         </div>
+        {run.commit && (
+          <div className="text-xs text-muted-foreground font-mono truncate" title={run.commit}>
+            <GitCommitHorizontal className="inline size-3.5 mr-1 -mt-0.5" />{run.commit}
+          </div>
+        )}
 
         {run.error && <ErrBanner msg={run.error} />}
         <ErrBanner msg={err} onClose={() => setErr('')} />

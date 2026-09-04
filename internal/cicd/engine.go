@@ -143,6 +143,7 @@ type Run struct {
 	Pipeline   string     `json:"pipeline"`
 	Trigger    string     `json:"trigger"`
 	Status     string     `json:"status"`
+	Commit     string     `json:"commit,omitempty"` // 拉取代码步骤捕获的 git commit(hash+标题)
 	Canceling  bool       `json:"canceling,omitempty"`
 	Progress   int        `json:"progress"` // 完成步骤占比(读取时计算)
 	Stages     []StageRun `json:"stages"`
@@ -277,9 +278,13 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 	return rt, nil
 }
 
+// commitMarkerPrefix 拉取代码步骤输出的 commit 标记行前缀, 引擎捕获后写入 Run.Commit
+const commitMarkerPrefix = "@@CICD_COMMIT@@"
+
 // cloneCommand 首阶段自动拉取代码: 已有仓库则重置到远端分支, 否则浅克隆。
 // 安全护栏: 仅当目录内 .git 的远端与目标仓库同名(按仓库名比对, 忽略协议差异)时
 // 才允许 fetch/reset/clean; 否则报错退出 —— 杜绝在无关目录(如服务器工作目录)里重置。
+// 末尾输出 @@CICD_COMMIT@@<hash 标题> 标记行, 供引擎捕获展示。
 func cloneCommand(url, branch string, cred *Credential) string {
 	auth := gitAuthURL(url, cred)
 	name := repoName(url)
@@ -287,9 +292,18 @@ func cloneCommand(url, branch string, cred *Credential) string {
 		"if [ -d .git ]; then R=$(git remote get-url origin 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
 			"if [ \"$R\" != %s ]; then echo \"工作目录是其他仓库($R), 拒绝重置\"; exit 64; fi; "+
 			"git fetch origin %s && git reset --hard origin/%s && git clean -fd; "+
-			"else git clone --depth 1 -b %s %s .; fi",
-		shq(name), shq(branch), shq(branch), shq(branch), shq(auth),
+			"else git clone --depth 1 -b %s %s .; fi; "+
+			"printf '%s%%s\\n' \"$(git log -1 --format='%%h %%s' 2>/dev/null)\"",
+		shq(name), shq(branch), shq(branch), shq(branch), shq(auth), commitMarkerPrefix,
 	)
+}
+
+// parseCommitMarker 从步骤输出行提取 commit 信息(非标记行返回空)
+func parseCommitMarker(line string) string {
+	if strings.HasPrefix(line, commitMarkerPrefix) {
+		return strings.TrimSpace(strings.TrimPrefix(line, commitMarkerPrefix))
+	}
+	return ""
 }
 
 // repoName 从仓库地址提取仓库名(忽略协议与 .git 后缀)
@@ -913,11 +927,24 @@ overall:
 				}
 			}
 			if execErr == nil {
+				stepOnLine := writeLine
+				// 拉取代码步骤: 从输出中捕获 @@CICD_COMMIT@@ 标记写入运行记录
+				if i == 0 && rt.clone != nil && j == 0 {
+					stepOnLine = func(line string) {
+						if c := parseCommitMarker(line); c != "" {
+							e.mu.Lock()
+							run.Commit = c
+							e.mu.Unlock()
+							e.persistRuns()
+						}
+						writeLine(line)
+					}
+				}
 				stepCtx, stepCancel := context.WithCancel(ctx)
 				if step.TimeoutMin > 0 {
 					stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMin)*time.Minute)
 				}
-				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stepEnv, writeLine)
+				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stepEnv, stepOnLine)
 				stepCancel()
 			} else {
 				exit = -1

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"os/exec"
 	"testing"
 )
 
@@ -134,4 +135,87 @@ func readTarNames(t *testing.T, data []byte) []string {
 		out = append(out, hdr.Name)
 	}
 	return out
+}
+
+// TestParseCommitMarker commit 标记行解析
+func TestParseCommitMarker(t *testing.T) {
+	if c := parseCommitMarker("@@CICD_COMMIT@@a1b2c3d 修复登录页"); c != "a1b2c3d 修复登录页" {
+		t.Errorf("标记行应提取 commit, 实际 %q", c)
+	}
+	if c := parseCommitMarker("普通日志输出"); c != "" {
+		t.Errorf("非标记行应返回空, 实际 %q", c)
+	}
+	if c := parseCommitMarker("@@CICD_COMMIT@@  "); c != "" {
+		t.Errorf("空 commit 应清理为空, 实际 %q", c)
+	}
+}
+
+// TestCloneCommandCommitMarker clone 命令必须包含 commit 标记输出
+func TestCloneCommandCommitMarker(t *testing.T) {
+	cmd := cloneCommand("https://git.example.com/team/app.git", "main", nil)
+	if !strings.Contains(cmd, commitMarkerPrefix) {
+		t.Error("clone 命令应包含 commit 标记输出")
+	}
+	if !strings.Contains(cmd, "git log -1 --format='%h %s'") {
+		t.Errorf("clone 命令应含 git log 格式化: %s", cmd)
+	}
+}
+
+// TestCommitCapture 真实执行: 本机 git 仓库拉取后 Run.Commit 应被捕获
+func TestCommitCapture(t *testing.T) {
+	e := newTestEngine(t)
+	// 建一个真实 git 仓库作为拉取目标
+	ws := t.TempDir()
+	gitDir := t.TempDir()
+	run := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = gitDir
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	// 文件名用仓库名 app(护栏按远端名比对)
+	ws = filepath.Join(ws, "app")
+	os.MkdirAll(ws, 0755)
+	run("init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(ws, "f.txt"), []byte("v1"), 0644)
+	run("add", ".")
+	run("commit", "-q", "-m", "初始提交")
+	run("remote", "add", "origin", "https://git.example.com/team/app.git")
+
+	e.Exec = func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
+		sh, _ := exec.LookPath("sh")
+		cmd := exec.CommandContext(ctx, sh, "-c", command)
+		cmd.Dir = workspace
+		out, _ := cmd.CombinedOutput()
+		for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			onLine(l)
+		}
+		return 0, nil
+	}
+
+	p := &Pipeline{Name: "commit-capture", Trigger: Trigger{Manual: true},
+		Source: Source{RepoID: "repo-x", Branch: "main"},
+		Stages: []Stage{{Name: "构建", Host: "", Workspace: ws, Steps: []Step{{Name: "拉取", Command: "true"}}}},
+		MaxRuns: 10}
+	if err := e.SavePipeline(p); err != nil {
+		t.Fatalf("SavePipeline: %v", err)
+	}
+	e.repos = append(e.repos, &Repo{ID: "repo-x", Name: "app", URL: "https://git.example.com/team/app.git", DefaultBranch: "main"})
+
+	r, err := e.Trigger(p.ID, TriggerManual)
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	waitCond(t, "运行成功", func() bool {
+		r2, _ := e.GetRun(r.ID)
+		return r2.Status == StatusSuccess
+	})
+	r2, _ := e.GetRun(r.ID)
+	if r2.Commit == "" {
+		t.Error("运行成功后 Run.Commit 应被捕获")
+	} else if !strings.Contains(r2.Commit, "初始提交") {
+		t.Errorf("Commit 应包含提交标题, 实际 %q", r2.Commit)
+	}
 }

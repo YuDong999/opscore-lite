@@ -77,6 +77,7 @@ export interface StepRun { name: string; command: string; status: string; exitCo
 export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
+  commit?: string
   canceling?: boolean; progress: number; stages: StageRun[]; startedAt?: string; finishedAt?: string
   durationMs: number; error?: string
 }
