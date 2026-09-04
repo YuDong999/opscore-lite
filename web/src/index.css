@@ -8,8 +8,10 @@
 @import "tailwindcss/utilities.css" layer(utilities);
 @import "tw-animate-css";
 
-*, ::before, ::after {
-  border: 0 solid;
+@layer base {
+  *, ::before, ::after {
+    border: 0 solid;
+  }
 }
 
 :root {

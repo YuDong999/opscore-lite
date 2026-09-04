@@ -1284,8 +1284,8 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   }
 
   return (
-    <Card className="mb-4">
-      <CardHeader className="pb-3">
+    <Card className="h-full">
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle>Stage View</CardTitle>
           <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="选择流水线"
@@ -1317,9 +1317,8 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
                 {runs.map((r, ri) => (
                   <TableRow key={r.id}>
                     <TableCell className="sticky left-0 bg-card z-10">
-                      <button className="text-left hover:text-accent" onClick={() => onOpenRun(r.id)}>
-                        <div className="text-xs font-semibold tabular-nums">#{runs.length - ri}</div>
-                        <div className="text-[10px] text-muted-foreground">{fmtTime(r.startedAt)}</div>
+                      <button className="text-left hover:text-accent leading-tight" onClick={() => onOpenRun(r.id)}>
+                        <div className="text-xs font-semibold tabular-nums">#{runs.length - ri} <span className="font-normal text-muted-foreground">{new Date(r.startedAt || '').toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
                       </button>
                     </TableCell>
                     {cols.map((c, i) => {
@@ -1757,22 +1756,26 @@ function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) =
   ]
   return (
     <div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {stats.map(s => (
-          <Card key={s.label}>
-            <CardContent className="pt-4">
-              <div className="text-xs text-muted-foreground">{s.label}</div>
-              <div className={cn('text-3xl font-bold tabular-nums', s.warn && 'text-warn')}>{s.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      {(data.waitingApproval ?? 0) > 0 && (
-        <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 mb-4 text-sm">
-          ⏸ 有 {data.waitingApproval} 个运行正在等待人工审批 —— 请到「运行历史」打开详情批准或拒绝
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+        <div className="lg:col-span-3 flex lg:flex-col gap-3 flex-wrap">
+          {stats.map(s => (
+            <Card key={s.label} className="flex-1 min-w-32 lg:min-w-0">
+              <CardContent className="pt-3 pb-3">
+                <div className="text-xs text-muted-foreground">{s.label}</div>
+                <div className={cn('text-2xl font-bold tabular-nums', s.warn && 'text-warn')}>{s.value}</div>
+              </CardContent>
+            </Card>
+          ))}
+          {(data.waitingApproval ?? 0) > 0 && (
+            <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs flex-1 min-w-32 lg:min-w-0 self-stretch flex items-center">
+              ⏸ {data.waitingApproval} 个运行待审批 —— 「运行历史」中批准
+            </div>
+          )}
         </div>
-      )}
-      <StageViewCard onOpenRun={onOpenRun} />
+        <div className="lg:col-span-9 min-w-0">
+          <StageViewCard onOpenRun={onOpenRun} />
+        </div>
+      </div>
       <Card>
         <CardHeader className="pb-3"><CardTitle>最近运行</CardTitle></CardHeader>
         <CardContent>
