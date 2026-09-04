@@ -144,6 +144,7 @@ type Run struct {
 	Trigger    string     `json:"trigger"`
 	Status     string     `json:"status"`
 	Commit     string     `json:"commit,omitempty"` // 拉取代码步骤捕获的 git commit(hash+标题)
+	Branch     string     `json:"branch,omitempty"` // 本次运行所用分支(重跑用)
 	Canceling  bool       `json:"canceling,omitempty"`
 	Progress   int        `json:"progress"` // 完成步骤占比(读取时计算)
 	Stages     []StageRun `json:"stages"`
@@ -199,8 +200,9 @@ type runRequest struct {
 
 // runtimeCtx 触发时解析的运行时资源(不落盘): 注入环境/克隆步骤/kubeconfig
 type runtimeCtx struct {
-	env      []Var // 内置变量 + 凭据注入 + 用户变量(用户可覆盖)
-	clone    *Step // 首阶段自动插入的拉取代码步骤(nil=无)
+	env      []Var  // 内置变量 + 凭据注入 + 用户变量(用户可覆盖)
+	Branch   string // 本次运行生效的代码分支(覆盖值>流水线配置>仓库默认)
+	clone    *Step  // 首阶段自动插入的拉取代码步骤(nil=无)
 	kubeB64  string
 	kubePath string // 目标主机上的 kubeconfig 临时路径
 }
@@ -240,6 +242,7 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride str
 			if branch == "" {
 				branch = repo.DefaultBranch
 			}
+			rt.Branch = branch
 			env = append(env,
 				Var{Name: "CICD_BRANCH", Value: branch},
 				Var{Name: "CICD_REPO_URL", Value: repo.URL},
@@ -672,6 +675,7 @@ func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run
 		return nil, err
 	}
 	run := newRun(&snap, trigger, rt)
+	run.Branch = rt.Branch
 	run.Progress = 0
 	for i := range rt.env {
 		switch rt.env[i].Name {
@@ -693,6 +697,26 @@ func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run
 		return nil, errors.New("执行队列已满, 请稍后重试")
 	}
 	return run, nil
+}
+
+// DeleteRun 删除单条历史运行(含日志与制品); 进行中的运行须先取消
+func (e *Engine) DeleteRun(runID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i, r := range e.runs {
+		if r.ID != runID {
+			continue
+		}
+		if r.Status == StatusQueued || r.Status == StatusRunning {
+			return errors.New("运行进行中, 请先取消再删除")
+		}
+		os.Remove(e.logPath(runID))
+		os.RemoveAll(filepath.Join(e.artDir, runID))
+		e.runs = append(e.runs[:i], e.runs[i+1:]...)
+		e.persistRunsLocked()
+		return nil
+	}
+	return fmt.Errorf("运行不存在: %s", runID)
 }
 
 // Cancel 取消运行: 排队中直接置 canceled; 运行中通知执行 goroutine
@@ -1362,11 +1386,17 @@ func (e *Engine) Overview() map[string]any {
 			}
 		}
 	}
-	recent := make([]Run, 0, 10)
-	for i := len(e.runs) - 1; i >= 0 && len(recent) < 10; i-- {
-		r := *e.runs[i]
-		r.Progress = runProgress(&r)
-		recent = append(recent, r)
+	var recent, trend []Run
+	for i := len(e.runs) - 1; i >= 0 && len(trend) < 30; i-- {
+		c := *e.runs[i]
+		c.Progress = runProgress(&c)
+		trend = append(trend, c) // 旧→新(趋势图用)
+		if len(recent) < 10 {
+			recent = append(recent, c) // 新→旧(最近运行)
+		}
+	}
+	for i, j := 0, len(trend)-1; i < j; i, j = i+1, j-1 { // trend 反转为旧→新
+		trend[i], trend[j] = trend[j], trend[i]
 	}
 	return map[string]any{
 		"pipelines":       len(e.pipes),
@@ -1376,6 +1406,7 @@ func (e *Engine) Overview() map[string]any {
 		"success24h":      ok24,
 		"failed24h":       fail24,
 		"recentRuns":      recent,
+		"trendRuns":       trend,
 	}
 }
 

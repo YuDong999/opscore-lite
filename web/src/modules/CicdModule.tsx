@@ -243,7 +243,7 @@ export default function CicdModule() {
         <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} /></TabsContent>
       </Tabs>
 
-      {detailRunId && <RunDetail runId={detailRunId} onClose={() => setDetailRunId('')} />}
+      {detailRunId && <RunDetail runId={detailRunId} onChanged={loadOverview} onClose={() => setDetailRunId('')} />}
     </div>
   )
 }
@@ -453,7 +453,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
       {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
-      {detailRun && <RunDetail runId={detailRun} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
+      {detailRun && <RunDetail runId={detailRun} onChanged={() => { reload(); onChanged() }} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
     </div>
   )
 }
@@ -764,6 +764,33 @@ function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onC
   )
 }
 
+// ==================== 编辑流水线弹窗(从运行详情进入) ====================
+
+function EditPipelineDialog({ pipelineId, onClose }: { pipelineId: string; onClose: () => void }) {
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    fetch(`${API.pipelineGet}?id=${pipelineId}`)
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+      .then(setPipeline)
+      .catch(e => setErr(e.message))
+  }, [pipelineId])
+
+  if (err) {
+    return (
+      <Dialog open onOpenChange={o => !o && onClose()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>编辑流水线</DialogTitle></DialogHeader>
+          <ErrBanner msg={err} onClose={onClose} />
+          <DialogFooter><Button variant="outline" onClick={onClose}>关闭</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+  if (!pipeline) return null
+  return <PipelineEditor value={pipeline} onClose={onClose} onSaved={onClose} />
+}
+
 // ==================== Webhook 弹窗 ====================
 
 function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
@@ -871,6 +898,14 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
                       {(r.status === 'running' || r.status === 'queued') && (
                         <Button variant="destructive" size="sm" disabled={!!busy} onClick={() => cancel(r)}>取消</Button>
                       )}
+                      {r.status !== 'running' && r.status !== 'queued' && (
+                        <Button variant="outline" size="icon" className="size-8 text-destructive" title="删除记录"
+                          onClick={async () => {
+                            if (!(await confirm('删除这条运行记录？', { desc: '日志与制品将一并删除。', danger: true, okText: '删除' }))) return
+                            setBusy(r.id)
+                            try { await postJSON(API.runDelete, { runId: r.id }); reload(); onChanged() } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+                          }}><Trash2 /></Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -885,8 +920,11 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
 
 // ==================== 运行详情(SSE 实时日志) ====================
 
-function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
+function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () => void; onChanged?: () => void }) {
   const [run, setRun] = useState<Run | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
   const [lines, setLines] = useState<string[]>([])
   const [err, setErr] = useState('')
   const logRef = useRef<HTMLDivElement>(null)
@@ -967,6 +1005,21 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
   const cancel = () => {
     postJSON(API.runCancel, { runId }).catch(e => setErr(e.message))
   }
+  const rerun = async () => {
+    setBusy('rerun')
+    try {
+      await postJSON(API.pipelineRun, { id: run!.pipelineId, branch: run!.branch || '' })
+      setErr(''); onChanged?.(); onClose()
+    } catch (e: any) { setErr('重新执行失败: ' + e.message) } finally { setBusy('') }
+  }
+  const removeRun = async () => {
+    if (!(await confirm('删除这条运行记录？', { desc: '日志与制品将一并删除。', danger: true, okText: '删除' }))) return
+    setBusy('del')
+    try {
+      await postJSON(API.runDelete, { runId })
+      setErr(''); onChanged?.(); onClose()
+    } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+  }
 
   // 点击节点流中的步骤 → 日志滚动到该步骤的起始位置
   const scrollToStep = (si: number, j: number, name: string) => {
@@ -991,12 +1044,26 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
     <Dialog open onOpenChange={o => !o && onClose()}>
       <DialogContent className="sm:max-w-6xl h-[92vh] flex flex-col overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
-          <DialogTitle className="flex items-center gap-2 flex-wrap">
-            {run.pipeline}
-            <StatusBadge status={run.status} suffix={run.status === 'running' && run.canceling ? '(取消中)' : undefined} />
-          </DialogTitle>
-          <div className="text-xs text-muted-foreground font-normal tabular-nums">
-            {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)} · {run.id}
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <DialogTitle className="flex items-center gap-2 flex-wrap">
+                {run.pipeline}
+                <StatusBadge status={run.status} suffix={run.status === 'running' && run.canceling ? '(取消中)' : undefined} />
+              </DialogTitle>
+              <div className="text-xs text-muted-foreground font-normal tabular-nums mt-0.5">
+                {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)}{run.branch ? ` · ${run.branch}` : ''} · {run.id}
+              </div>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <Button variant="outline" size="sm" disabled={busy !== ''} title="以本次运行相同分支重新执行"
+                onClick={rerun}><RefreshCw />重新执行</Button>
+              <Button variant="outline" size="sm" title="编辑流水线定义, 保存后可重新执行"
+                onClick={() => setEditOpen(true)}><Pencil />编辑</Button>
+              {run.status !== 'running' && run.status !== 'queued' && (
+                <Button variant="outline" size="sm" disabled={busy !== ''} title="删除本条记录(含日志与制品)"
+                  onClick={removeRun}><Trash2 />删除</Button>
+              )}
+            </div>
           </div>
         </DialogHeader>
 
@@ -1088,6 +1155,9 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
           {active && <Button variant="destructive" onClick={cancel}>取消运行</Button>}
           <Button variant="outline" onClick={onClose}>关闭</Button>
         </DialogFooter>
+
+        {editOpen && <EditPipelineDialog pipelineId={run.pipelineId} onClose={() => setEditOpen(false)} />}
+        {confirmEl}
       </DialogContent>
     </Dialog>
   )
@@ -1483,6 +1553,29 @@ function CredentialsTab() {
   )
 }
 
+// TrendChart 构建趋势: 每次运行一根竖柱(高度∝耗时, 颜色=状态), 悬停看详情, 点击打开
+function TrendChart({ runs, onOpenRun }: { runs: Run[]; onOpenRun: (id: string) => void }) {
+  if (runs.length === 0) return <div className="text-sm text-muted-foreground py-4">暂无运行数据</div>
+  const maxDur = Math.max(...runs.map(r => r.durationMs || 0), 1)
+  const colorOf = (s: string) => s === 'success' ? 'var(--ok)' : s === 'failed' ? 'var(--danger)' : s === 'canceled' ? 'var(--text-dim)' : 'var(--accent)'
+  return (
+    <div className="flex items-end gap-1 h-24 overflow-x-auto">
+      {runs.map(r => (
+        <button
+          key={r.id}
+          className="flex flex-col items-center justify-end h-full min-w-4 flex-1 group"
+          title={`${r.pipeline}
+${fmtTime(r.startedAt)} · ${statusText(r.status)} · ${fmtDur(r.durationMs)}`}
+          onClick={() => onOpenRun(r.id)}
+        >
+          <span className="w-full rounded-t transition-opacity group-hover:opacity-80"
+            style={{ height: `${Math.max(6, ((r.durationMs || 0) / maxDur) * 100)}%`, background: colorOf(r.status) }} />
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ==================== 概览 Tab ====================
 
 function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) => void }) {
@@ -1510,6 +1603,11 @@ function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) =
           ⏸ 有 {data.waitingApproval} 个运行正在等待人工审批 —— 请到「运行历史」打开详情批准或拒绝
         </div>
       )}
+      <Card title="构建趋势(最近 30 次)" className="mb-4">
+        <CardContent>
+          <TrendChart runs={data.trendRuns || []} onOpenRun={onOpenRun} />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader className="pb-3"><CardTitle>最近运行</CardTitle></CardHeader>
         <CardContent>

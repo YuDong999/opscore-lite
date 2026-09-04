@@ -26,6 +26,7 @@ export const API = {
   runLog: '/api/cicd/run/log',
   runStream: '/api/cicd/run/stream',
   runApprove: '/api/cicd/run/approve',
+  runDelete: '/api/cicd/run/delete',
   runs: '/api/cicd/runs',
   overview: '/api/cicd/overview',
   webhook: (id: string) => `/api/cicd/webhook/${id}`,
@@ -77,7 +78,7 @@ export interface StepRun { name: string; command: string; status: string; exitCo
 export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
-  commit?: string
+  commit?: string; branch?: string
   canceling?: boolean; progress: number; stages: StageRun[]; startedAt?: string; finishedAt?: string
   durationMs: number; error?: string
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestTriggerBranchOverride 运行时分支覆盖 → CICD_BRANCH 应使用覆盖值
@@ -101,4 +102,74 @@ func TestRunDefaultBranchFallback(t *testing.T) {
 	}
 	_ = os.Getenv
 	_ = filepath.Join
+}
+
+// TestRunBranchRecorded 运行应记录所用分支(重新执行用)
+func TestRunBranchRecorded(t *testing.T) {
+	e := newTestEngine(t)
+	ws := t.TempDir()
+	e.Exec = func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
+		return 0, nil
+	}
+	p := &Pipeline{Name: "branch-record", Trigger: Trigger{Manual: true},
+		Source: Source{RepoID: "repo-x", Branch: "dev"},
+		Stages: []Stage{{Name: "a", Host: "", Workspace: ws, Steps: []Step{{Name: "s", Command: "true"}}}},
+		MaxRuns: 10}
+	e.SavePipeline(p)
+	e.repos = append(e.repos, &Repo{ID: "repo-x", Name: "app", URL: "https://git.example.com/team/app.git", DefaultBranch: "master"})
+
+	r, _ := e.TriggerBranch(p.ID, TriggerManual, "release-1")
+	waitCond(t, "成功", func() bool {
+		r, _ := e.GetRun(r.ID)
+		return r.Status == StatusSuccess
+	})
+	r2, _ := e.GetRun(r.ID)
+	if r2.Branch != "release-1" {
+		t.Errorf("Run.Branch 应记录覆盖分支, 实际 %q", r2.Branch)
+	}
+}
+
+// TestDeleteRun 单条运行删除(含日志制品), 进行中拒绝
+func TestDeleteRun(t *testing.T) {
+	e := newTestEngine(t)
+	ws := t.TempDir()
+	e.Exec = func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
+		time.Sleep(3 * time.Second) // 长任务, 给删除测试制造 running 窗口
+		return 0, nil
+	}
+	p := &Pipeline{Name: "del-flow", Trigger: Trigger{Manual: true},
+		Stages: []Stage{{Name: "a", Host: "", Workspace: ws, Steps: []Step{{Name: "s", Command: "sleep 3"}}}},
+		MaxRuns: 10}
+	e.SavePipeline(p)
+
+	// 成功运行 → 删除成功
+	r1, _ := e.Trigger(p.ID, TriggerManual)
+	waitCond(t, "r1 成功", func() bool {
+		r, _ := e.GetRun(r1.ID)
+		return r.Status == StatusSuccess
+	})
+	if err := e.DeleteRun(r1.ID); err != nil {
+		t.Fatalf("DeleteRun: %v", err)
+	}
+	if _, ok := e.GetRun(r1.ID); ok {
+		t.Error("删除后不应再能查到")
+	}
+
+	// 进行中 → 拒绝
+	r2, _ := e.Trigger(p.ID, TriggerManual)
+	waitCond(t, "r2 运行中", func() bool {
+		r, _ := e.GetRun(r2.ID)
+		return r.Status == StatusRunning
+	})
+	if err := e.DeleteRun(r2.ID); err == nil {
+		t.Error("进行中的运行应拒绝删除")
+	}
+	e.Cancel(r2.ID)
+	waitCond(t, "取消完成", func() bool {
+		r, _ := e.GetRun(r2.ID)
+		return r.Status == StatusCanceled
+	})
+	if err := e.DeleteRun(r2.ID); err != nil {
+		t.Errorf("取消后应可删除: %v", err)
+	}
 }
