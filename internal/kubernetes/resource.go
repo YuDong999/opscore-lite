@@ -134,14 +134,24 @@ func nsFor(ns, res string) string {
 
 // ListResources 列出集群指定资源(精简行)。ns 为空表示全部命名空间。
 func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) ([]map[string]any, error) {
-	if !ValidResource(res) {
-		return nil, fmt.Errorf("unsupported resource %q", res)
+	// 优先: 内置 switch fast path; 失败回落 ResolveGVR (覆盖 CRD 短名)
+	gvr := gvrOf(res)
+	effectiveNs := nsFor(ns, res)
+	if gvr.Empty() {
+		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+		if err != nil {
+			return nil, fmt.Errorf("unsupported resource %q", res)
+		}
+		gvr = crdGVR
+		if scope == ScopeCluster {
+			effectiveNs = ""
+		}
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return nil, err
 	}
-	list, err := dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).List(ctx, metav1.ListOptions{})
+	list, err := dyn.Resource(gvr).Namespace(effectiveNs).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list %s in %s: %w", res, clusterID, err)
 	}
@@ -381,7 +391,33 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 		controller, _, _ := unstructured.NestedString(it.Object, "spec", "controller")
 		return map[string]any{"name": name, "controller": controller, "age": age}, nil
 	}
-	return nil, fmt.Errorf("unsupported resource %q", res)
+	// CRD fallback: 返回 name/namespace/age + spec/status 关键字段 (label/keys/phase)
+	return crdRow(it.Object, name, ns, age)
+}
+
+// crdRow 通用 CRD 行: 不预设字段, 通用展示 name/namespace/age + 几个常见 spec 字段 (尽量通用).
+func crdRow(obj map[string]any, name, ns, age string) (map[string]any, error) {
+	row := map[string]any{"name": name, "namespace": ns, "age": age}
+	// 常见 spec 字段: spec.foo / spec.image / spec.replicas / spec.schedule / spec.phase
+	for _, p := range []string{"phase", "replicas", "image", "schedule", "host", "url", "provider"} {
+		if v, ok, _ := unstructured.NestedString(obj, "spec", p); ok {
+			row[p] = v
+		}
+	}
+	if v, ok, _ := unstructured.NestedInt64(obj, "spec", "replicas"); ok {
+		row["replicas"] = v
+	}
+	// 状态字段: status.phase / status.ready
+	for _, p := range []string{"phase", "ready", "state", "conditions"} {
+		if v, ok, _ := unstructured.NestedString(obj, "status", p); ok {
+			row["status_"+p] = v
+		}
+	}
+	// 顶层 labels 数 / annotations 数
+	if l, ok, _ := unstructured.NestedMap(obj, "metadata", "labels"); ok {
+		row["labels"] = len(l)
+	}
+	return row, nil
 }
 
 // rbacRulesCount 统计 Role/ClusterRole 的 rules 条数。
@@ -894,14 +930,23 @@ func affinitySummary(a *corev1.Affinity) string {
 
 // GetResourceYAML 返回资源对象 YAML(敏感字段脱敏: Secret 的 data)。
 func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name string) (string, error) {
-	if !ValidResource(res) || res == "overview" {
-		return "", fmt.Errorf("unsupported resource %q", res)
+	gvr := gvrOf(res)
+	effectiveNs := nsFor(ns, res)
+	if gvr.Empty() {
+		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+		if err != nil {
+			return "", fmt.Errorf("unsupported resource %q", res)
+		}
+		gvr = crdGVR
+		if scope == ScopeCluster {
+			effectiveNs = ""
+		}
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return "", err
 	}
-	u, err := dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Get(ctx, name, metav1.GetOptions{})
+	u, err := dyn.Resource(gvr).Namespace(effectiveNs).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -928,11 +973,6 @@ func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name 
 		return "", err
 	}
 	return string(out), nil
-}
-
-// DeleteResource 删除指定资源(仅开放 pods/deployments/statefulsets/jobs/cronjobs)。
-var deletableResources = map[string]bool{
-	"pods": true, "deployments": true, "statefulsets": true, "jobs": true, "cronjobs": true,
 }
 
 // kindToRes: 可视化创建(apply)允许的 kind → 资源名映射。
@@ -1019,9 +1059,33 @@ func nsForMeta(meta map[string]any) string {
 	return "default"
 }
 
+// DeleteResource 删除指定资源(内置白名单 + 集群已发现 CRD).
+// deletableResources 是内置安全白名单, CRD 走兜底 (gvrOf 空即尝试 ResolveGVR).
+var deletableResources = map[string]bool{
+	"pods": true, "deployments": true, "statefulsets": true, "jobs": true, "cronjobs": true,
+	"services": true, "configmaps": true, "ingresses": true, "namespaces": true,
+	"serviceaccounts": true, "roles": true, "rolebindings": true,
+	"clusterroles": true, "clusterrolebindings": true,
+}
+
 func (m *Manager) DeleteResource(ctx context.Context, clusterID, res, ns, name string, force bool) error {
+	// 内置白名单 OR CRD 短名 (ResolveGVR 命中即允许)
 	if !deletableResources[res] {
-		return fmt.Errorf("资源类型 %q 不允许删除", res)
+		if _, _, err := m.ResolveGVR(clusterID, res); err != nil {
+			return fmt.Errorf("资源类型 %q 不允许删除", res)
+		}
+	}
+	gvr := gvrOf(res)
+	effectiveNs := nsFor(ns, res)
+	if gvr.Empty() {
+		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+		if err != nil {
+			return fmt.Errorf("资源类型 %q 不允许删除 (未发现 CRD)", res)
+		}
+		gvr = crdGVR
+		if scope == ScopeCluster {
+			effectiveNs = ""
+		}
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
@@ -1032,7 +1096,7 @@ func (m *Manager) DeleteResource(ctx context.Context, clusterID, res, ns, name s
 		z := int64(0)
 		opts.GracePeriodSeconds = &z
 	}
-	return dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Delete(ctx, name, opts)
+	return dyn.Resource(gvr).Namespace(effectiveNs).Delete(ctx, name, opts)
 }
 
 // ScaleWorkload 调整 deployments/statefulsets 副本数(经 scale 子资源)。
@@ -1104,15 +1168,26 @@ func (m *Manager) GetReplicas(ctx context.Context, clusterID, res, ns, name stri
 
 // DescribeResource 生成 kubectl describe 风格的只读文本: 对象 YAML + 关联事件。
 func (m *Manager) DescribeResource(ctx context.Context, clusterID, res, ns, name string) (string, error) {
-	if !ValidResource(res) || res == "overview" || res == "events" || res == "namespaces" {
+	if res == "overview" || res == "events" || res == "namespaces" {
 		return "", fmt.Errorf("unsupported resource %q", res)
 	}
+	gvr := gvrOf(res)
 	effNs := nsFor(ns, res)
+	if gvr.Empty() {
+		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+		if err != nil {
+			return "", fmt.Errorf("unsupported resource %q", res)
+		}
+		gvr = crdGVR
+		if scope == ScopeCluster {
+			effNs = ""
+		}
+	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return "", err
 	}
-	u, err := dyn.Resource(gvrOf(res)).Namespace(effNs).Get(ctx, name, metav1.GetOptions{})
+	u, err := dyn.Resource(gvr).Namespace(effNs).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get %s %s/%s: %w", res, effNs, name, err)
 	}

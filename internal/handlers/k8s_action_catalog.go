@@ -36,7 +36,7 @@ func K8sActionCatalogHandler(w http.ResponseWriter, r *http.Request) {
 			list = append(list, a)
 		}
 	} else {
-		if !kubernetes.ValidResource(res) {
+		if !kubernetes.ValidResource(res) && !kubernetes.IsCRDName(res) {
 			WriteJSON(w, map[string]any{"ok": false, "error": "未知 res: " + res})
 			return
 		}
@@ -92,7 +92,7 @@ func K8sActionHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return
 	}
-	if !reK8sClusterID.MatchString(b.Cluster) || !kubernetes.ValidResource(b.Res) ||
+	if !reK8sClusterID.MatchString(b.Cluster) || (!kubernetes.ValidResource(b.Res) && !kubernetes.IsCRDName(b.Res)) ||
 		!reK8sResName.MatchString(b.Name) || (b.Ns != "" && !reK8sNamespace.MatchString(b.Ns)) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return

@@ -159,10 +159,7 @@ func init() {
 func catalogDelete() *ActionSpec {
 	return &ActionSpec{
 		Name: "delete", Label: "删除", Category: "lifecycle",
-		AllowedRes: []string{"pods", "deployments", "statefulsets", "daemonsets", "jobs", "cronjobs",
-			"services", "ingresses", "configmaps", "secrets",
-			"persistentvolumeclaims", "namespaces", "networkpolicies", "resourcequotas",
-			"serviceaccounts", "roles", "rolebindings"},
+		AllowedRes: []string{"*"},
 		Params: []Param{
 			{Name: "force", Label: "强制 (grace=0)", Type: ParamBool,
 				Help: "Pod 强制删除, 跳过 30s 优雅期; 其他资源无效"},

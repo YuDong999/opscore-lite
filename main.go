@@ -545,6 +545,8 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/action-catalog", Handler: handlers.K8sActionCatalogHandler},
 			{Path: "/api/plugins/containers/k8s/action", Handler: handlers.K8sActionHandler},
 			{Path: "/api/plugins/containers/k8s/feature-flags", Handler: handlers.K8sFeatureFlagsHandler},
+			{Path: "/api/plugins/containers/k8s/crds", Handler: handlers.K8sCRDsHandler},
+			{Path: "/api/plugins/containers/k8s/crd-types", Handler: handlers.K8sCRDTypesHandler},
 			// WS 通道
 			{Path: "/api/plugins/containers/k8s/pod/exec/ws", Handler: handlers.K8sPodExecWSHandler},
 			{Path: "/api/plugins/containers/k8s/pod/logs/stream", Handler: handlers.K8sPodLogsStreamWSHandler},

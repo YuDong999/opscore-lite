@@ -21,7 +21,7 @@ import (
 //   - "json": application/json-patch+json (RFC 6902 JSON Patch)
 //   - "json-patch": 同上 (别名)
 func (m *Manager) PatchResource(ctx context.Context, clusterID, res, ns, name, patchType, patchBody string) error {
-	if !ValidResource(res) || res == "overview" || res == "events" {
+	if res == "overview" || res == "events" {
 		return fmt.Errorf("资源类型 %q 不支持 patch", res)
 	}
 	if patchType == "" {
@@ -38,11 +38,19 @@ func (m *Manager) PatchResource(ctx context.Context, clusterID, res, ns, name, p
 	default:
 		return fmt.Errorf("不支持的 patchType: %s (merge/strategic-merge/json)", patchType)
 	}
+	gvr, scope, err := m.ResolveGVR(clusterID, res)
+	if err != nil {
+		return fmt.Errorf("资源类型 %q 不支持 patch: %w", res, err)
+	}
+	effectiveNs := ns
+	if scope == ScopeCluster {
+		effectiveNs = ""
+	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return err
 	}
-	_, err = dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Patch(ctx, name, pt, []byte(patchBody), metav1.PatchOptions{})
+	_, err = dyn.Resource(gvr).Namespace(effectiveNs).Patch(ctx, name, pt, []byte(patchBody), metav1.PatchOptions{})
 	return err
 }
 
@@ -59,18 +67,26 @@ func (m *Manager) AnnotateResource(ctx context.Context, clusterID, res, ns, name
 }
 
 func (m *Manager) metaKV(ctx context.Context, clusterID, res, ns, name, field, key, value string, overwrite bool) error {
-	if !ValidResource(res) || res == "overview" || res == "events" {
+	if res == "overview" || res == "events" {
 		return fmt.Errorf("资源类型 %q 不支持", res)
 	}
 	if key == "" {
 		return fmt.Errorf("缺少 key")
+	}
+	gvr, scope, err := m.ResolveGVR(clusterID, res)
+	if err != nil {
+		return fmt.Errorf("资源类型 %q 不支持: %w", res, err)
+	}
+	effectiveNs := ns
+	if scope == ScopeCluster {
+		effectiveNs = ""
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return err
 	}
 	// 读现值, 检查 overwrite / value 处理
-	cur, err := dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Get(ctx, name, metav1.GetOptions{})
+	cur, err := dyn.Resource(gvr).Namespace(effectiveNs).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -110,7 +126,7 @@ func (m *Manager) metaKV(ctx context.Context, clusterID, res, ns, name, field, k
 		}
 	}
 	body, _ := json.Marshal(patchMap)
-	_, err = dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{})
+	_, err = dyn.Resource(gvr).Namespace(effectiveNs).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{})
 	return err
 }
 

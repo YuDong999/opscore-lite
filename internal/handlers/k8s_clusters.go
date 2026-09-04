@@ -329,7 +329,7 @@ func k8sResourcesBuild(r *http.Request) any {
 	if ns != "" && !reK8sNamespace.MatchString(ns) {
 		return map[string]any{"rows": []map[string]any{}, "note": "namespace 名称非法"}
 	}
-	if !kubernetes.ValidResource(res) {
+	if !kubernetes.ValidResource(res) && !kubernetes.IsCRDName(res) {
 		return map[string]any{"rows": []map[string]any{}, "note": "不支持的资源类型"}
 	}
 	if !reK8sClusterID.MatchString(cluster) {

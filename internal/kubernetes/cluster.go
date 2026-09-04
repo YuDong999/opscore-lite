@@ -31,6 +31,7 @@ type Info struct {
 type clientSet struct {
 	dynamicClient dynamic.Interface
 	restConfig    *rest.Config
+	discState     *discoveryState
 }
 
 // Manager 管理多个已注册集群的客户端连接。并发安全。
@@ -56,13 +57,17 @@ func (m *Manager) Add(id string, kubeconfigData []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters[id] = &clientSet{dynamicClient: dyn, restConfig: restCfg}
+	// initDiscovery 改为懒加载: 首次访问 RESTMapper/CRD 时才构造, 避免启动卡顿
 	return nil
 }
 
-// Remove 注销集群。
+// Remove 注销集群.
 func (m *Manager) Remove(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if cs, ok := m.clusters[id]; ok {
+		cs.discState = nil
+	}
 	delete(m.clusters, id)
 }
 

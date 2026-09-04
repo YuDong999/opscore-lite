@@ -213,6 +213,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [clusters, setClusters] = useState<K8sCluster[] | null>(null)
   const [clusterID, setClusterID] = useState('')
   const [res, setRes] = useState<string>('overview')
+  const [crds, setCrds] = useState<{ shortName: string; kind: string; group: string; scope: string; version: string }[]>([])
   const [sortKey, setSortKey] = useState('')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [ns, setNs] = useState('all')
@@ -353,6 +354,19 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   }
   useEffect(loadNsList, [clusterID])
 
+  const loadCrds = () => {
+    if (!clusterID) { setCrds([]); return }
+    getJSON<{ ok: boolean; crds: any[]; error?: string }>(`/api/plugins/containers/k8s/crds?cluster=${clusterID}&_=${Date.now()}`)
+      .then((d) => {
+        if (d.ok) {
+          // 过滤掉 customresourcedefinitions 自身, 只展示真正的 CRD 实例
+          setCrds((d.crds || []).filter((c) => c.shortName !== 'customresourcedefinitions.apiextensions.k8s.io'))
+        }
+      })
+      .catch(() => { if (!clusterID) return; setTimeout(loadCrds, 1500) })
+  }
+  useEffect(loadCrds, [clusterID])
+
   const loadRows = () => {
     if (!clusterID || res === 'overview' || res === 'helm') return
     setLoading(true)
@@ -474,6 +488,24 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
               ))}
             </div>
           ))}
+          {/* 动态 Custom Resources 分组: 来自集群已发现 CRD */}
+          {crds.length > 0 && (
+            <div key="crds" className="k8s-nav-group">
+              <div className="k8s-side-group" onClick={() => toggleFold('crds')}>
+                <span className="k8s-group-label">Custom Resources ({crds.length})</span>
+                <span className={`k8s-fold-arrow ${isFolded(folded, 'crds', false) ? 'folded' : ''}`}>▾</span>
+              </div>
+              {!isFolded(folded, 'crds', false) && crds.map((c) => (
+                <div key={c.shortName}
+                  className={`k8s-side-item k8s-nav-item ${c.shortName === res ? 'active' : ''}`}
+                  data-res={c.shortName}
+                  onClick={() => setRes(c.shortName)}>
+                  <span className="mono">{c.kind}</span>
+                  <span className="dim" style={{ marginLeft: 6, fontSize: 10 }}>{c.group}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </nav>
       </aside>
 

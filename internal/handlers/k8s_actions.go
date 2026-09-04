@@ -21,7 +21,10 @@ var reK8sResName = reK8sNamespace // 同为 DNS-1123 子域规则
 func k8sTarget(r *http.Request) (cluster, res, ns, name string, ok bool) {
 	q := r.URL.Query()
 	cluster, res, ns, name = q.Get("cluster"), q.Get("res"), q.Get("ns"), q.Get("name")
-	if !reK8sClusterID.MatchString(cluster) || (res != "" && !kubernetes.ValidResource(res)) {
+	if !reK8sClusterID.MatchString(cluster) {
+		return "", "", "", "", false
+	}
+	if res != "" && !kubernetes.ValidResource(res) && !kubernetes.IsCRDName(res) {
 		return "", "", "", "", false
 	}
 	if ns != "" && !reK8sNamespace.MatchString(ns) {
@@ -210,7 +213,7 @@ func K8sResourceActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var b k8sResourceActionBody
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil ||
-		!reK8sClusterID.MatchString(b.Cluster) || !kubernetes.ValidResource(b.Res) ||
+		!reK8sClusterID.MatchString(b.Cluster) || (!kubernetes.ValidResource(b.Res) && !kubernetes.IsCRDName(b.Res)) ||
 		!reK8sResName.MatchString(b.Name) || (b.Ns != "" && !reK8sNamespace.MatchString(b.Ns)) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return
@@ -454,7 +457,7 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var b k8sBatchActionBody
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil ||
-		!reK8sClusterID.MatchString(b.Cluster) || !kubernetes.ValidResource(b.Res) ||
+		!reK8sClusterID.MatchString(b.Cluster) || (!kubernetes.ValidResource(b.Res) && !kubernetes.IsCRDName(b.Res)) ||
 		!(b.Action == "delete" || b.Action == "restart" || b.Action == "rollback" || b.Action == "scale") ||
 		len(b.Targets) == 0 {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
