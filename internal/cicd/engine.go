@@ -466,7 +466,7 @@ func (e *Engine) recoverOrphans() {
 	for _, r := range e.runs {
 		if r.Status == StatusQueued || r.Status == StatusRunning {
 			r.Status = StatusFailed
-			r.Error = "服务重启中断"
+			r.Error = "服务重启时运行被中断(未执行完), 可直接重新执行"
 			r.FinishedAt = time.Now()
 			if !r.StartedAt.IsZero() {
 				r.DurationMs = time.Since(r.StartedAt).Milliseconds()

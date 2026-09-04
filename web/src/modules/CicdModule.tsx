@@ -307,7 +307,7 @@ export default function CicdModule() {
         <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} /></TabsContent>
       </Tabs>
 
-      {detailRunId && <RunDetail runId={detailRunId} onChanged={loadOverview} onClose={() => setDetailRunId('')} />}
+      {detailRunId && <RunDetail runId={detailRunId} onRerun={setDetailRunId} onChanged={loadOverview} onClose={() => setDetailRunId('')} />}
     </div>
   )
 }
@@ -535,7 +535,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
       {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
-      {detailRun && <RunDetail runId={detailRun} onChanged={() => { reload(); onChanged() }} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
+      {detailRun && <RunDetail runId={detailRun} onRerun={setDetailRun} onChanged={() => { reload(); onChanged() }} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
     </div>
   )
 }
@@ -1002,7 +1002,7 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
 
 // ==================== 运行详情(SSE 实时日志) ====================
 
-function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () => void; onChanged?: () => void }) {
+function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onClose: () => void; onChanged?: () => void; onRerun?: (newRunId: string) => void }) {
   const [run, setRun] = useState<Run | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [busy, setBusy] = useState('')
@@ -1090,8 +1090,11 @@ function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () =
   const rerun = async () => {
     setBusy('rerun')
     try {
-      await postJSON(API.pipelineRun, { id: run!.pipelineId, branch: run!.branch || '' })
-      setErr(''); onChanged?.(); onClose()
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: run!.pipelineId, branch: run!.branch || '' })
+      setErr('')
+      if (onRerun) onRerun(d.run.id) // 详情切换到新运行
+      else onClose()
+      onChanged?.()
     } catch (e: any) { setErr('重新执行失败: ' + e.message) } finally { setBusy('') }
   }
   const removeRun = async () => {
@@ -1149,6 +1152,9 @@ function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () =
           </div>
         </DialogHeader>
 
+        {run.error && <div className="mx-6 mb-1 shrink-0"><ErrBanner msg={run.error} /></div>}
+        <ErrBanner msg={err} onClose={() => setErr('')} className="mx-6 shrink-0" />
+
         <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
         <div className="rounded-lg border bg-background/60 px-4 py-2">
           <StageFlow stages={run.stages} now={now} onStepClick={(si, j) => {
@@ -1162,8 +1168,6 @@ function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () =
           </div>
         )}
 
-        {run.error && <ErrBanner msg={run.error} />}
-        <ErrBanner msg={err} onClose={() => setErr('')} />
 
         {run.stages.map((st, i) => (
           <div key={i} className={cn('rounded-lg border', st.status === 'waiting' && 'border-warn')}>
