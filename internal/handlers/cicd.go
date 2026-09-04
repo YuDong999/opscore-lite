@@ -354,7 +354,8 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Branch string `json:"branch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "请求格式错误", http.StatusBadRequest)
@@ -373,7 +374,7 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "该流水线未启用手动触发", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.Trigger(body.ID, cicd.TriggerManual)
+	run, err := cicdEngine.TriggerBranch(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch))
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
@@ -840,6 +841,23 @@ func CicdRepoDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, map[string]any{"ok": true})
+}
+
+// CicdRepoBranches 列出仓库远端分支(GET ?id=, 运行时可自由选择分支)
+func CicdRepoBranches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	branches, err := cicdEngine.RepoBranches(r.URL.Query().Get("id"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if branches == nil {
+		branches = []string{}
+	}
+	WriteJSON(w, branches)
 }
 
 // CicdRepoTest 连通性测试(服务端 git ls-remote)

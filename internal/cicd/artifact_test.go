@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io"
 	"os"
-	"path/filepath"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -166,10 +168,9 @@ func TestCommitCapture(t *testing.T) {
 	e := newTestEngine(t)
 	// 建一个真实 git 仓库作为拉取目标
 	ws := t.TempDir()
-	gitDir := t.TempDir()
 	run := func(args ...string) {
 		c := exec.Command("git", args...)
-		c.Dir = gitDir
+		c.Dir = ws
 		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)

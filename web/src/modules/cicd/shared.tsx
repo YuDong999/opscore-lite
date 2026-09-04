@@ -37,6 +37,7 @@ export const API = {
   repoSave: '/api/cicd/repo/save',
   repoDelete: '/api/cicd/repo/delete',
   repoTest: '/api/cicd/repo/test',
+  repoBranches: '/api/cicd/repo/branches',
   registries: '/api/cicd/registries',
   registrySave: '/api/cicd/registry/save',
   registryDelete: '/api/cicd/registry/delete',

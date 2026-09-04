@@ -90,8 +90,26 @@ function StageNodeIcon({ status }: { status: string }) {
   return <span className="size-1.5 rounded-full bg-current opacity-50" />
 }
 
-// 详情页横向节点流: 节点(状态色圆) + 连接线 + 名称 + 实时耗时
-function StageFlow({ stages, now }: { stages: StageRun[]; now: number }) {
+// StepDot: 步骤小圆点(状态色)
+function StepDot({ status }: { status: string }) {
+  const color = STAGE_COLOR[status] || 'var(--border)'
+  return (
+    <span
+      className={cn('size-3.5 rounded-full border-2 flex items-center justify-center shrink-0', status === 'running' && 'animate-pulse')}
+      style={{
+        borderColor: color,
+        background: ['success', 'failed'].includes(status) ? color : undefined,
+        color: '#fff',
+      }}
+    >
+      {status === 'success' && <Check className="size-2.5" />}
+      {status === 'failed' && <X className="size-2.5" />}
+    </span>
+  )
+}
+
+// 详情页横向节点流(Blue Ocean 式): 阶段节点 + 纵向步骤链(可点击跳日志), 实时耗时
+function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: number; onStepClick?: (si: number, j: number) => void }) {
   return (
     <div className="flex items-start w-full py-1 overflow-x-auto">
       {stages.map((st, i) => {
@@ -101,11 +119,11 @@ function StageFlow({ stages, now }: { stages: StageRun[]; now: number }) {
           <Fragment key={i}>
             {i > 0 && (
               <div
-                className="flex-1 min-w-6 h-0.5 rounded-full mt-[17px]"
+                className="flex-1 min-w-8 h-0.5 rounded-full mt-[17px]"
                 style={{ background: stages[i - 1].status === 'success' ? 'var(--ok)' : 'var(--border)' }}
               />
             )}
-            <div className="flex flex-col items-center gap-1 w-20 shrink-0">
+            <div className="flex flex-col items-center w-40 shrink-0">
               <div
                 className={cn('size-9 rounded-full border-2 flex items-center justify-center bg-background', st.status === 'running' && 'animate-pulse')}
                 style={{
@@ -116,8 +134,28 @@ function StageFlow({ stages, now }: { stages: StageRun[]; now: number }) {
               >
                 <StageNodeIcon status={st.status} />
               </div>
-              <div className="text-xs font-medium text-center leading-tight break-all px-0.5">{st.name}</div>
+              <div className="text-xs font-medium text-center leading-tight break-all px-0.5 mt-1">{st.name}</div>
               <div className="text-[10px] text-muted-foreground tabular-nums">{fmtDur(stageElapsedMs(st, now))}</div>
+              {st.steps.length > 0 && (
+                <div className="mt-2 w-full flex flex-col items-stretch">
+                  {st.steps.map((sp, j) => (
+                    <Fragment key={j}>
+                      {j > 0 && <div className="w-0.5 h-1.5 bg-border mx-auto" style={{ marginLeft: 0 }} />}
+                      <button
+                        className="flex items-center gap-1.5 w-full px-1 py-0.5 rounded text-xs hover:bg-muted/60 transition-colors"
+                        title={sp.command}
+                        onClick={() => onStepClick?.(i, j)}
+                      >
+                        <StepDot status={sp.status} />
+                        <span className={cn('truncate flex-1 text-left', sp.status === 'running' && 'font-medium')}>{sp.name}</span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                          {sp.status === 'running' ? fmtDur(Math.max(0, now - (sp.startedAt ? new Date(sp.startedAt).getTime() : now))) : fmtDur(sp.durationMs)}
+                        </span>
+                      </button>
+                    </Fragment>
+                  ))}
+                </div>
+              )}
             </div>
           </Fragment>
         )
@@ -281,14 +319,26 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
   const [webhookOf, setWebhookOf] = useState<Pipeline | null>(null)
   const [detailRun, setDetailRun] = useState('')
   const [busy, setBusy] = useState('')
+  const [runSel, setRunSel] = useState<Pipeline | null>(null)
   const { confirm, confirmEl } = useConfirm()
 
   const run = async (p: PipelineView) => {
-    setBusy(p.id)
+    if (p.source.repoId) {
+      // 有代码源 → 弹分支选择(自由选择分支构建)
+      try {
+        const full = await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json()) as Pipeline
+        setRunSel(full)
+      } catch (e: any) { setErr(e.message) }
+      return
+    }
+    doRun(p.id, '')
+  }
+  const doRun = async (id: string, branch: string) => {
+    setBusy(id)
     try {
-      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: p.id })
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id, branch })
       setErr(''); setDetailRun(d.run.id); onChanged()
-    } catch (e: any) { setErr(`触发 ${p.name} 失败: ${e.message}`) } finally { setBusy('') }
+    } catch (e: any) { setErr(`触发失败: ${e.message}`) } finally { setBusy('') }
   }
   const remove = async (p: PipelineView) => {
     if (!(await confirm(`删除流水线「${p.name}」？`, { desc: '其运行历史、日志与制品将一并删除。', danger: true, okText: '删除' }))) return
@@ -398,6 +448,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         </CardContent>
       </Card>
 
+      {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b) => { const id = runSel.id; setRunSel(null); doRun(id, b) }} />}
       {editing && (
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
@@ -661,6 +712,58 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
   )
 }
 
+// ==================== 运行分支选择弹窗 ====================
+
+function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onClose: () => void; onRun: (branch: string) => void }) {
+  const defaultBranch = pipeline.source.branch ||
+    pipeline.stages.find(() => true) && '' || ''
+  const [branches, setBranches] = useState<string[] | null>(null)
+  const [sel, setSel] = useState('__default__')
+  const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API.repoBranches}?id=${pipeline.source.repoId}`)
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+      .then((list: string[]) => {
+        setBranches(list)
+        // 默认选中流水线配置的分支或仓库默认分支
+        const want = pipeline.source.branch
+        if (want && list.includes(want)) setSel(want)
+        else if (list.includes('master')) setSel('master')
+        else if (list.includes('main')) setSel('main')
+      })
+      .catch(e => { setErr('获取分支失败: ' + e.message); setBranches([]) })
+      .finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>运行流水线: {pipeline.name}</DialogTitle></DialogHeader>
+        <ErrBanner msg={err} onClose={() => setErr('')} />
+        <div>
+          <Label>选择分支(构建发布用)</Label>
+          {loading ? <div className="text-sm text-muted-foreground py-2">获取远端分支中...</div> : (
+            <Select value={sel} onValueChange={setSel}>
+              <SelectTrigger><SelectValue placeholder="选择分支" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default__">默认({defaultBranch || '流水线配置'})</SelectItem>
+                {(branches || []).map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          <div className="text-xs text-muted-foreground mt-1">首阶段将从所选分支拉取代码并构建发布</div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button disabled={loading} onClick={() => onRun(sel === '__default__' ? '' : sel)}><Play />运行</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ==================== Webhook 弹窗 ====================
 
 function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
@@ -865,6 +968,22 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
     postJSON(API.runCancel, { runId }).catch(e => setErr(e.message))
   }
 
+  // 点击节点流中的步骤 → 日志滚动到该步骤的起始位置
+  const scrollToStep = (si: number, j: number, name: string) => {
+    const el = logRef.current
+    if (!el) return
+    const lineEls = el.querySelectorAll('.log-line')
+    let curStage = 0
+    let found: Element | null = null
+    for (const l of Array.from(lineEls)) {
+      const t = l.textContent || ''
+      const m = t.match(/\[阶段 (\d+)\/\d+\]/)
+      if (m) curStage = parseInt(m[1])
+      if (curStage === si + 1 && t.includes(`[步骤 ${j + 1}/`) && t.includes(name)) found = l
+    }
+    found?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }
+
   if (!run) return null
   const active = run.status === 'running' || run.status === 'queued'
 
@@ -883,7 +1002,10 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
 
         <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
         <div className="rounded-lg border bg-background/60 px-4 py-2">
-          <StageFlow stages={run.stages} now={now} />
+          <StageFlow stages={run.stages} now={now} onStepClick={(si, j) => {
+            const st = run.stages[si]
+            if (st && st.steps[j]) scrollToStep(si, j, st.steps[j].name)
+          }} />
         </div>
         {run.commit && (
           <div className="text-xs text-muted-foreground font-mono truncate" title={run.commit}>

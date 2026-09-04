@@ -471,6 +471,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/repo/save", Handler: handlers.CicdRepoSave},
 			{Path: "/api/cicd/repo/delete", Handler: handlers.CicdRepoDelete},
 			{Path: "/api/cicd/repo/test", Handler: handlers.CicdRepoTest},
+			{Path: "/api/cicd/repo/branches", Handler: handlers.CicdRepoBranches},
 			{Path: "/api/cicd/registries", Handler: handlers.CicdRegistries},
 			{Path: "/api/cicd/registry/save", Handler: handlers.CicdRegistrySave},
 			{Path: "/api/cicd/registry/delete", Handler: handlers.CicdRegistryDelete},

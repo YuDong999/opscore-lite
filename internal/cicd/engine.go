@@ -206,7 +206,7 @@ type runtimeCtx struct {
 }
 
 // resolveRuntime 触发时解析代码源/镜像仓库/kubeconfig 凭据为运行时资源
-func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, error) {
+func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride string) (*runtimeCtx, error) {
 	// 安全护栏: 代码源要求首阶段显式工作目录 —— 防止 git 操作落到服务器进程 cwd
 	if p.Source.RepoID != "" {
 		if len(p.Stages) == 0 || strings.TrimSpace(p.Stages[0].Workspace) == "" {
@@ -233,7 +233,10 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 					Var{Name: "GIT_REPO_TOKEN", Value: cred.Data, Secret: true},
 				)
 			}
-			branch := p.Source.Branch
+			branch := branchOverride
+			if branch == "" {
+				branch = p.Source.Branch
+			}
 			if branch == "" {
 				branch = repo.DefaultBranch
 			}
@@ -634,6 +637,11 @@ func maskPipeline(p Pipeline) Pipeline {
 
 // Trigger 按 ID 触发一次运行(手动/webhook/cron 共用)
 func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
+	return e.TriggerBranch(pipelineID, trigger, "")
+}
+
+// TriggerBranch 同 Trigger, 但允许运行时覆盖代码源分支(空=用流水线定义的分支)
+func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run, error) {
 	e.mu.RLock()
 	var pipe *Pipeline
 	for _, p := range e.pipes {
@@ -659,7 +667,7 @@ func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
 	snap := *pipe // 定义快照, 后续编辑不影响在跑任务
 	e.mu.RUnlock()
 
-	rt, err := e.resolveRuntime(&snap, buildNumber)
+	rt, err := e.resolveRuntime(&snap, buildNumber, branchOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -928,8 +936,17 @@ overall:
 			}
 			if execErr == nil {
 				stepOnLine := writeLine
-				// 拉取代码步骤: 从输出中捕获 @@CICD_COMMIT@@ 标记写入运行记录
-				if i == 0 && rt.clone != nil && j == 0 {
+				isCloneStep := i == 0 && rt.clone != nil && j == 0
+				if isCloneStep {
+					// 拉取代码步骤: 工作目录不存在时自动创建(克隆目标), 再捕获 commit 标记
+					if stage.Workspace != "" {
+						if stage.Host == "" {
+							os.MkdirAll(stage.Workspace, 0755)
+						} else {
+							writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
+							e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
+						}
+					}
 					stepOnLine = func(line string) {
 						if c := parseCommitMarker(line); c != "" {
 							e.mu.Lock()
