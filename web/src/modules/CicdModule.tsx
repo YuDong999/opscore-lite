@@ -187,6 +187,70 @@ function StageSegments({ stages }: { stages: StageRun[] }) {
   )
 }
 
+// 项目类型构建模板(对标 Jenkins 各语言入门教程): 选类型 → 生成可直接运行的流水线骨架
+const PIPELINE_TEMPLATES: { name: string; desc: string; make: () => Pipeline }[] = [
+  { name: '空白流水线', desc: '从零开始编排', make: () => emptyPipeline() },
+  {
+    name: '前端项目 (Node)', desc: '安装依赖 → 构建 → 归档 dist/', make: () => ({
+      ...emptyPipeline(), name: '前端构建', description: 'Node 前端构建',
+      stages: [
+        { name: '构建', host: '', workspace: '', approval: false, steps: [
+          { name: '安装依赖', command: 'npm ci', continueOnFail: false, timeoutMin: 0 },
+          { name: '构建', command: 'npm run build', continueOnFail: false, timeoutMin: 0, artifacts: ['dist/*'] },
+        ] },
+      ],
+    }),
+  },
+  {
+    name: 'Java 项目 (Maven)', desc: 'mvn 打包 → 归档 jar', make: () => ({
+      ...emptyPipeline(), name: 'Java 构建', description: 'Maven 构建打包',
+      stages: [
+        { name: '构建', host: '', workspace: '', approval: false, steps: [
+          { name: '打包', command: 'mvn -B -DskipTests clean package', continueOnFail: false, timeoutMin: 0, artifacts: ['target/*.jar'] },
+        ] },
+        { name: '测试', host: '', workspace: '', approval: false, steps: [
+          { name: '单元测试', command: 'mvn -B test', continueOnFail: false, timeoutMin: 0 },
+        ] },
+      ],
+    }),
+  },
+  {
+    name: 'Go 项目', desc: 'go build → 归档二进制', make: () => ({
+      ...emptyPipeline(), name: 'Go 构建', description: 'Go 编译构建',
+      stages: [
+        { name: '构建', host: '', workspace: '', approval: false, steps: [
+          { name: '编译', command: 'go build -o bin/app ./...', continueOnFail: false, timeoutMin: 0, artifacts: ['bin/*'] },
+          { name: '测试', command: 'go test ./...', continueOnFail: false, timeoutMin: 0 },
+        ] },
+      ],
+    }),
+  },
+  {
+    name: 'Python 项目', desc: 'pip 安装 → 测试 → 归档', make: () => ({
+      ...emptyPipeline(), name: 'Python 构建', description: 'Python 构建测试',
+      stages: [
+        { name: '构建', host: '', workspace: '', approval: false, steps: [
+          { name: '安装依赖', command: 'pip install -r requirements.txt', continueOnFail: false, timeoutMin: 0 },
+          { name: '测试', command: 'python -m pytest', continueOnFail: false, timeoutMin: 0 },
+          { name: '打包', command: 'python -m build', continueOnFail: false, timeoutMin: 0, artifacts: ['dist/*'] },
+        ] },
+      ],
+    }),
+  },
+  {
+    name: 'Docker 镜像', desc: '构建 → 推送镜像(需配置镜像仓库)', make: () => ({
+      ...emptyPipeline(), name: 'Docker 构建', description: '构建并推送镜像',
+      stages: [
+        { name: '镜像', host: '', workspace: '', approval: false, steps: [
+          { name: '登录镜像仓库', command: 'docker login $REGISTRY -u "$REGISTRY_USER" -p "$REGISTRY_PASS"', continueOnFail: false, timeoutMin: 0 },
+          { name: '构建镜像', command: 'docker build -t $REGISTRY/myapp:${BUILD_NUMBER} .', continueOnFail: false, timeoutMin: 0 },
+          { name: '推送镜像', command: 'docker push $REGISTRY/myapp:${BUILD_NUMBER}', continueOnFail: false, timeoutMin: 0 },
+        ] },
+      ],
+    }),
+  },
+]
+
 const emptyPipeline = (): Pipeline => ({
   id: '', name: '', description: '',
   env: [], trigger: { manual: true, webhook: false, secret: '', cron: '' },
@@ -320,6 +384,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
   const [detailRun, setDetailRun] = useState('')
   const [busy, setBusy] = useState('')
   const [runSel, setRunSel] = useState<Pipeline | null>(null)
+  const [tplOpen, setTplOpen] = useState(false)
   const { confirm, confirmEl } = useConfirm()
 
   const run = async (p: PipelineView) => {
@@ -385,7 +450,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                   }} />
                 </label>
               </Button>
-              <Button size="sm" onClick={() => setEditing(emptyPipeline())}><Plus />新建流水线</Button>
+              <Button size="sm" onClick={() => setTplOpen(true)}><Plus />新建流水线</Button>
             </div>
           </div>
         </CardHeader>
@@ -449,6 +514,23 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
       </Card>
 
       {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b) => { const id = runSel.id; setRunSel(null); doRun(id, b) }} />}
+      {tplOpen && (
+        <Dialog open onOpenChange={o => !o && setTplOpen(false)}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader><DialogTitle>选择项目类型</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {PIPELINE_TEMPLATES.map(t => (
+                <button key={t.name} className="rounded-lg border p-3 text-left hover:border-accent hover:bg-accent/5 transition-colors"
+                  onClick={() => { setTplOpen(false); setEditing(t.make()) }}>
+                  <div className="font-semibold text-sm">{t.name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground">模板生成骨架后可继续编辑: 换目标主机/工作目录/加审批门禁/挂代码源与制品</div>
+          </DialogContent>
+        </Dialog>
+      )}
       {editing && (
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
@@ -1163,6 +1245,112 @@ function RunDetail({ runId, onClose, onChanged }: { runId: string; onClose: () =
   )
 }
 
+// ==================== Stage View(Jenkins 式阶段矩阵) ====================
+
+const STAGE_CELL_COLOR: Record<string, string> = {
+  success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
+  canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--text-dim)',
+}
+
+function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
+  const pipes = useResource<PipelineView[]>(API.pipelines)
+  const list = pipes.data || []
+  const [pid, setPid] = useState('')
+  useEffect(() => {
+    if (!pid && list.length > 0) setPid(list[0].id)
+  }, [list, pid])
+  const sel = list.find(p => p.id === pid) || null
+  const runsRes = useResource<Run[]>(pid ? `${API.runs}?limit=15&pipeline=${pid}` : '')
+  const runs = (runsRes.data || []).slice().reverse() // 旧→新, 渲染时再倒序显示
+
+  // 列 = 流水线定义的阶段名(稳定顺序)
+  const cols = (sel?.stages || []).map(st => st.name)
+  const cellOf = (r: Run, col: string, idx: number): StageRun | undefined =>
+    r.stages.find(x => x.name === col) || r.stages[idx]
+  const stageDur = (st?: StageRun) => st ? st.steps.reduce((a, s) => a + (s.durationMs || 0), 0) : 0
+
+  // 每列平均耗时
+  const avgOf = (col: string, idx: number) => {
+    let sum = 0, n = 0
+    for (const r of runs) {
+      const st = cellOf(r, col, idx)
+      if (st && ['success', 'failed'].includes(st.status)) { sum += stageDur(st); n++ }
+    }
+    return n > 0 ? sum / n : 0
+  }
+
+  return (
+    <Card className="mb-4">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <CardTitle>Stage View</CardTitle>
+          <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="选择流水线"
+            items={list.map(p => ({ value: p.id, label: p.name }))} />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!sel ? (
+          <div className="text-sm text-muted-foreground py-4">暂无流水线</div>
+        ) : runs.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="sticky left-0 bg-card min-w-32 z-10">构建</TableHead>
+                  {cols.map((c, i) => (
+                    <TableHead key={c + i} className="text-center min-w-24">
+                      <div>{c}</div>
+                      <div className="text-[10px] font-normal text-muted-foreground tabular-nums">
+                        平均 {avgOf(c, i) > 0 ? fmtDur(Math.round(avgOf(c, i))) : '-'}
+                      </div>
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.map((r, ri) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="sticky left-0 bg-card z-10">
+                      <button className="text-left hover:text-accent" onClick={() => onOpenRun(r.id)}>
+                        <div className="text-xs font-semibold tabular-nums">#{runs.length - ri}</div>
+                        <div className="text-[10px] text-muted-foreground">{fmtTime(r.startedAt)}</div>
+                      </button>
+                    </TableCell>
+                    {cols.map((c, i) => {
+                      const st = cellOf(r, c, i)
+                      if (!st || st.status === 'pending' || st.status === 'skipped') {
+                        return <TableCell key={c + i} className="text-center text-muted-foreground/30">—</TableCell>
+                      }
+                      const color = STAGE_CELL_COLOR[st.status] || 'var(--text-dim)'
+                      return (
+                        <TableCell key={c + i} className="p-1">
+                          <button
+                            className="w-full rounded-md px-2 py-1.5 text-xs tabular-nums hover:opacity-75 transition-opacity"
+                            title={`${c}: ${statusText(st.status)}`}
+                            style={{
+                              background: `color-mix(in srgb, ${color} 13%, transparent)`,
+                              color: st.status === 'success' || st.status === 'failed' || st.status === 'running' || st.status === 'waiting' ? color : undefined,
+                            }}
+                            onClick={() => onOpenRun(r.id)}
+                          >
+                            {st.status === 'running' ? '运行中' : st.status === 'waiting' ? '待审批' : fmtDur(stageDur(st))}
+                          </button>
+                        </TableCell>
+                      )
+                    })}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 // ==================== 脚本库 Tab ====================
 
 function ScriptsTab() {
@@ -1553,29 +1741,6 @@ function CredentialsTab() {
   )
 }
 
-// TrendChart 构建趋势: 每次运行一根竖柱(高度∝耗时, 颜色=状态), 悬停看详情, 点击打开
-function TrendChart({ runs, onOpenRun }: { runs: Run[]; onOpenRun: (id: string) => void }) {
-  if (runs.length === 0) return <div className="text-sm text-muted-foreground py-4">暂无运行数据</div>
-  const maxDur = Math.max(...runs.map(r => r.durationMs || 0), 1)
-  const colorOf = (s: string) => s === 'success' ? 'var(--ok)' : s === 'failed' ? 'var(--danger)' : s === 'canceled' ? 'var(--text-dim)' : 'var(--accent)'
-  return (
-    <div className="flex items-end gap-1 h-24 overflow-x-auto">
-      {runs.map(r => (
-        <button
-          key={r.id}
-          className="flex flex-col items-center justify-end h-full min-w-4 flex-1 group"
-          title={`${r.pipeline}
-${fmtTime(r.startedAt)} · ${statusText(r.status)} · ${fmtDur(r.durationMs)}`}
-          onClick={() => onOpenRun(r.id)}
-        >
-          <span className="w-full rounded-t transition-opacity group-hover:opacity-80"
-            style={{ height: `${Math.max(6, ((r.durationMs || 0) / maxDur) * 100)}%`, background: colorOf(r.status) }} />
-        </button>
-      ))}
-    </div>
-  )
-}
-
 // ==================== 概览 Tab ====================
 
 function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) => void }) {
@@ -1603,11 +1768,7 @@ function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) =
           ⏸ 有 {data.waitingApproval} 个运行正在等待人工审批 —— 请到「运行历史」打开详情批准或拒绝
         </div>
       )}
-      <Card title="构建趋势(最近 30 次)" className="mb-4">
-        <CardContent>
-          <TrendChart runs={data.trendRuns || []} onOpenRun={onOpenRun} />
-        </CardContent>
-      </Card>
+      <StageViewCard onOpenRun={onOpenRun} />
       <Card>
         <CardHeader className="pb-3"><CardTitle>最近运行</CardTitle></CardHeader>
         <CardContent>

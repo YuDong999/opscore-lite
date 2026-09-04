@@ -93,6 +93,7 @@ export function useResource<T>(url: string) {
   const [data, setData] = useState<T | null>(null)
   const [err, setErr] = useState('')
   const load = useCallback(() => {
+    if (!url) return
     getJSON<T>(url).then(d => { setData(d); setErr('') }).catch(e => setErr(e.message))
   }, [url])
   useEffect(load, [load])
