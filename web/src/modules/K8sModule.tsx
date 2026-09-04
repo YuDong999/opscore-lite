@@ -7,8 +7,37 @@ import { getJSON, postJSON } from '../api/client'
 import CreateResource from './CreateResource'
 import Card from '../components/Card'
 import EChart from '../charts/EChart'
+import K8sActionPanel from '../components/K8sActionPanel'
+import ExecTerminalModal from '../components/ExecTerminalModal'
+import LogStreamModal from '../components/LogStreamModal'
 import { useTheme } from '../theme'
 import jsYaml from 'js-yaml'
+
+// 侧栏分组图标 — 7 家混搭, 均为各库官方 path
+function SideIcon({ paths, sw = 2 }: { paths: string[]; sw?: number }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+      {paths.map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  )
+}
+// lucide square-stack (工作负载)
+const ICON_WORKLOADS = ['M4 10c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h4c1.1 0 2 .9 2 2m0 12c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2h4c1.1 0 2 .9 2 2', 'M16 14h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z']
+// mingcute package-line (应用管理)
+const ICON_APPS = ['M5 10h11M5 10v8a1 1 0 0 0 1 1h10M5 10L3 5h11l2 5m0 0v9m0-9h4m-4 0l1-5h4l-1 5m-4 9h3a1 1 0 0 0 1-1v-8m-8 6h1']
+// mingcute earth-line (网络)
+const ICON_NETWORK = ['M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9c0 1.657-4.03 3-9 3s-9-1.343-9-3m18 0c0-1.657-4.03-3-9-3s-9 1.343-9 3m9 9a9 9 0 0 1-9-9m9 9c-1.657 0-3-4.03-3-9s1.343-9 3-9m0 18c1.657 0 3-4.03 3-9s-1.343-9-3-9m-9 9a9 9 0 0 1 9-9']
+// mingcute settings-1-line (配置)
+const ICON_CONFIG = ['M15 12a3 3 0 1 1-6 0a3 3 0 0 1 6 0ZM10.5 3.628a3 3 0 0 1 3 0l5 2.887A3 3 0 0 1 20 9.113v5.773a3 3 0 0 1-1.5 2.598l-5 2.887a3 3 0 0 1-3 0l-5-2.887A3 3 0 0 1 4 14.886V9.113a3 3 0 0 1 1.5-2.598z']
+// mingcute storage-line (存储)
+const ICON_STORAGE = ['M8 17h2M8 8h2M5 20h14a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1Zm0-9h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1Z']
+// heroicons server (集群)
+const ICON_CLUSTER = ['M21.75 17.25v-.228a4.5 4.5 0 0 0-.12-1.03l-2.268-9.64a3.375 3.375 0 0 0-3.285-2.602H7.923a3.375 3.375 0 0 0-3.285 2.602l-2.268 9.64a4.5 4.5 0 0 0-.12 1.03v.228m19.5 0a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3m19.5 0a3 3 0 0 0-3-3H5.25a3 3 0 0 0-3 3m16.5 0h.008v.008h-.008zm-3 0h.008v.008h-.008z']
+// heroicons shield-check (策略)
+const ICON_POLICY = ['M9 12.75L11.25 15L15 9.75m-3-7.036A11.96 11.96 0 0 1 3.598 6A12 12 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623c5.176-1.332 9-6.03 9-11.622c0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285']
+// heroicons key (权限与账号)
+const ICON_RBAC = ['M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25']
 
 interface K8sCluster {
   id: string
@@ -20,16 +49,18 @@ interface K8sCluster {
 
 type K8sRes =
   | 'overview'
+  | 'helm'
   | 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs'
   | 'services' | 'ingresses'
   | 'configmaps' | 'secrets'
   | 'persistentvolumes' | 'persistentvolumeclaims' | 'storageclasses'
   | 'nodes' | 'namespaces' | 'events'
   | 'networkpolicies' | 'resourcequotas'
+  | 'serviceaccounts' | 'roles' | 'rolebindings' | 'clusterroles' | 'clusterrolebindings'
 
 // 资源分组(kubevision 信息架构), 折叠状态持久化在 localStorage
-const RES_GROUPS: { key: string; label: string; defaultOpen: boolean; items: { res: K8sRes; title: string }[] }[] = [
-  { key: 'workloads', label: '工作负载', defaultOpen: true, items: [
+const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOpen: boolean; items: { res: K8sRes; title: string }[] }[] = [
+  { key: 'workloads', label: '工作负载', icon: <SideIcon paths={ICON_WORKLOADS} />, defaultOpen: true, items: [
     { res: 'pods', title: 'Pods' },
     { res: 'deployments', title: 'Deployments' },
     { res: 'statefulsets', title: 'StatefulSets' },
@@ -37,31 +68,41 @@ const RES_GROUPS: { key: string; label: string; defaultOpen: boolean; items: { r
     { res: 'jobs', title: 'Jobs' },
     { res: 'cronjobs', title: 'CronJobs' },
   ]},
-  { key: 'network', label: '网络', defaultOpen: true, items: [
+  { key: 'apps', label: '应用管理', icon: <SideIcon paths={ICON_APPS} />, defaultOpen: false, items: [
+    { res: 'helm', title: 'Helm Releases' },
+  ]},
+  { key: 'network', label: '网络', icon: <SideIcon paths={ICON_NETWORK} />, defaultOpen: true, items: [
     { res: 'services', title: 'Services' },
     { res: 'ingresses', title: 'Ingresses' },
   ]},
-  { key: 'config', label: '配置', defaultOpen: false, items: [
+  { key: 'config', label: '配置', icon: <SideIcon paths={ICON_CONFIG} />, defaultOpen: false, items: [
     { res: 'configmaps', title: 'ConfigMaps' },
     { res: 'secrets', title: 'Secrets' },
   ]},
-  { key: 'storage', label: '存储', defaultOpen: false, items: [
+  { key: 'storage', label: '存储', icon: <SideIcon paths={ICON_STORAGE} />, defaultOpen: false, items: [
     { res: 'persistentvolumes', title: 'PersistentVolumes' },
     { res: 'persistentvolumeclaims', title: 'PersistentVolumeClaims' },
     { res: 'storageclasses', title: 'StorageClasses' },
   ]},
-  { key: 'cluster', label: '集群', defaultOpen: true, items: [
+  { key: 'cluster', label: '集群', icon: <SideIcon paths={ICON_CLUSTER} sw={1.5} />, defaultOpen: true, items: [
     { res: 'nodes', title: 'Nodes' },
     { res: 'namespaces', title: 'Namespaces' },
     { res: 'events', title: 'Events' },
   ]},
-  { key: 'policy', label: '策略', defaultOpen: false, items: [
+  { key: 'policy', label: '策略', icon: <SideIcon paths={ICON_POLICY} sw={1.5} />, defaultOpen: false, items: [
     { res: 'networkpolicies', title: 'NetworkPolicies' },
     { res: 'resourcequotas', title: 'ResourceQuotas' },
   ]},
+  { key: 'rbac', label: '权限与账号', icon: <SideIcon paths={ICON_RBAC} sw={1.5} />, defaultOpen: true, items: [
+    { res: 'serviceaccounts', title: 'ServiceAccounts' },
+    { res: 'roles', title: 'Roles' },
+    { res: 'rolebindings', title: 'RoleBindings' },
+    { res: 'clusterroles', title: 'ClusterRoles' },
+    { res: 'clusterrolebindings', title: 'ClusterRoleBindings' },
+  ]},
 ]
 
-const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses'])
+const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings'])
 
 type Col = [string, string, number, ('mono' | 'dim' | 'status')?]
 const COLS: Partial<Record<K8sRes, Col[]>> = {
@@ -132,9 +173,10 @@ const COLS: Partial<Record<K8sRes, Col[]>> = {
     ['name', '名称', 40, 'mono'], ['status', '状态', 20, 'status'], ['age', '年龄', 40, 'dim'],
   ],
   events: [
-    ['lastSeen', '时间', 9, 'dim'], ['type', '级别', 9, 'status'],
-    ['reason', '原因', 13, 'mono'], ['object', '对象', 21, 'mono'],
-    ['message', '消息', 48, 'dim'],
+    ['type', '级别', 9, 'status'], ['reason', '原因', 14, 'mono'],
+    ['object', '对象', 18, 'mono'], ['namespace', '命名空间', 16, 'dim'],
+    ['count', '次数', 8], ['lastSeen', '最近', 12, 'dim'],
+    ['message', '消息', 23, 'dim'],
   ],
   networkpolicies: [
     ['name', '名称', 45, 'mono'], ['namespace', '命名空间', 30, 'dim'], ['age', '年龄', 25, 'dim'],
@@ -142,6 +184,26 @@ const COLS: Partial<Record<K8sRes, Col[]>> = {
   resourcequotas: [
     ['name', '名称', 24, 'mono'], ['namespace', '命名空间', 18, 'dim'],
     ['cpu', 'CPU(used/hard)', 25], ['memory', '内存(used/hard)', 25], ['age', '年龄', 12, 'dim'],
+  ],
+  serviceaccounts: [
+    ['name', '名称', 26, 'mono'], ['namespace', '命名空间', 20, 'dim'],
+    ['secrets', 'Secrets', 26, 'dim'], ['age', '年龄', 14, 'dim'],
+  ],
+  roles: [
+    ['name', '名称', 30, 'mono'], ['namespace', '命名空间', 20, 'dim'],
+    ['rules', '规则数', 10], ['age', '年龄', 14, 'dim'],
+  ],
+  clusterroles: [
+    ['name', '名称', 30, 'mono'],
+    ['rules', '规则数', 10], ['age', '年龄', 14, 'dim'],
+  ],
+  rolebindings: [
+    ['name', '名称', 24, 'mono'], ['namespace', '命名空间', 18, 'dim'],
+    ['role', '绑定角色', 22, 'mono'], ['subjects', '主体', 30, 'dim'], ['age', '年龄', 10, 'dim'],
+  ],
+  clusterrolebindings: [
+    ['name', '名称', 24, 'mono'],
+    ['role', '绑定角色', 22, 'mono'], ['subjects', '主体', 30, 'dim'], ['age', '年龄', 10, 'dim'],
   ],
 }
 
@@ -167,9 +229,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}') } catch { return {} }
   })
   // 资源弹层: 双击行或行内操作打开
-  const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node'; res: K8sRes; ns: string; name: string } | null>(null)
+  const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
+  const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string } | null>(null)
 
-  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node', r: any) => {
+  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe', r: any) => {
     if (!clusterID || !r?.name) return
     // 命名空间作用域解析: 集群级资源忽略 ns; 列表为"全部命名空间"时用行内自带的 namespace
     const effNs = NSLESS.has(res as K8sRes)
@@ -228,6 +291,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   }
 
   const dblRow = (r: any) => {
+    if (res === 'events') return
     if (res === 'pods') openModal('pod', r)
     else if (res === 'deployments' || res === 'statefulsets') openModal('workload', r)
     else if (res === 'nodes') openModal('node', r)
@@ -290,8 +354,25 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   useEffect(loadNsList, [clusterID])
 
   const loadRows = () => {
-    if (!clusterID || res === 'overview') return
+    if (!clusterID || res === 'overview' || res === 'helm') return
     setLoading(true)
+    if (res === 'events') {
+      getJSON<{ ok: boolean; rows: any[]; error?: string }>(`/api/plugins/containers/k8s/events/aggregate?cluster=${clusterID}&_=${Date.now()}`)
+        .then((d) => {
+          if (!d.ok) { setRows([]); setNote(d.error || ''); return }
+          const rows = (d.rows || []).slice()
+          rows.sort((a, b) => {
+            const pa = a.type === 'Warning' ? 1 : 0
+            const pb = b.type === 'Warning' ? 1 : 0
+            if (pa !== pb) return pb - pa
+            return (Number(b.count) || 0) - (Number(a.count) || 0)
+          })
+          setRows(rows); setNote('')
+        })
+        .catch((e) => { setRows([]); setNote(String(e)) })
+        .finally(() => setLoading(false))
+      return
+    }
     const nsQ = NSLESS.has(res as K8sRes) ? '' : `&ns=${encodeURIComponent(ns)}`
     getJSON<{ rows: any[]; note?: string }>(
       `/api/plugins/containers/k8s/resources?cluster=${clusterID}&res=${res}${nsQ}&_=${Date.now()}`
@@ -305,6 +386,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const cluster = clusters?.find((c) => c.id === clusterID)
 
   const onRowContext = (e: React.MouseEvent, r: any) => {
+    if (res === 'events') return
     e.preventDefault()
     e.stopPropagation()
     setCtxMenu({ x: e.clientX, y: e.clientY, row: r })
@@ -369,15 +451,16 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           <div className="k8s-side-divider" />
         </div>
         <nav className="k8s-side-nav">
-          <div className="k8s-side-item k8s-nav-item" onClick={() => setRes('create' as any)} data-res="create">
+          <div className="k8s-side-item k8s-top-item" onClick={() => setRes('create' as any)} data-res="create">
             <span>创建资源</span>
           </div>
-          <div className="k8s-side-item k8s-nav-item" onClick={() => setRes('overview' as any)} data-res="overview">
+          <div className="k8s-side-item k8s-top-item" onClick={() => setRes('overview' as any)} data-res="overview">
             <span>概览</span>
           </div>
           {RES_GROUPS.map((g) => (
             <div key={g.key} className="k8s-nav-group">
               <div className="k8s-side-group" onClick={() => toggleFold(g.key)}>
+                <span className="k8s-group-icon">{g.icon}</span>
                 <span className="k8s-group-label">{g.label}</span>
                 <span className={`k8s-fold-arrow ${isFolded(folded, g.key, g.defaultOpen) ? 'folded' : ''}`}>▾</span>
               </div>
@@ -395,11 +478,11 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
       </aside>
 
       {/* ── 主内容区 ── */}
-      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
         {!cluster ? (
           <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
             <p className="dim">尚未注册集群或未选择</p>
-            <button className="btn-glass is-accent" onClick={() => setShowReg(true)}>+ 注册第一个集群</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" onClick={() => setShowReg(true)}>+ 注册第一个集群</button>
           </div>
         ) : res === 'create' ? (
           <CreateResource
@@ -411,6 +494,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           />
         ) : res === 'overview' ? (
           <K8sOverview clusterID={clusterID} clusterName={cluster.name} />
+        ) : res === 'helm' ? (
+          <HelmPanel clusterID={clusterID} onMsg={onMsg!} />
         ) : (
             <div className="card k8s-table-card">
               <div className="card-head k8s-card-head">
@@ -428,7 +513,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 <div className="k8s-head-actions">
                   <button className="btn-glass-soft btn-glass-soft-sm" onClick={loadRows}>刷新</button>
                   {CREATE_KIND_OF[res] && (
-                    <button className="btn-glass is-accent btn-sm" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
                   )}
                 </div>
               </div>
@@ -479,8 +564,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                   {sortedRows.map((r, i) => {
                     const rk = rowKey(r, i)
                     const checked = selected.has(rk)
+                    const warnRow = res === 'events' && r.type === 'Warning'
                     return (
-                    <tr key={rk} style={{ cursor: 'pointer' }} onDoubleClick={() => dblRow(r)}
+                    <tr key={rk} style={{ cursor: 'pointer', background: warnRow ? 'rgba(239, 68, 68, 0.08)' : undefined }} onDoubleClick={() => dblRow(r)}
                       onContextMenu={(e) => onRowContext(e, r)}
                       title="双击查看详情/操作 · 右键快速操作">
                       <td style={{ padding: '0.5rem 0.375rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -504,6 +590,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                       ))}
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div className="k8s-row-actions" style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
+                          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
+                            title="基于资源类型动态展示可用操作 (kubectl 等价)"
+                            onClick={(e) => { e.stopPropagation(); setActionPanel({ res, name: r.name, ns: r.namespace || ns }) }}>操作…</button>
                           {res === 'pods' && (
                             <>
                             <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
@@ -556,12 +645,43 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           onAction={(action, extra) => {
             act({ res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns, name: ctxMenu.row.name, action, ...extra })
           }}
+          onViewDetail={() => {
+            openModal(res === 'pods' ? 'pod' : res === 'deployments' || res === 'statefulsets' ? 'workload' : res === 'nodes' ? 'node' : 'yaml', ctxMenu.row)
+            setCtxMenu(null)
+          }}
           onViewYaml={() => {
             openModal('yaml' as any, ctxMenu.row)
             setCtxMenu(null)
           }}
+          onDescribe={() => {
+            openModal('describe', ctxMenu.row)
+            setCtxMenu(null)
+          }}
           onClose={() => setCtxMenu(null)}
         />
+      )}
+
+      {/* 资源操作面板 (action-catalog 动态填充) */}
+      {actionPanel && clusterID && (
+        <div className="modal-overlay" onClick={() => setActionPanel(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720, width: '90vw' }}>
+            <h3>资源操作 — {actionPanel.res}/{actionPanel.name}</h3>
+            <p className="dim" style={{ marginTop: '0.25rem', fontSize: '0.8125rem' }}>
+              按资源类型动态展示可用操作 (kubectl 子命令等价)。
+              流式操作(进入终端/日志跟随)请用「详情」弹层里的对应按钮。
+            </p>
+            <div style={{ marginTop: '0.75rem' }}>
+              <K8sActionPanel
+                res={actionPanel.res} name={actionPanel.name}
+                ns={actionPanel.ns} cluster={clusterID}
+                onMsg={onMsg}
+                onClose={() => setActionPanel(null)} />
+            </div>
+            <div className="btn-row" style={{ marginTop: '1rem', justifyContent: 'flex-end' }}>
+              <button className="btn-glass-soft" onClick={() => setActionPanel(null)}>关闭</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 集群右键菜单 */}
@@ -601,6 +721,8 @@ const CREATE_KIND_OF: Record<string, string> = {
   deployments: 'Deployment', statefulsets: 'StatefulSet', daemonsets: 'DaemonSet',
   services: 'Service', ingresses: 'Ingress', configmaps: 'ConfigMap',
   secrets: 'Secret', cronjobs: 'CronJob', persistentvolumeclaims: 'PVC',
+  serviceaccounts: 'ServiceAccount', roles: 'Role', clusterroles: 'ClusterRole',
+  rolebindings: 'RoleBinding', clusterrolebindings: 'ClusterRoleBinding',
 }
 
 function isFolded(folded: Record<string, boolean>, key: string, defaultOpen: boolean): boolean {
@@ -892,7 +1014,7 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} onWheel={(e) => e.stopPropagation()}>
       <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modal-head">
           <div className="modal-title">注册集群</div>
@@ -933,7 +1055,7 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
 // ── 资源弹层: Pod 详情 · 工作负载管理(scale/回滚/暂停/重启) · 节点管理 · 通用 YAML 编辑 ──
 
 function ResourceModal({ info, onClose, act, onMsg }: {
-  info: { kind: 'pod' | 'workload' | 'yaml' | 'node'; res: K8sRes; ns: string; name: string; cluster: string }
+  info: { kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string; cluster: string }
   onClose: () => void
   act: (body: Record<string, any>, confirmMsg?: string) => void
   onMsg?: (m: string) => void
@@ -943,10 +1065,22 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [yamlEditing, setYamlEditing] = useState(false)
   const [detail, setDetail] = useState<any>(null)
   const [err, setErr] = useState('')
+  const [execOpen, setExecOpen] = useState(false)
+  const [logStreamOpen, setLogStreamOpen] = useState(false)
+  const [desc, setDesc] = useState('')
+  const [descBusy, setDescBusy] = useState(false)
   const [replicas, setReplicas] = useState<number | ''>('')
   const [imageDraft, setImageDraft] = useState('')
   const [revs, setRevs] = useState<any[] | null>(null)
   const [rollTo, setRollTo] = useState<number>(0)
+
+  // 容器名列表(供 exec / log-stream 弹层使用)
+  const logContainers = (): string[] => {
+    if (Array.isArray(detail?.containers)) {
+      return detail.containers.map((c: any) => c.name).filter(Boolean) as string[]
+    }
+    return []
+  }
   const [expandTo, setExpandTo] = useState('')
   const yamlReadonly = info.res === 'secrets'
   const parsed = useMemo(() => {
@@ -1000,6 +1134,13 @@ function ResourceModal({ info, onClose, act, onMsg }: {
         .then((d) => d.ok && setRevs(d.revisions || []))
         .catch(() => {})
     }
+    if (info.kind === 'describe') {
+      setDescBusy(true)
+      getJSON<{ ok: boolean; describe: string; error?: string }>(`/api/plugins/containers/k8s/describe?cluster=${info.cluster}&res=${info.res}&ns=${info.ns}&name=${info.name}`)
+        .then((d) => d.ok ? setDesc(d.describe) : setErr(d.error || 'describe 失败'))
+        .catch((e) => setErr(String(e)))
+        .finally(() => setDescBusy(false))
+    }
     getJSON<{ ok: boolean; yaml: string; error?: string }>(`/api/plugins/containers/k8s/yaml?cluster=${info.cluster}&res=${info.res}&ns=${info.ns}&name=${info.name}`)
       .then((d) => d.ok ? setYaml(d.yaml) : setErr(d.error || 'YAML 加载失败'))
       .catch((e) => setErr(String(e)))
@@ -1016,7 +1157,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} onWheel={(e) => e.stopPropagation()}>
       <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 880 }}>
         <div className="modal-head">
           <div className="modal-title">
@@ -1034,6 +1175,10 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setTab('yaml')}>YAML</button>
               <span style={{ marginLeft: 'auto' }} />
               <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '日志加载中…' : '日志'}</button>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm"
+                onClick={() => setLogStreamOpen(true)}>日志跟随</button>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
+                onClick={() => setExecOpen(true)}>进入终端</button>
               <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={(e) => { e.preventDefault(); document.getElementById('cr-exec-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>执行</button>
               <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
                 onClick={() => act({ res: 'pods', ns: info.ns, name: info.name, action: 'delete' },
@@ -1094,6 +1239,26 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                 <span className="dim">QoS</span><span>{detail.qos || '—'}</span>
                 <span className="dim">创建</span><span>{detail.createdAt}</span>
               </div>
+              {(detail.conditions || []).length > 0 && (
+                <>
+                  <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, margin: '0.625rem 0 0.375rem' }}>状态条件</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '0.375rem' }}>
+                    {(detail.conditions as any[]).map((cond) => {
+                      const ok = cond.status === 'True'
+                      return (
+                        <div key={cond.type} className="card" style={{ padding: '0.4rem 0.5rem', borderColor: ok ? 'var(--border)' : 'var(--danger, #ef4444)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600 }}>
+                            <span className={`k8s-dot ${ok ? 'k8s-dot-ok' : 'k8s-dot-bad'}`} />
+                            {cond.type}
+                            <span style={{ marginLeft: 'auto', fontSize: '0.625rem', fontWeight: 400 }} className="dim">{cond.age}</span>
+                          </div>
+                          {cond.reason && <div className="mono dim" style={{ fontSize: '0.6875rem', marginTop: 2, color: ok ? undefined : 'var(--danger, #ef4444)' }}>{cond.reason}</div>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
               <div className="table-wrap"><table className="data-table">
                 <thead><tr><th>容器</th><th>镜像</th><th>就绪</th><th>重启</th><th>状态</th><th>端口</th></tr></thead>
                 <tbody>{(detail.containers || []).map((c: any, i: number) => (
@@ -1102,7 +1267,15 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                     <td className="mono dim">{c.image}</td>
                     <td><span className={`badge ${c.ready ? 'badge-ok' : 'badge-warn'}`}>{c.ready ? 'Ready' : 'No'}</span></td>
                     <td>{c.restarts}</td>
-                    <td title={c.stateDetail}><span className={`badge ${badgeOf(c.state)}`}>{c.state}</span></td>
+                    <td>
+                      <span className={`badge ${c.state === 'running' ? 'badge-ok' : c.state === 'terminated' ? 'badge-warn' : 'badge-warn'}`}>{c.state}</span>
+                      {c.state === 'waiting' && c.stateDetail && (
+                        <span className="mono" style={{ display: 'block', fontSize: '0.6875rem', marginTop: 2, color: 'var(--danger, #ef4444)' }} title={c.stateDetail}>{c.stateDetail}</span>
+                      )}
+                      {c.state === 'terminated' && c.stateDetail && (
+                        <span className="mono dim" style={{ display: 'block', fontSize: '0.6875rem', marginTop: 2 }} title={c.stateDetail}>{c.stateDetail}</span>
+                      )}
+                    </td>
                     <td className="mono dim">{c.ports || '—'}</td>
                   </tr>
                 ))}</tbody>
@@ -1113,10 +1286,10 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                   <div className="table-wrap"><table className="data-table">
                     <thead><tr><th style={{ width: '12%' }}>级别</th><th style={{ width: '16%' }}>原因</th><th style={{ width: '58%' }}>消息</th><th style={{ width: '14%' }}>次数/时间</th></tr></thead>
                     <tbody>{detail.events.map((e: any, i: number) => (
-                      <tr key={i}>
+                      <tr key={i} style={e.type === 'Warning' ? { background: 'rgba(239, 68, 68, 0.08)' } : undefined}>
                         <td><span className={`badge ${e.type === 'Warning' ? 'badge-warn' : 'badge-ok'}`}>{e.type}</span></td>
-                        <td className="mono dim">{e.reason}</td>
-                        <td className="dim">{e.message}</td>
+                        <td className={`mono ${e.type === 'Warning' ? '' : 'dim'}`}>{e.reason}</td>
+                        <td className={e.type === 'Warning' ? '' : 'dim'}>{e.message}</td>
                         <td className="dim">{e.count}次 · {e.lastSeen}</td>
                       </tr>
                     ))}</tbody>
@@ -1390,34 +1563,61 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                 style={{ width: '100%', fontSize: '0.6875rem', lineHeight: 1.55 }} />
             </>
           )}
+
+          {/* Describe 描述 */}
+          {info.kind === 'describe' && (
+            <>
+              <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, marginBottom: '0.375rem' }}>
+                {titleOf(info.res)} {info.name} 描述 (kubectl describe 风格)
+                {descBusy && <span className="dim" style={{ fontWeight: 400 }}> · 加载中…</span>}
+              </div>
+              {!descBusy && !desc && !err && <div className="loading">加载中…</div>}
+              {desc && <pre className="code-block" style={{ maxHeight: '56vh', overflow: 'auto', fontSize: '0.75rem', whiteSpace: 'pre-wrap' }}>{desc}</pre>}
+            </>
+          )}
         </div>
       </div>
+
+      {/* 交互式 exec (WS + xterm) */}
+      {execOpen && (
+        <ExecTerminalModal
+          cluster={info.cluster} ns={info.ns} pod={info.name}
+          containers={logContainers()}
+          onClose={() => setExecOpen(false)} />
+      )}
+
+      {/* 流式日志跟随 */}
+      {logStreamOpen && (
+        <LogStreamModal
+          cluster={info.cluster} ns={info.ns} pod={info.name}
+          containers={logContainers()}
+          onClose={() => setLogStreamOpen(false)} />
+      )}
     </div>
   )
 }
 
 // ── 右键上下文菜单 ──
-function K8sContextMenu({ x, y, res, ns, name, row, onAction, onViewYaml, onClose }: {
+function K8sContextMenu({ x, y, res, ns, name, row, onAction, onViewDetail, onViewYaml, onDescribe, onClose }: {
   x: number; y: number
   res: K8sRes; ns: string; name: string; row: any
   onAction: (action: string, extra?: Record<string, any>) => void
+  onViewDetail: () => void
   onViewYaml: () => void
+  onDescribe: () => void
   onClose: () => void
 }) {
   const items: { label: string; action: string; danger?: boolean; extra?: Record<string, any>; needsConfirm?: string; type?: string }[] = []
-  items.push({ label: '查看详情', action: 'noop' })
+  items.push({ label: '查看详情', action: 'view-detail' })
   if (res === 'pods') {
     items.push({ label: '重启 Pod', action: 'delete', danger: true, extra: { grace: 0 }, needsConfirm: `重启 Pod ${name}?` })
   }
   if (res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') {
     items.push({ label: '滚动重启', action: 'restart', needsConfirm: `滚动重启 ${name}?` })
   }
-  if (res === 'deployments' || res === 'statefulsets') {
-    items.push({ label: '扩缩容...', action: 'scale-prompt' })
-  }
   items.push({ type: 'sep', label: '', action: '' })
-  items.push({ label: '编辑 YAML', action: 'view-yaml' })
   items.push({ label: 'Describe', action: 'describe' })
+  items.push({ label: '编辑 YAML', action: 'view-yaml' })
   items.push({ type: 'sep', label: '', action: '' })
   items.push({ label: '删除资源', action: 'delete', danger: true, needsConfirm: `删除 ${name}?` })
   return (
@@ -1429,7 +1629,8 @@ function K8sContextMenu({ x, y, res, ns, name, row, onAction, onViewYaml, onClos
               onClick={(e) => {
                 e.stopPropagation()
                 if (it.needsConfirm && !confirm(it.needsConfirm)) return
-                if (it.action === 'noop') { onClose() }
+                if (it.action === 'view-detail') { onViewDetail() }
+                else if (it.action === 'describe') { onDescribe() }
                 else if (it.action === 'view-yaml') { onViewYaml() }
                 else onAction(it.action, it.extra)
               }}>
@@ -1459,6 +1660,271 @@ function NodePanel({ cluster, name }: { cluster: string; name: string }) {
       <b style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(m.memMiB)}MiB</b>
       <span className="usage-bar"><span className={`usage-fill ${m.memPct > 80 ? 'bg-danger' : 'bg-ok'}`} style={{ width: `${Math.min(m.memPct, 100)}%` }} /></span>
       <span className="dim">{m.memPct.toFixed(1)}%</span>
+    </div>
+  )
+}
+
+// ── Helm Releases 管理 ──
+function HelmPanel({ clusterID, onMsg }: { clusterID: string; onMsg: (m: string) => void }) {
+  const [releases, setReleases] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [showInstall, setShowInstall] = useState(false)
+  const [detail, setDetail] = useState<any>(null)
+  const [history, setHistory] = useState<any[]>([])
+  const [values, setValues] = useState('')
+  const [detailTab, setDetailTab] = useState<'history' | 'values'>('history')
+
+  const load = () => {
+    setBusy(true)
+    getJSON<{ ok: boolean; releases: any[] }>(`/api/plugins/containers/k8s/helm/releases?cluster=${clusterID}&_=${Date.now()}`)
+      .then((d) => d.ok ? setReleases(d.releases || []) : onMsg('✗ ' + (d.error || '加载失败')))
+      .catch((e) => onMsg('✗ ' + String(e)))
+      .finally(() => setBusy(false))
+  }
+  useEffect(load, [clusterID])
+
+  useEffect(() => {
+    if (!detail) return
+    if (detailTab === 'history') {
+      getJSON<{ ok: boolean; history: any[] }>(`/api/plugins/containers/k8s/helm/history?cluster=${clusterID}&name=${detail.name}&ns=${detail.namespace}`)
+        .then((d) => d.ok && setHistory(d.history || []))
+        .catch(() => setHistory([]))
+    } else {
+      getJSON<{ ok: boolean; values: string }>(`/api/plugins/containers/k8s/helm/values?cluster=${clusterID}&name=${detail.name}&ns=${detail.namespace}`)
+        .then((d) => d.ok && setValues(d.values || ''))
+        .catch(() => setValues(''))
+    }
+  }, [detail, detailTab, clusterID])
+
+  const uninstall = (rel: any) => {
+    if (!confirm(`卸载 Release ${rel.name} (ns ${rel.namespace})? 其管理的所有资源将一并删除!`)) return
+    postJSON('/api/plugins/containers/k8s/helm/uninstall', { cluster: clusterID, name: rel.name, namespace: rel.namespace })
+      .then((d: any) => { onMsg(d.ok ? `✓ 已卸载 ${rel.name}` : '✗ ' + (d.error || '卸载失败')); if (d.ok) { setDetail(null); load() } })
+      .catch((e) => onMsg('✗ ' + String(e)))
+  }
+
+  const rollback = (rel: any, rev: number) => {
+    if (!confirm(`回滚 ${rel.name} 到 revision ${rev}?`)) return
+    postJSON('/api/plugins/containers/k8s/helm/rollback', { cluster: clusterID, name: rel.name, namespace: rel.namespace, revision: rev })
+      .then((d: any) => { onMsg(d.ok ? `✓ 已回滚 ${rel.name} 到 rev ${rev}` : '✗ ' + (d.error || '回滚失败')); if (d.ok) load() })
+      .catch((e) => onMsg('✗ ' + String(e)))
+  }
+
+  return (
+    <div className="card k8s-table-card">
+      <div className="card-head k8s-card-head">
+        <div className="k8s-head-left">
+          <span className="k8s-res-title">Helm Releases</span>
+          <span className="pill pill-sub">{busy ? '加载中…' : `${releases.length} 个`}</span>
+          <span className="dim k8s-res-hint">发布 · 升级 · 回滚 · 卸载</span>
+        </div>
+        <div className="k8s-head-actions">
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={load}>刷新</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => setShowInstall(true)}>+ 安装</button>
+        </div>
+      </div>
+      {releases.length === 0 && !busy && (
+        <div className="dim" style={{ padding: '2rem', textAlign: 'center' }}>暂无 Release, 点击"+ 安装"发布应用</div>
+      )}
+      <div className="table-wrap"><table className="data-table">
+        <thead><tr><th>名称</th><th>命名空间</th><th>版本</th><th>状态</th><th>Chart</th><th>App 版本</th><th>更新时间</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+        <tbody>
+          {releases.map((r) => (
+            <tr key={r.name + r.namespace}>
+              <td className="mono">{r.name}</td>
+              <td className="mono dim">{r.namespace}</td>
+              <td className="mono">v{r.revision}</td>
+              <td><span className={`badge ${String(r.status).toLowerCase() === 'deployed' ? 'badge-ok' : 'badge-warn'}`}>{r.status}</span></td>
+              <td className="mono dim">{r.chart}</td>
+              <td className="mono dim">{r.app_version || '—'}</td>
+              <td className="dim">{r.updated}</td>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                <div style={{ display: 'inline-flex', gap: 4 }}>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(r)}>详情</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setDetail(r); setDetailTab('history'); }}>回滚</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => uninstall(r)}>卸载</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+
+      {showInstall && <HelmInstallModal clusterID={clusterID} onClose={() => setShowInstall(false)} onDone={(ok, msg) => { onMsg(msg); setShowInstall(false); if (ok) load() }} />}
+
+      {detail && (
+        <div className="modal-overlay" onClick={() => setDetail(null)} onWheel={(e) => e.stopPropagation()}>
+          <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+            <div className="modal-head">
+              <div className="modal-title">Release: <span className="mono">{detail.name}</span></div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button className={`btn-glass-soft btn-glass-soft-sm ${detailTab === 'history' ? 'btn-accent' : ''}`} onClick={() => setDetailTab('history')}>历史</button>
+                <button className={`btn-glass-soft btn-glass-soft-sm ${detailTab === 'values' ? 'btn-accent' : ''}`} onClick={() => setDetailTab('values')}>Values</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(null)}>关闭</button>
+              </div>
+            </div>
+            <div style={{ padding: '1rem 1.25rem', maxHeight: '60vh', overflowY: 'auto' }}>
+              {detailTab === 'history' && (
+                history.length === 0 ? <div className="loading">加载历史…</div> :
+                <table className="data-table"><thead><tr><th>版本</th><th>更新时间</th><th>状态</th><th>说明</th><th></th></tr></thead><tbody>
+                  {history.map((h) => (
+                    <tr key={h.revision}>
+                      <td className="mono">v{h.revision}</td>
+                      <td className="dim">{h.updated}</td>
+                      <td><span className={`badge ${String(h.status).toLowerCase() === 'deployed' ? 'badge-ok' : 'badge-warn'}`}>{h.status}</span></td>
+                      <td className="dim">{h.description}</td>
+                      <td><button className="btn-glass-soft btn-glass-soft-sm" disabled={String(h.status).toLowerCase() === 'deployed'} onClick={() => rollback(detail, h.revision)}>回滚到此版本</button></td>
+                    </tr>
+                  ))}
+                </tbody></table>
+              )}
+              {detailTab === 'values' && (
+                <pre className="code-block" style={{ maxHeight: '48vh', overflow: 'auto', fontSize: '0.75rem', whiteSpace: 'pre-wrap' }}>{values || '(加载中或为空)'}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HelmInstallModal({ clusterID, onClose, onDone }: {
+  clusterID: string
+  onClose: () => void
+  onDone: (ok: boolean, msg: string) => void
+}) {
+  const [f, setF] = useState({ name: '', namespace: 'default', chart: '', repoName: '', repo: '', version: '', createNs: false })
+  const [values, setValues] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [charts, setCharts] = useState<any[]>([])
+  const [searching, setSearching] = useState(false)
+  const [showChartHelp, setShowChartHelp] = useState(false)
+  const [penKey, setPenKey] = useState('replicaCount')
+  const [penVal, setPenVal] = useState('')
+  const [valRows, setValRows] = useState<{ k: string; v: string }[]>([])
+  const set = (k: string, v: string | boolean) => setF((p) => ({ ...p, [k]: v }))
+
+  // 加载已注册 repo → 构建 chart 候选列表(通过 search " " 拉取全部)
+  const loadCharts = (kw = '') => {
+    setSearching(true)
+    getJSON<{ ok: boolean; charts: any[]; error?: string }>(`/api/plugins/containers/k8s/helm/search?cluster=${clusterID}&q=${encodeURIComponent(kw || ' ')}`)
+      .then((d) => { if (d.ok) setCharts(d.charts || []) })
+      .catch(() => setCharts([]))
+      .finally(() => setSearching(false))
+  }
+  useEffect(() => { loadCharts() }, [clusterID])
+
+  const addValRow = () => {
+    if (!penKey.trim()) return
+    setValRows((x) => [...x, { k: penKey.trim(), v: penVal.trim() }])
+  }
+
+  const submit = () => {
+    if (!f.name.trim() || !f.chart.trim()) { onDone(false, 'Release 名与 Chart 必填'); return }
+    const parsed: Record<string, string> = {}
+    for (const row of valRows) { if (row.k && row.v) parsed[row.k] = row.v }
+    for (const line of values.split('\n')) {
+      const t = line.trim()
+      if (!t || t.startsWith('#')) continue
+      const idx = t.indexOf('=')
+      if (idx <= 0) continue
+      const k = t.slice(0, idx).trim()
+      const v = t.slice(idx + 1).trim().replace(/^["']|["']$/g, '')
+      if (k) parsed[k] = v
+    }
+    setBusy(true)
+    postJSON('/api/plugins/containers/k8s/helm/install', {
+      cluster: clusterID, name: f.name.trim(), namespace: f.namespace.trim() || 'default',
+      chart: f.chart.trim(), version: f.version.trim(), repoName: f.repoName.trim(), repo: f.repo.trim(),
+      createNamespace: f.createNs, values: parsed, timeout: 300,
+    })
+      .then((d: any) => onDone(d.ok, d.ok ? `✓ 已发布 ${f.name}` : '✗ ' + (d.error || '发布失败')))
+      .catch((e) => onDone(false, '✗ ' + String(e)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose} onWheel={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+        <div className="modal-head">
+          <div className="modal-title">安装/升级 Helm Release</div>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
+        </div>
+        <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: 10, maxHeight: '68vh', overflowY: 'auto' }}>
+          <div className="form-row"><label>Release 名称 *</label><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="如 my-app" /></div>
+          <div className="form-row"><label>命名空间</label><input className="input" value={f.namespace} onChange={(e) => set('namespace', e.target.value)} /></div>
+
+          <div className="form-row">
+            <label>Chart * <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 8, fontSize: '0.7rem' }} onClick={() => setShowChartHelp(!showChartHelp)}>? 格式</button></label>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <input className="input" list="helm-charts" value={f.chart} onChange={(e) => set('chart', e.target.value)} placeholder="如 bitnami/nginx" />
+              <datalist id="helm-charts">{charts.map((c) => <option key={c.name} value={String(c.name || '')} />)}</datalist>
+              {searching && <span className="dim" style={{ alignSelf: 'center', fontSize: '0.7rem' }}>搜索中…</span>}
+            </div>
+            {showChartHelp && (
+              <div className="dim" style={{ fontSize: '0.7rem', marginTop: 4 }}>
+                格式: <span className="mono">repo/chart</span> (来自已注册仓库) 或 <span className="mono">path/to/chart</span>。
+                左侧下拉框自动列出已注册仓库的搜索候选。
+              </div>
+            )}
+            {charts.length > 0 && (
+              <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 90, overflowY: 'auto' }}>
+                {charts.slice(0, 16).map((c) => (
+                  <button key={c.name} className="btn-glass-soft btn-glass-soft-sm"
+                    title={`${c.description || ''} · v${c.chart_version || ''}`}
+                    onClick={() => { set('chart', String(c.name)); if (c.chart_version) set('version', String(c.chart_version)) }}>
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="form-row"><label>Chart 版本</label><input className="input" value={f.version} onChange={(e) => set('version', e.target.value)} placeholder="留空=最新; 点选右侧候选自动填入" /></div>
+          <div className="form-row"><label>新增 Repo(可选)</label>
+            <div style={{ display: 'flex', gap: 4 }} className="mono">
+              <input className="input" value={f.repoName} onChange={(e) => set('repoName', e.target.value)} placeholder="名称, 如 bitnami" style={{ width: '45%' }} />
+              <input className="input" value={f.repo} onChange={(e) => set('repo', e.target.value)} placeholder="URL https://charts.bitnami.com/bitnami" />
+            </div>
+          </div>
+          <label className="chk"><input type="checkbox" checked={f.createNs} onChange={(e) => set('createNs', e.target.checked)} /> 命名空间不存在时自动创建</label>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+            <div className="dim" style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 6 }}>Values 覆写</div>
+            <div className="form-row" style={{ border: 'none' }}>
+              <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                <input className="input mono" style={{ flex: 1 }} value={penKey} placeholder="点分键, 如 service.type" onChange={(e) => setPenKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addValRow() }} />
+                <input className="input mono" style={{ flex: 1 }} value={penVal} placeholder="值, 如 NodePort" onChange={(e) => setPenVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addValRow() }} />
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={addValRow}>+ 添加</button>
+              </div>
+            </div>
+            {valRows.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                {valRows.map((row, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input className="input mono" style={{ flex: 1 }} value={row.k}
+                      onChange={(e) => setValRows(valRows.map((r, j) => j === i ? { ...r, k: e.target.value } : r))} />
+                    <input className="input mono" style={{ flex: 1 }} value={row.v}
+                      onChange={(e) => setValRows(valRows.map((r, j) => j === i ? { ...r, v: e.target.value } : r))} />
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => setValRows(valRows.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <details style={{ marginTop: 8 }}>
+              <summary className="dim" style={{ cursor: 'pointer', fontSize: '0.7rem' }}>高级: 原始 values.yaml 覆写(每行 key=value)</summary>
+              <textarea className="input mono" rows={4} style={{ marginTop: 4, width: '100%', resize: 'vertical', boxSizing: 'border-box' }} value={values}
+                onChange={(e) => setValues(e.target.value)} placeholder={'replicaCount=2\nservice.type=NodePort'} />
+            </details>
+          </div>
+
+          <div className="modal-actions">
+            <button className="btn-glass-soft" onClick={onClose} disabled={busy}>取消</button>
+            <button className="btn-glass-soft btn-glass-soft-accent" onClick={submit} disabled={busy}>{busy ? '发布中…' : '发布'}</button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

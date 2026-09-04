@@ -48,6 +48,18 @@ type containerRunBody struct {
 	Restart    string          `json:"restart"` // no|on-failure|always|unless-stopped
 	Network    string          `json:"network,omitempty"`
 	RecreateOf string          `json:"recreateOf,omitempty"` // 非空=重建模式: 先 rm 该容器
+	// ── Run 完整参数(Docker Desktop 对标) ──
+	MemLimit      string   `json:"memLimit,omitempty"`      // 512m/1g…
+	User          string   `json:"user,omitempty"`          // --user uid:gid 或名字
+	Hostname      string   `json:"hostname,omitempty"`      // --hostname
+	CapAdd        []string `json:"capAdd,omitempty"`        // --cap-add (如 SYS_ADMIN)
+	Privileged    bool     `json:"privileged,omitempty"`    // --privileged
+	Tmpfs         []string `json:"tmpfs,omitempty"`         // --tmpfs 挂载
+	WorkDir       string   `json:"workdir,omitempty"`       // -w
+	Labels        []string `json:"labels,omitempty"`        // -l key=val
+	AutoHealth    bool     `json:"autoHealth,omitempty"`    // --health-cmd=curl loop (简化: curl -f http://127.0.0.1)
+	AddIP         string   `json:"addIP,omitempty"`         // --ip 固定容器 IP(需自定义网络)
+	ParentRestart int      `json:"restartDelay,omitempty"`  // 重启延时秒(仅 restart=on-failure 时生效)
 }
 
 // DockerContainerRunHandler POST 创建/重建容器
@@ -112,7 +124,12 @@ func DockerContainerRunHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	argv := []string{"docker", "run", "-d", "--name", b.Name}
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
+	argv := []string{rtCmd, "run", "-d", "--name", b.Name}
 	if b.Restart != "" && b.Restart != "no" {
 		argv = append(argv, "--restart="+b.Restart)
 	}
@@ -140,6 +157,52 @@ func DockerContainerRunHandler(w http.ResponseWriter, r *http.Request) {
 	for _, e := range b.Envs {
 		argv = append(argv, "-e", fmt.Sprintf("%s=%s", e.Key, e.Value))
 	}
+	// ── Run 完整参数(Docker Desktop 对标) ──
+	if b.MemLimit != "" {
+		if m := parseMemArg(b.MemLimit); m != "" {
+			argv = append(argv, "--memory", m, "--memory-swap", m)
+		} else {
+			WriteJSON(w, map[string]any{"ok": false, "error": "内存限制格式错误(如 512m/1g)"})
+			return
+		}
+	}
+	if b.User != "" && reContainerKey.MatchString(strings.ReplaceAll(b.User, ":", "_")) {
+		argv = append(argv, "--user", b.User)
+	}
+	if b.Hostname != "" && reContainerKey.MatchString(b.Hostname) {
+		argv = append(argv, "--hostname", b.Hostname)
+	}
+	if b.Privileged {
+		argv = append(argv, "--privileged")
+	}
+	for _, ca := range b.CapAdd {
+		if reContainerKey.MatchString(ca) {
+			argv = append(argv, "--cap-add", ca)
+		}
+	}
+	for _, tm := range b.Tmpfs {
+		if rePath.MatchString(tm) && strings.HasPrefix(tm, "/") {
+			argv = append(argv, "--tmpfs", tm)
+		}
+	}
+	if b.WorkDir != "" && strings.HasPrefix(b.WorkDir, "/") && rePath.MatchString(b.WorkDir) {
+		argv = append(argv, "-w", b.WorkDir)
+	}
+	for _, lb := range b.Labels {
+		if reContainerKey.MatchString(strings.SplitN(lb, "=", 2)[0]) {
+			argv = append(argv, "-l", lb)
+		}
+	}
+	if b.AutoHealth {
+		argv = append(argv, "--health-cmd", "curl -fsS http://127.0.0.1/ || exit 1",
+			"--health-interval", "10s", "--health-retries", "5")
+	}
+	if b.AddIP != "" && reHostPort.MatchString(strings.ReplaceAll(b.AddIP, ".", "0")) {
+		argv = append(argv, "--ip", b.AddIP)
+	}
+	if b.ParentRestart > 0 && b.Restart == "on-failure" {
+		argv = append(argv, fmt.Sprintf("--restart=on-failure:%d", b.ParentRestart))
+	}
 	argv = append(argv, b.Image)
 	argv = append(argv, b.Command...)
 
@@ -149,7 +212,7 @@ func DockerContainerRunHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"ok": false, "error": "非法的待重建容器名"})
 			return
 		}
-		out, rerr := RunOnTarget(b.Host, []string{"docker", "rm", "-f", b.RecreateOf})
+		out, rerr := RunOnTarget(b.Host, []string{rtCmd, "rm", "-f", b.RecreateOf})
 		if rerr != nil && !strings.Contains(out, "No such object") {
 			WriteJSON(w, map[string]any{"ok": false, "error": "删除旧容器失败: " + lastLines(out, 4)})
 			return
@@ -157,7 +220,7 @@ func DockerContainerRunHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := RunOnTarget(b.Host, argv)
 	podmanFallback := false
-	if err != nil && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
+	if err != nil && rtCmd != "podman" && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
 		argv[0] = "podman"
 		out, err = RunOnTarget(b.Host, argv)
 		podmanFallback = true
@@ -200,15 +263,20 @@ func DockerContainerConfigHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "非法容器名"})
 		return
 	}
-	out, err := RunOnTarget(hostID, []string{"docker", "inspect", name})
-	rt := "docker"
-	if err != nil {
+	rtCmd := dockerOrPodman(hostID)
+	out, err := RunOnTarget(hostID, []string{rtCmd, "inspect", name})
+	rt := rtCmd
+	if err != nil && rtCmd != "podman" {
 		out, err = RunOnTarget(hostID, []string{"podman", "inspect", name})
 		rt = "podman"
 		if err != nil {
 			WriteJSON(w, map[string]any{"ok": false, "error": lastLines(out, 4)})
 			return
 		}
+	}
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": lastLines(out, 4)})
+		return
 	}
 	var arr []map[string]any
 	if jerr := json.Unmarshal([]byte(out), &arr); jerr != nil || len(arr) == 0 {
@@ -224,6 +292,16 @@ func DockerContainerConfigHandler(w http.ResponseWriter, r *http.Request) {
 		"network": firstNetMode(c),
 		"runtime": rt,
 	}
+	if mm, ok := deep(c, "HostConfig", "Memory").(float64); ok && mm > 0 {
+		cfg["memLimit"] = fmt.Sprintf("%dm", int64(mm/1024/1024))
+	}
+	cfg["user"] = str(deep(c, "Config", "User"))
+	cfg["hostname"] = str(deep(c, "Config", "Hostname"))
+	cfg["workdir"] = str(deep(c, "Config", "WorkingDir"))
+	if priv, ok := deep(c, "HostConfig", "Privileged").(bool); ok {
+		cfg["privileged"] = priv
+	}
+	cfg["healthcheck"] = deep(c, "Config", "Healthcheck") != nil
 	// 端口: HostConfig.PortBindings
 	ports := []portMapping{}
 	if bindings, ok := deep(c, "HostConfig", "PortBindings").(map[string]any); ok {

@@ -271,15 +271,35 @@ func containerImagesBuild(r *http.Request) any {
 				if line == "" {
 					continue
 				}
-				var j struct {
-					Repository string `json:"Repository"`
-					Tag        string `json:"Tag"`
-					ID         string `json:"ID"`
-					Size       string `json:"Size"`
-				}
+				var j map[string]json.RawMessage
 				if json.Unmarshal([]byte(line), &j) == nil {
+					str := func(keys ...string) string {
+						for _, k := range keys {
+							if raw, ok := j[k]; ok {
+								var s string
+								if json.Unmarshal(raw, &s) == nil {
+									return s
+								}
+							}
+						}
+						return ""
+					}
+					size := ""
+					for _, k := range []string{"Size", "size"} {
+						if raw, ok := j[k]; ok {
+							var n int64
+							if json.Unmarshal(raw, &n) == nil && n > 0 {
+								size = humanBytes(n)
+								break
+							}
+						}
+					}
 					images = append(images, map[string]string{
-						"repo": j.Repository, "tag": j.Tag, "id": shortID(j.ID), "size": j.Size,
+						// podman 输出为小写 repository/tag + Id; docker 为 Repository/Tag/ID
+						"repo": str("Repository", "repository"),
+						"tag":  str("Tag", "tag"),
+						"id":   shortID(str("ID", "Id", "id")),
+						"size": size,
 					})
 				}
 			}

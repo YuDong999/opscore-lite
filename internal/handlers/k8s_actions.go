@@ -92,6 +92,54 @@ func K8sYamlHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{"ok": true, "yaml": y})
 }
 
+// K8sDescribeHandler GET ?cluster=&res=&ns=&name= — kubectl describe 风格只读文本。
+func K8sDescribeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	cluster, res, ns, name, ok := k8sTarget(r)
+	if !ok || res == "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	text, err := k8sMgr.DescribeResource(ctx, cluster, res, ns, name)
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true, "describe": text})
+}
+
+// K8sEventsAggregateHandler GET ?cluster= — 全集群事件按 reason+对象 聚合。
+func K8sEventsAggregateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	cluster := r.URL.Query().Get("cluster")
+	if !reK8sClusterID.MatchString(cluster) {
+		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	rows, err := k8sMgr.AggregateEvents(ctx, cluster)
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true, "rows": rows})
+}
+
 // ===== 可视化创建(apply) =====
 
 type k8sApplyBody struct {

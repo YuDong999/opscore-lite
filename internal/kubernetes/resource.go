@@ -46,6 +46,11 @@ var (
 	gvrCronJobs      = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 	gvrStorageClasse = schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
 	gvrQuotas        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
+	gvrSAs           = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}
+	gvrRoles         = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}
+	gvrClusterRoles  = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}
+	gvrRoleBindings  = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}
+	gvrCRBindings    = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}
 )
 
 // ValidResource 校验资源名白名单。
@@ -55,7 +60,8 @@ func ValidResource(res string) bool {
 		"services", "ingresses", "configmaps", "secrets",
 		"persistentvolumes", "persistentvolumeclaims", "storageclasses",
 		"nodes", "namespaces", "events",
-		"networkpolicies", "resourcequotas", "ingressclasses":
+		"networkpolicies", "resourcequotas", "ingressclasses",
+		"serviceaccounts", "roles", "rolebindings", "clusterroles", "clusterrolebindings":
 		return true
 	}
 	return false
@@ -101,6 +107,16 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrEvents
 	case "namespaces":
 		return gvrNamespaces
+	case "serviceaccounts":
+		return gvrSAs
+	case "roles":
+		return gvrRoles
+	case "clusterroles":
+		return gvrClusterRoles
+	case "rolebindings":
+		return gvrRoleBindings
+	case "clusterrolebindings":
+		return gvrCRBindings
 	}
 	return schema.GroupVersionResource{}
 }
@@ -108,7 +124,8 @@ func gvrOf(res string) schema.GroupVersionResource {
 // nsFor 决定列表的命名空间作用域: 集群级资源忽略 ns, 其余空串=All Namespaces。
 func nsFor(ns, res string) string {
 	switch res {
-	case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses":
+	case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses",
+		"clusterroles", "clusterrolebindings":
 		return ""
 	default:
 		return ns
@@ -138,6 +155,54 @@ func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) 
 		}
 	}
 	sortRows(out)
+	return out, nil
+}
+
+// AggregateEvents 聚合全集群事件: 按 reason+对象 分组, 求和 count, 取最近时间。
+// 返回行含 type/object/reason/namespace/count/lastSeen, 字母序, 由前端按优先级再排。
+func (m *Manager) AggregateEvents(ctx context.Context, clusterID string) ([]map[string]any, error) {
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := dyn.Resource(gvrEvents).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list events in %s: %w", clusterID, err)
+	}
+	now := time.Now()
+	type key struct {
+		t, r, ns, obj string
+	}
+	agg := map[key]*map[string]any{}
+	var order []key
+	for i := range list.Items {
+		var e corev1.Event
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(list.Items[i].Object, &e) != nil {
+			continue
+		}
+		k := key{e.Type, e.Reason, e.Namespace, e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name}
+		row, ok := agg[k]
+		if !ok {
+			last := ""
+			if !e.LastTimestamp.IsZero() {
+				last = humanAge(e.LastTimestamp.Time, now)
+			}
+			agg[k] = &map[string]any{
+				"type": e.Type, "reason": e.Reason, "object": k.obj,
+				"namespace": k.ns, "count": e.Count, "lastSeen": last,
+			}
+			order = append(order, k)
+		} else {
+			(*row)["count"] = (*row)["count"].(int32) + e.Count
+			if !e.LastTimestamp.IsZero() {
+				(*row)["lastSeen"] = humanAge(e.LastTimestamp.Time, now)
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, k := range order {
+		out = append(out, *agg[k])
+	}
 	return out, nil
 }
 
@@ -266,6 +331,29 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 		return map[string]any{
 			"name": name, "namespace": ns, "age": age,
 		}, nil
+	case "serviceaccounts":
+		var sa corev1.ServiceAccount
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &sa); err != nil {
+			return nil, err
+		}
+		secrets := make([]string, 0, len(sa.Secrets))
+		for _, s := range sa.Secrets {
+			secrets = append(secrets, s.Name)
+		}
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"secrets": strings.Join(secrets, ","), "age": age,
+		}, nil
+	case "roles", "clusterroles":
+		return map[string]any{
+			"name": name, "namespace": ns, "rules": rbacRulesCount(it.Object), "age": age,
+		}, nil
+	case "rolebindings", "clusterrolebindings":
+		subjects, roleRef := rbacBindSummary(it.Object)
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"role": roleRef, "subjects": subjects, "age": age,
+		}, nil
 	case "resourcequotas":
 		row, err := quotaRow(it.Object)
 		return row, err
@@ -294,6 +382,41 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 		return map[string]any{"name": name, "controller": controller, "age": age}, nil
 	}
 	return nil, fmt.Errorf("unsupported resource %q", res)
+}
+
+// rbacRulesCount 统计 Role/ClusterRole 的 rules 条数。
+func rbacRulesCount(obj map[string]any) int {
+	rules, _, _ := unstructured.NestedSlice(obj, "rules")
+	return len(rules)
+}
+
+// rbacBindSummary 汇总 RoleBinding/ClusterRoleBinding 的 roleRef 与 subjects。
+func rbacBindSummary(obj map[string]any) (subjects, roleRef string) {
+	if k, _, _ := unstructured.NestedString(obj, "roleRef", "name"); k != "" {
+		kr, _, _ := unstructured.NestedString(obj, "roleRef", "kind")
+		roleRef = kr + "/" + k
+	}
+	subs, _, _ := unstructured.NestedSlice(obj, "subjects")
+	parts := make([]string, 0, len(subs))
+	for _, s := range subs {
+		m, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		k := strings.Builder{}
+		kind, _ := m["kind"].(string)
+		nm, _ := m["name"].(string)
+		nsName, _ := m["namespace"].(string)
+		k.WriteString(kind)
+		k.WriteString(":")
+		if kind == "ServiceAccount" && nsName != "" {
+			k.WriteString(nsName)
+			k.WriteString("/")
+		}
+		k.WriteString(nm)
+		parts = append(parts, k.String())
+	}
+	return strings.Join(parts, ", "), roleRef
 }
 
 func sortRows(rows []map[string]any) {
@@ -824,6 +947,12 @@ var kindToRes = map[string]string{
 	"Job":                   "jobs",
 	"PersistentVolumeClaim": "persistentvolumeclaims",
 	"Ingress":               "ingresses",
+	"ServiceAccount":        "serviceaccounts",
+	"Role":                  "roles",
+	"ClusterRole":           "clusterroles",
+	"RoleBinding":           "rolebindings",
+	"ClusterRoleBinding":    "clusterrolebindings",
+	"Namespace":             "namespaces",
 }
 
 // ApplyResourceYAML 创建(或覆盖更新)单个资源对象。
@@ -971,4 +1100,223 @@ func (m *Manager) GetReplicas(ctx context.Context, clusterID, res, ns, name stri
 	st, _ := sc.Object["status"].(map[string]any)
 	ready, _ = st["replicas"].(int64)
 	return spec, ready, nil
+}
+
+// DescribeResource 生成 kubectl describe 风格的只读文本: 对象 YAML + 关联事件。
+func (m *Manager) DescribeResource(ctx context.Context, clusterID, res, ns, name string) (string, error) {
+	if !ValidResource(res) || res == "overview" || res == "events" || res == "namespaces" {
+		return "", fmt.Errorf("unsupported resource %q", res)
+	}
+	effNs := nsFor(ns, res)
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return "", err
+	}
+	u, err := dyn.Resource(gvrOf(res)).Namespace(effNs).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("get %s %s/%s: %w", res, effNs, name, err)
+	}
+	var b strings.Builder
+
+	// ---- 头部 ----
+	kind, _ := u.Object["kind"].(string)
+	apiVer, _ := u.Object["apiVersion"].(string)
+	fmt.Fprintf(&b, "Name:         %s\n", name)
+	fmt.Fprintf(&b, "Namespace:    %s\n", effNs)
+	fmt.Fprintf(&b, "Kind:         %s\n", kind)
+	if apiVer != "" {
+		fmt.Fprintf(&b, "APIVersion:   %s/%s\n", groupOf(kind), apiVer)
+	}
+	if l := u.GetLabels(); len(l) > 0 {
+		fmt.Fprintf(&b, "Labels:       %s\n", labelsInline(l))
+	}
+	if a := u.GetAnnotations(); len(a) > 0 {
+		fmt.Fprintf(&b, "Annotations:  %s\n", labelsInline(a))
+	}
+	fmt.Fprintf(&b, "Created:      %s\n", u.GetCreationTimestamp().Format(time.RFC3339))
+
+	// ---- Pod 专属 ----
+	if res == "pods" {
+		var p corev1.Pod
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &p) == nil {
+			describePod(&b, &p)
+		}
+	}
+
+	// ---- 对象 YAML ----
+	obj := u.Object
+	if meta, ok := obj["metadata"].(map[string]any); ok {
+		delete(meta, "managedFields")
+	}
+	if res == "secrets" {
+		if data, ok := obj["data"].(map[string]any); ok {
+			masked := map[string]any{}
+			for k, v := range data {
+				if s, ok := v.(string); ok {
+					masked[k] = fmt.Sprintf("**%d bytes**", len(s))
+				}
+			}
+			obj["data"] = masked
+		}
+		delete(obj, "immutable")
+	}
+	fmt.Fprintf(&b, "\n---- Manifest ----\n")
+	if y, err := sigsyaml.Marshal(obj); err == nil {
+		b.WriteString(string(y))
+	}
+
+	// ---- 事件 ----
+	sel := "involvedObject.name=" + name
+	if strings.TrimSpace(ns) != "" {
+		sel = "involvedObject.namespace=" + ns
+	}
+	evs, err := dyn.Resource(gvrEvents).Namespace(effNs).List(ctx, metav1.ListOptions{FieldSelector: sel})
+	if err == nil {
+		fmt.Fprintf(&b, "\n---- Events (%d) ----\n", len(evs.Items))
+		if len(evs.Items) == 0 {
+			fmt.Fprintf(&b, "  <none>\n")
+		} else {
+			sort.Slice(evs.Items, func(i, j int) bool {
+				ti, _ := evs.Items[i].Object["lastTimestamp"].(string)
+				tj, _ := evs.Items[j].Object["lastTimestamp"].(string)
+				return ti > tj
+			})
+			fmt.Fprintf(&b, "  Type    Reason              Age   Message\n")
+			for i := range evs.Items {
+				o := evs.Items[i].Object
+				typ, _ := o["type"].(string)
+				reason, _ := o["reason"].(string)
+				msg, _ := o["message"].(string)
+				count, _ := o["count"].(int64)
+				last, _ := o["lastTimestamp"].(string)
+				age := humanAgeString(last)
+				marker := "  "
+				if typ == "Warning" {
+					marker = "! "
+				}
+				fmt.Fprintf(&b, "%s%-6s %-20s %-6s %dx %s\n", marker, typ, reason, age, count, msg)
+			}
+		}
+	}
+	return b.String(), nil
+}
+
+// describePod 输出 kubectl describe pod 风格的容器/条件/卷诊断文本。
+func describePod(b *strings.Builder, p *corev1.Pod) {
+	now := time.Now()
+	fmt.Fprintf(b, "Status:       %s\n", p.Status.Phase)
+	if p.Spec.NodeName != "" {
+		fmt.Fprintf(b, "Node:         %s\n", p.Spec.NodeName)
+	}
+	if p.Status.PodIP != "" {
+		fmt.Fprintf(b, "IP:           %s\n", p.Status.PodIP)
+	}
+	if p.Status.HostIP != "" {
+		fmt.Fprintf(b, "HostIP:       %s\n", p.Status.HostIP)
+	}
+	if q := p.Status.QOSClass; q != "" {
+		fmt.Fprintf(b, "QoS Class:    %s\n", q)
+	}
+	if len(p.Status.InitContainerStatuses) > 0 {
+		fmt.Fprintf(b, "\nInit Containers:\n")
+		for _, cs := range p.Status.InitContainerStatuses {
+			fmt.Fprintf(b, "  %-20s image=%s\n", cs.Name, cs.Image)
+			fmt.Fprintf(b, "    State: %s\n", containerStateText(cs.State, now))
+			fmt.Fprintf(b, "    Ready: %v  RestartCount: %d\n", cs.Ready, cs.RestartCount)
+		}
+	}
+	fmt.Fprintf(b, "\nContainers:\n")
+	for _, cs := range p.Status.ContainerStatuses {
+		fmt.Fprintf(b, "  %-20s image=%s\n", cs.Name, cs.Image)
+		fmt.Fprintf(b, "    State: %s\n", containerStateText(cs.State, now))
+		fmt.Fprintf(b, "    Ready: %v  RestartCount: %d\n", cs.Ready, cs.RestartCount)
+	}
+	if len(p.Status.Conditions) > 0 {
+		fmt.Fprintf(b, "\nConditions:\n")
+		fmt.Fprintf(b, "  Type             Status  Reason            Message\n")
+		for _, c := range p.Status.Conditions {
+			fmt.Fprintf(b, "  %-16s %-7s %-18s %s\n", string(c.Type), string(c.Status), c.Reason, c.Message)
+		}
+	}
+	if len(p.Spec.Volumes) > 0 {
+		fmt.Fprintf(b, "\nVolumes:\n")
+		for _, v := range p.Spec.Volumes {
+			src := "emptyDir"
+			switch {
+			case v.ConfigMap != nil:
+				src = "configmap/" + v.ConfigMap.Name
+			case v.Secret != nil:
+				src = "secret/" + v.Secret.SecretName
+			case v.PersistentVolumeClaim != nil:
+				src = "pvc/" + v.PersistentVolumeClaim.ClaimName
+			case v.HostPath != nil:
+				src = "hostPath:" + v.HostPath.Path
+			}
+			fmt.Fprintf(b, "  %s: %s\n", v.Name, src)
+		}
+	}
+}
+
+// containerStateText 人类可读的容器状态(kubectl describe 风格), 含等待原因。
+func containerStateText(s corev1.ContainerState, now time.Time) string {
+	if s.Running != nil {
+		return "Running (started " + humanAge(s.Running.StartedAt.Time, now) + " ago)"
+	}
+	if s.Terminated != nil {
+		return fmt.Sprintf("Terminated (exit=%d, reason=%s, started %s, finished %s)",
+			s.Terminated.ExitCode, orDash(s.Terminated.Reason),
+			s.Terminated.StartedAt.Time.Format("15:04:05"), s.Terminated.FinishedAt.Time.Format("15:04:05"))
+	}
+	if s.Waiting != nil {
+		// 突出常见故障原因
+		reason := s.Waiting.Reason
+		if reason == "" {
+			reason = "Wait"
+		}
+		return fmt.Sprintf("Waiting (%s)", reason)
+	}
+	return "Waiting"
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func groupOf(kind string) string {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
+		return "apps"
+	case "Job", "CronJob":
+		return "batch"
+	case "Ingress", "NetworkPolicy":
+		return "networking.k8s.io"
+	}
+	return "v1"
+}
+
+func labelsInline(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+m[k])
+	}
+	return strings.Join(parts, ", ")
+}
+
+func humanAgeString(ts string) string {
+	if ts == "" {
+		return "?"
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return humanAge(t, time.Now())
 }

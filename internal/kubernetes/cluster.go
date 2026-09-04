@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -85,6 +86,16 @@ func (m *Manager) RESTConfig(id string) (*rest.Config, error) {
 		return nil, fmt.Errorf("cluster %q not found", id)
 	}
 	return rest.CopyConfig(cs.restConfig), nil
+}
+
+// Clientset 返回指定集群的 typed kubernetes clientset
+// 供 handlers (exec/logs 等) 使用, 替代 ops.go 私有 clientsetFor。
+func (m *Manager) Clientset(id string) (*k8sclient.Clientset, error) {
+	cfg, err := m.RESTConfig(id)
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.NewForConfig(cfg)
 }
 
 // Probe 探测 API Server 连通性并返回版本信息。仅访问 /api 与 /version, 只读凭据即可。

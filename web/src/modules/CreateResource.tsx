@@ -13,6 +13,11 @@ type Volume = { type: 'configmap' | 'secret' | 'pvc'; name: string; mountPath: s
 type EnvFrom = { type: 'configmap' | 'secret'; name: string }
 type IngressPath = { path: string; pathType: string; svc: string; svcPort: string }
 type IngressRule = { host: string; paths: IngressPath[] }
+type RbacRule = { apiGroups: string; resources: string; verbs: string; resourceNames: string; nonResourceURLs: string }
+type RbacSubject = { kind: string; name: string; namespace: string }
+
+// 权限建模: 用 RbacKind 标记关系(role/clusterrole 有 rules; binding 有 subjects+roleRef; sa 无 rules)
+type RbacKind = 'Role' | 'ClusterRole' | 'RoleBinding' | 'ClusterRoleBinding' | 'ServiceAccount'
 
 // 主题色线性图标(feather 风格, currentColor 跟随主题), 替代 emoji
 function KindIcon({ kind, size = 13 }: { kind: string; size?: number }) {
@@ -25,6 +30,11 @@ function KindIcon({ kind, size = 13 }: { kind: string; size?: number }) {
     Secret: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
     CronJob: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
     PVC: <><line x1="22" y1="12" x2="2" y2="12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /><line x1="6" y1="16" x2="6.01" y2="16" /><line x1="10" y1="16" x2="10.01" y2="16" /></>,
+    Role: <><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /><path d="M7 3v18M5 21l2-2 2 2M18 3v5" /></>,
+    ClusterRole: <><circle cx="10" cy="8" r="5" /><line x1="2" y1="21" x2="10" y2="21" /><line x1="4" y1="16.5" x2="16" y2="16.5" /><line x1="16" y1="21" x2="22" y2="21" /></>,
+    RoleBinding: <><circle cx="6" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="M9 9l6 6" /><path d="M6 12V9M6 12a7 7 0 0 1 6-6M12 18h3M12 18a7 7 0 0 0 6-6" /></>,
+    ClusterRoleBinding: <><rect x="3" y="12" width="7" height="7" rx="1" /><rect x="14" y="5" width="7" height="7" rx="1" /><path d="M10 15.5H12a4 4 0 0 0 4-4v-6" /></>,
+    ServiceAccount: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
   }
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -44,6 +54,11 @@ const KINDS = [
   { k: 'Secret', res: 'secrets', desc: '敏感数据' },
   { k: 'CronJob', res: 'cronjobs', desc: '定时任务' },
   { k: 'PVC', res: 'persistentvolumeclaims', desc: '存储申请' },
+  { k: 'ServiceAccount', res: 'serviceaccounts', desc: 'Pod 内进程访问 apiserver 的身份' },
+  { k: 'Role', res: 'roles', desc: '命名空间级权限规则' },
+  { k: 'ClusterRole', res: 'clusterroles', desc: '集群级权限规则' },
+  { k: 'RoleBinding', res: 'rolebindings', desc: '命名空间内把角色绑定到主体' },
+  { k: 'ClusterRoleBinding', res: 'clusterrolebindings', desc: '集群级把角色绑定到主体' },
 ]
 
 const AM = [['ReadWriteOnce', 'RWO'], ['ReadOnlyMany', 'ROX'], ['ReadWriteMany', 'RWX']] as const
@@ -62,6 +77,11 @@ type Model = {
   dataItems: Kv[]; secretType: string
   schedule: string; command: string
   storage: string; storageClass: string; accessModes: string[]
+  rbacKind: string
+  rbacRules: RbacRule[]
+  rbacSubjects: RbacSubject[]
+  rbacRoleRefKind: string; rbacRoleRefName: string
+  rbacTo: string
 }
 
 const blank = (kind: string): Model => ({
@@ -76,6 +96,11 @@ const blank = (kind: string): Model => ({
   dataItems: [], secretType: 'Opaque',
   schedule: '*/10 * * * *', command: '',
   storage: '5Gi', storageClass: '', accessModes: ['ReadWriteOnce'],
+  rbacKind: kind,
+  rbacRules: [{ apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }],
+  rbacSubjects: [{ kind: 'User', name: '', namespace: '' }],
+  rbacRoleRefKind: '', rbacRoleRefName: '',
+  rbacTo: 'namespace',
 })
 
 // ── 集群已有资源选项(严格下拉数据源) ──
@@ -237,6 +262,49 @@ function buildManifest(m: Model): Record<string, any> | null {
         resources: { requests: { storage: m.storage || '5Gi' } },
       }
       break
+    case 'ServiceAccount':
+      delete out.spec
+      break
+    case 'Role':
+    case 'ClusterRole': {
+      out.apiVersion = 'rbac.authorization.k8s.io/v1'
+      // ClusterRole 为集群级资源, 不应携带 namespace
+      if (m.kind === 'ClusterRole') delete meta.namespace
+      else meta.namespace = m.ns || 'default'
+      const rules = m.rbacRules.filter((r) => r.resources.trim() || r.nonResourceURLs.trim())
+      out.rules = rules.map((r) => {
+        const rule: any = {}
+        if (r.nonResourceURLs.trim()) {
+          rule.nonResourceURLs = r.nonResourceURLs.split(',').map((s) => s.trim()).filter(Boolean)
+          rule.verbs = (r.verbs || 'get').split(',').map((s) => s.trim()).filter(Boolean)
+          return rule
+        }
+        rule.apiGroups = r.apiGroups.trim() ? r.apiGroups.split(',').map((s) => s.trim()).filter(Boolean).map((s) => s === '""' ? '' : s) : ['']
+        rule.resources = r.resources.split(',').map((s) => s.trim()).filter(Boolean)
+        rule.verbs = r.verbs.split(',').map((s) => s.trim()).filter(Boolean)
+        if (r.resourceNames.trim()) rule.resourceNames = r.resourceNames.split(',').map((s) => s.trim()).filter(Boolean)
+        return rule
+      })
+      break
+    }
+    case 'RoleBinding':
+    case 'ClusterRoleBinding': {
+      out.apiVersion = 'rbac.authorization.k8s.io/v1'
+      if (m.kind === 'RoleBinding') out.roleRef = { apiGroup: 'rbac.authorization.k8s.io', kind: m.rbacRoleRefKind || 'Role', name: m.rbacRoleRefName }
+      else out.roleRef = { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: m.rbacRoleRefName }
+      const subs = m.rbacSubjects.filter((s) => s.name.trim())
+      out.subjects = subs.map((s) => {
+        const sub: any = { kind: s.kind, name: s.name.trim() }
+        if (s.kind === 'ServiceAccount') {
+          const [nsName, saName] = s.name.trim().split('/')
+          if (nsName && saName) { sub.namespace = nsName; sub.name = saName }
+          else if (m.ns && s.kind === 'ServiceAccount') sub.namespace = m.ns
+        } else sub.apiGroup = 'rbac.authorization.k8s.io'
+        return sub
+      })
+      if (!out.subjects.length) return null
+      break
+    }
   }
   return out
 }
@@ -660,6 +728,99 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
               <Section title="标签与注解">
                 <F label="labels"><KvRows items={m.extraLabels} onChange={(x) => set({ extraLabels: x })} kHint="key" vHint="value" /></F>
                 <F label="annotations"><KvRows items={m.annotations} onChange={(x) => set({ annotations: x })} kHint="key" vHint="value" /></F>
+              </Section>
+            </>
+          )}
+
+          {/* ── RBAC ── */}
+          {m.kind === 'ServiceAccount' && (
+            <span className="dim" style={{ fontSize: '0.6875rem' }}>ServiceAccount 仅需名称与命名空间, 创建后会自动生成关联 token Secret, 权限由绑定(RoleBinding/ClusterRoleBinding)授予。</span>
+          )}
+
+          {(m.kind === 'Role' || m.kind === 'ClusterRole') && (
+            <>
+              <Section title="权限规则(Rules)" defaultOpen badge={'apiGroups 留空或写 "" 表示核心组'}>
+                <RowList rows={m.rbacRules}
+                  onDelete={(i) => set({ rbacRules: m.rbacRules.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ rbacRules: [...m.rbacRules, { apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }] })} addLabel="+ 规则">
+                  {(r, i) => {
+                    const upd = (patch: Partial<RbacRule>) => { const n = [...m.rbacRules]; n[i] = { ...r, ...patch }; set({ rbacRules: n }) }
+                    return (<>
+                      {r.nonResourceURLs.trim() ? (
+                        <input className={IN} value={r.nonResourceURLs} placeholder="非资源路径 /healthz,/healthz/*" style={{ minWidth: 260 }} onChange={(e) => upd({ nonResourceURLs: e.target.value })} />
+                      ) : (
+                        <>
+                          <input className={IN} value={r.apiGroups} placeholder='apiGroups(逗号分隔, ""=核心组)' style={{ minWidth: 200 }} onChange={(e) => upd({ apiGroups: e.target.value })} />
+                          <input className={IN} value={r.resources} placeholder="resources: pods,pods/log" style={{ minWidth: 220 }} onChange={(e) => upd({ resources: e.target.value })} />
+                          <input className={IN} value={r.resourceNames} placeholder="resourceNames(可选)" style={{ minWidth: 160 }} onChange={(e) => upd({ resourceNames: e.target.value })} />
+                        </>
+                      )}
+                      <input className={IN} value={r.verbs} placeholder="verbs: get,list,watch" style={{ minWidth: 180 }} onChange={(e) => upd({ verbs: e.target.value })} />
+                      <label style={{ display: 'flex', gap: 2, fontSize: '0.7rem', alignItems: 'center', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={!!r.nonResourceURLs.trim()}
+                          onChange={(e) => { if (e.target.checked) upd({ nonResourceURLs: '/healthz', resources: '', resourceNames: '' }) ; else upd({ nonResourceURLs: '', verbs: 'get,list,watch' }) }} />
+                        非资源路径
+                      </label>
+                    </>)
+                  }}
+                </RowList>
+              </Section>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                {m.kind === 'ClusterRole'
+                  ? 'ClusterRole 为集群级角色(可授权 Node/非资源路径/全部命名空间等), 不含命名空间。'
+                  : 'Role 仅在该命名空间内生效。'}
+              </span>
+            </>
+          )}
+
+          {(m.kind === 'RoleBinding' || m.kind === 'ClusterRoleBinding') && (
+            <>
+              <Grid cols={2}>
+                <F label="绑定角色(roleRef) *">
+                  {m.kind === 'RoleBinding' ? (
+                    <>
+                      <input className={IN} value={m.rbacRoleRefName} placeholder="角色名, 如 pod-read" onChange={(e) => set({ rbacRoleRefName: e.target.value })} />
+                      <span className="dim" style={{ fontSize: '0.6875rem' }}>可绑定本命名空间的 Role 或任意 ClusterRole</span>
+                    </>
+                  ) : (
+                    <input className={IN} value={m.rbacRoleRefName} placeholder="ClusterRole 名, 如 cluster-admin" onChange={(e) => set({ rbacRoleRefName: e.target.value })} />
+                  )}
+                </F>
+                {m.kind === 'RoleBinding' && (
+                  <F label="角色类型">
+                    <select className={`${IN} sel`} value={m.rbacRoleRefKind} onChange={(e) => set({ rbacRoleRefKind: e.target.value })}>
+                      <option value="Role">Role(命名空间)</option>
+                      <option value="ClusterRole">ClusterRole(集群)</option>
+                    </select>
+                  </F>
+                )}
+              </Grid>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                {m.kind === 'RoleBinding' ? 'RoleBinding 仅在当前命名空间生效。' : 'ClusterRoleBinding 全局生效。'}
+              </span>
+              <Section title="主体(Subjects)" defaultOpen>
+                <RowList rows={m.rbacSubjects}
+                  onDelete={(i) => set({ rbacSubjects: m.rbacSubjects.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ rbacSubjects: [...m.rbacSubjects, { kind: 'User', name: '', namespace: '' }] })} addLabel="+ 主体">
+                  {(s, i) => {
+                    const upd = (patch: Partial<RbacSubject>) => { const n = [...m.rbacSubjects]; n[i] = { ...s, ...patch }; set({ rbacSubjects: n }) }
+                    return (<>
+                      <select className={IN} value={s.kind} onChange={(e) => { upd({ kind: e.target.value, namespace: e.target.value === 'ServiceAccount' ? m.ns : '' }) }}>
+                        <option value="User">User(用户)</option>
+                        <option value="Group">Group(组)</option>
+                        <option value="ServiceAccount">ServiceAccount</option>
+                      </select>
+                      {s.kind === 'ServiceAccount' ? (
+                        <input className={IN} value={s.name} placeholder="ns/名称, 如 default/my-sa" style={{ minWidth: 200 }} onChange={(e) => upd({ name: e.target.value })} />
+                      ) : (
+                        <input className={IN} value={s.name} placeholder={s.kind === 'Group' ? '组名, 如 system:serviceaccounts' : '用户名, 如 alice'} style={{ minWidth: 200 }} onChange={(e) => upd({ name: e.target.value })} />
+                      )}
+                      <span className="dim" style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap', alignSelf: 'center' }}>
+                        {s.kind === 'ServiceAccount' ? '格式 ns/name' : 'apiGroup: rbac.authorization.k8s.io'}
+                      </span>
+                    </>)
+                  }}
+                </RowList>
               </Section>
             </>
           )}

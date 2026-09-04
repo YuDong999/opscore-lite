@@ -7,12 +7,14 @@ import Card from '../components/Card'
 import { useHost } from '../components/HostContext'
 import { getJSON, postJSON } from '../api/client'
 
-// 迷你线性图标(16px, stroke 继承 currentColor)
-type Section = 'containers' | 'images' | 'registries' | 'build' | 'compose' | 'swarm'
+// 侧栏图标 — 正式图标库混搭, 均为各库官方 path (16px 与 K8s 侧栏一致)
+type Section = 'containers' | 'images' | 'registries' | 'build' | 'compose' | 'swarm' | 'volumes' | 'networks'
 
 const SECTIONS: { key: Section; title: string; desc: string }[] = [
   { key: 'containers', title: '容器', desc: '启停 / 删除 / 日志 / 详情' },
   { key: 'images', title: '镜像', desc: '列表 / 拉取 / 删除' },
+  { key: 'volumes', title: 'Volumes', desc: '卷列表 / 创建 / 删除' },
+  { key: 'networks', title: 'Networks', desc: '网络列表 / 创建 / 删除' },
   { key: 'registries', title: '镜像源', desc: '加速地址 / insecure' },
   { key: 'build', title: '构建镜像', desc: 'Dockerfile 在线构建' },
   { key: 'compose', title: 'Compose', desc: '项目编排 up/down/ps' },
@@ -20,14 +22,24 @@ const SECTIONS: { key: Section; title: string; desc: string }[] = [
 ]
 
 const SectionIcon = ({ name }: { name: string }) => {
-  const common = { width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  const base = (sw: number) => ({ width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: sw, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const })
   switch (name) {
-    case 'containers': return <svg {...common}><path d="M3 9h18M9 3v18M4.5 3h15A1.5 1.5 0 0 1 21 4.5v15a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-15A1.5 1.5 0 0 1 4.5 3z" /></svg>
-    case 'images': return <svg {...common}><path d="M12 2l10 5-10 5L2 7l10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
-    case 'registries': return <svg {...common}><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
-    case 'build': return <svg {...common}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
-    case 'compose': return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
-    default: return <svg {...common}><path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-4z" /><path d="M12 8v4M12 16h.01" /></svg>
+    // lucide hard-drive — Volumes
+    case 'volumes': return <svg {...base(2)}><path d="M10 16h.01m-7.798-4.423a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11zm19.734.436H2.054M6 16h.01" /></svg>
+    // lucide network — Networks
+    case 'networks': return <svg {...base(2)}><rect width="6" height="6" x="16" y="16" rx="1" /><rect width="6" height="6" x="2" y="16" rx="1" /><rect width="6" height="6" x="9" y="2" rx="1" /><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3m-7-4V8" /></svg>
+    // hugeicons boxes — 容器
+    case 'containers': return <svg {...base(1.5)}><path strokeLinecap="round" d="M6 12V8c0-.943 0-1.414.293-1.707S7.057 6 8 6h4c.943 0 1.414 0 1.707.293S14 7.057 14 8v4c0 .943 0 1.414-.293 1.707S12.943 14 12 14H8c-.943 0-1.414 0-1.707-.293S6 12.943 6 12m-4 8v-4c0-.943 0-1.414.293-1.707S3.057 14 4 14h4c.943 0 1.414 0 1.707.293S10 15.057 10 16v4c0 .943 0 1.414-.293 1.707S8.943 22 8 22H4c-.943 0-1.414 0-1.707-.293S2 20.943 2 20m8 0v-4c0-.943 0-1.414.293-1.707S11.057 14 12 14h4c.943 0 1.414 0 1.707.293S18 15.057 18 16v4c0 .943 0 1.414-.293 1.707S16.943 22 16 22h-4c-.943 0-1.414 0-1.707-.293S10 20.943 10 20m8 1.5l3.414-3.414c.29-.29.434-.434.51-.617c.076-.184.076-.389.076-.797V12c0-.943 0-1.414-.293-1.707S20.943 10 20 10h-2"/><path strokeLinecap="round" d="m6 10l-3.414 3.414c-.29.29-.434.434-.51.617C2 14.215 2 14.42 2 14.829V16.5m12-3l3.317-2.902c.336-.295.504-.442.594-.639S18 9.54 18 9.092V4c0-.943 0-1.414-.293-1.707S16.943 2 16 2h-4.74c-.376 0-.563 0-.735.065c-.172.066-.312.19-.593.44l-3.26 2.898c-.331.294-.496.441-.584.636C6 6.235 6 6.456 6 6.9V9"/><path d="m14 6l3.5-3.5M18 14l3.5-3.5" /></svg>
+    // lucide archive — 镜像(只读分层打包制品)
+    case 'images': return <svg {...base(2)}><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8m-10 4h4" /></svg>
+    // hugeicons database — 镜像源
+    case 'registries': return <svg {...base(1.5)}><ellipse cx="12" cy="5" rx="8" ry="3" /><path strokeLinecap="round" d="M7 10.842c.602.18 1.274.33 2 .44" /><path d="M20 12c0 1.657-3.582 3-8 3s-8-1.343-8-3" /><path strokeLinecap="round" d="M7 17.842c.602.18 1.274.33 2 .44" /><path d="M20 5v14c0 1.657-3.582 3-8 3s-8-1.343-8-3V5" /></svg>
+    // tabler hammer — 构建镜像
+    case 'build': return <svg {...base(2)}><path d="m11.414 10l-7.383 7.418a2.09 2.09 0 0 0 0 2.967a2.11 2.11 0 0 0 2.976 0L14.414 13m3.707 2.293l2.586-2.586a1 1 0 0 0 0-1.414l-7.586-7.586a1 1 0 0 0-1.414 0L9.121 6.293a1 1 0 0 0 0 1.414l7.586 7.586a1 1 0 0 0 1.414 0" /></svg>
+    // mingcute layers — Compose
+    case 'compose': return <svg {...base(2)}><path d="M7 14.4v1.77a1.5 1.5 0 0 0 1.794 1.471L10 17.4m-3-3V9.64a2 2 0 0 1 1.608-1.962l6.598-1.32A1.5 1.5 0 0 1 17 7.83V9.6M7 14.4l-1.206.241A1.5 1.5 0 0 1 4 13.171V6.64a2 2 0 0 1 1.608-1.962l6.598-1.32A1.5 1.5 0 0 1 14 4.83V6.5m3 3.1l-5.392 1.078A2 2 0 0 0 10 12.64v4.76m7-7.8l1.206-.241A1.5 1.5 0 0 1 20 10.829v6.531a2 2 0 0 1-1.608 1.962l-6.598 1.32A1.5 1.5 0 0 1 10 19.17V17.4" /></svg>
+    // heroicons square-2-stack — Swarm
+    default: return <svg {...base(1.5)}><path d="M16.5 8.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v8.25A2.25 2.25 0 0 0 6 16.5h2.25m8.25-8.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-7.5A2.25 2.25 0 0 1 8.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 0 0-2.25 2.25v6" /></svg>
   }
 }
 
@@ -54,9 +66,11 @@ export default function DockerModule({ onMsg }: { onMsg?: (m: string) => void })
           ))}
         </nav>
       </aside>
-      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
         {section === 'containers' && <ContainersPanel onMsg={onMsg} />}
         {section === 'images' && <ImagesPanel onMsg={onMsg} />}
+        {section === 'volumes' && <VolumesPanel onMsg={onMsg} />}
+        {section === 'networks' && <NetworksPanel onMsg={onMsg} />}
         {section === 'registries' && <RegistriesPanel onMsg={onMsg} />}
         {section === 'build' && <BuildPanel onMsg={onMsg} />}
         {section === 'compose' && <ComposePanel onMsg={onMsg} />}
@@ -77,6 +91,8 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [logView, setLogView] = useState<{ name: string; logs: string; target: string } | null>(null)
   const [runModal, setRunModal] = useState<{ recreateOf?: string } | null>(null)
   const [execView, setExecView] = useState<{ name: string } | null>(null)
+  const [statsView, setStatsView] = useState<{ name: string } | null>(null)
+  const [statsData, setStatsData] = useState<any>(null)
 
   const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
   const load = () => getJSON<any>(`/api/plugins/containers/list?_=${Date.now()}${hostQ}`).then(setList).catch(() => setList(null))
@@ -148,6 +164,17 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
     }
   }
 
+  const openStats = (name: string) => {
+    setStatsView({ name })
+    refreshStats(name)
+  }
+
+  const refreshStats = (name: string) => {
+    getJSON<any>(`/api/plugins/containers/docker/container/stats?${hostQ.replace('&', '')}&name=${encodeURIComponent(name)}`)
+      .then((d) => setStatsData(d.stats || null))
+      .catch(() => setStatsData(null))
+  }
+
   return (
     <>
       <Card className="containers-card" title={`容器列表 (${containers.length})`}
@@ -193,6 +220,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                       <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => runAction(c.name, 'stop')}>停止</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy || !canWrite} onClick={() => runAction(c.name, 'restart')}>重启</button>
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="编辑配置并重建(端口/卷/环境变量)" onClick={() => openEdit(c)}>编辑</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="实时资源监控(CPU/内存/网络)" onClick={() => openStats(c.name)}>监控</button>
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} onClick={() => setExecView({ name: c.name })}>命令</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} onClick={() => openLogs(c)}>日志</button>
                     </div>
@@ -235,6 +263,53 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           onClose={() => setExecView(null)} />
       )}
 
+      {statsView && (
+        <div className="modal-overlay" onClick={() => setStatsView(null)}>
+          <div className="modal stats-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div className="modal-title">
+                监控: {statsView.name}
+                <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 8 }} onClick={() => refreshStats(statsView.name)}>刷新</button>
+              </div>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setStatsView(null)}>关闭</button>
+            </div>
+            {statsData ? (
+              <div className="stats-grid">
+                <div className="metric-cell">
+                  <span className="metric-label">CPU 占用</span>
+                  <span className="metric-val">{statsData.cpuPct ?? '—'}</span>
+                  <span className="metric-sub dim">单次快照</span>
+                </div>
+                <div className="metric-cell">
+                  <span className="metric-label">内存</span>
+                  <span className="metric-val">{statsData.memUsage ?? '—'}</span>
+                  <span className="metric-sub dim">上限 {statsData.memLimit ?? '—'} · 占比 {statsData.memPerc ?? '—'}</span>
+                </div>
+                <div className="metric-cell">
+                  <span className="metric-label">网络 IO (RX / TX)</span>
+                  <span className="metric-val">{statsData.netIO ?? '—'}</span>
+                </div>
+                <div className="metric-cell">
+                  <span className="metric-label">块 IO (读 / 写)</span>
+                  <span className="metric-val">{statsData.blockIO ?? '—'}</span>
+                </div>
+                <div className="metric-cell">
+                  <span className="metric-label">进程数 PIDs</span>
+                  <span className="metric-val">{statsData.pids ?? '—'}</span>
+                </div>
+                <div className="metric-cell">
+                  <span className="metric-label">容器 ID</span>
+                  <span className="metric-val mono" style={{ fontSize: '0.75rem' }}>{statsData.id || '—'}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="dim" style={{ padding: '2rem', textAlign: 'center' }}>无数据(容器可能已停止或运行时不支持)</p>
+            )}
+            <p className="dim" style={{ fontSize: '0.6875rem', marginTop: 8 }}>一次性快照 · docker stats --no-stream · 兼容 docker/podman · 点“刷新”查看最新数值</p>
+          </div>
+        </div>
+      )}
+
       {runModal && (
         <ContainerRunModal
           initial={runModal}
@@ -272,6 +347,15 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
     (initial.envs || []).filter((e: any) => e.key).map((e: any) => ({ key: e.key, value: e.value })))
   const [busy, setBusy] = useState(false)
 
+  // ── Run 完整参数(Docker Desktop 对标) ──
+  const [memLimit, setMemLimit] = useState(initial.memLimit || '')
+  const [user, setUser] = useState(initial.user || '')
+  const [hostname, setHostname] = useState(initial.hostname || '')
+  const [workdir, setWorkdir] = useState(initial.workdir || '')
+  const [privileged, setPrivileged] = useState(!!initial.privileged)
+  const [autoHealth, setAutoHealth] = useState(!!(initial as any).autoHealth || !!(initial as any).healthcheck)
+  const [restartDelay, setRestartDelay] = useState('')
+
   const submit = () => {
     setBusy(true)
     postJSON('/api/plugins/containers/docker/container/run', {
@@ -284,6 +368,13 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
       volumes: vols.filter((v) => v.hostPath && v.ctrlPath),
       envs: envs.filter((e) => e.key),
       recreateOf: isRecreate ? initial.recreateOf : '',
+      memLimit: memLimit.trim(),
+      user: user.trim(),
+      hostname: hostname.trim(),
+      workdir: workdir.trim(),
+      privileged,
+      autoHealth,
+      restartDelay: restartDelay.trim() ? parseInt(restartDelay.trim()) : 0,
     })
       .then((d: any) => onDone(d.ok, d.ok ? `✓ ${isRecreate ? '重建' : '创建'} ${name} 成功` : '✗ ' + (d.error || '失败')))
       .catch((e) => onDone(false, '✗ ' + String(e)))
@@ -361,6 +452,37 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
             </label>
           </div>
 
+          <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.04em' }}>资源与高级(可选)</div>
+          <div className="form-row2">
+            <label className="form-field"><span>内存限制</span>
+              <input className="input mono" placeholder="512m / 1g (留空不限)" value={memLimit} onChange={(e) => setMemLimit(e.target.value)} />
+            </label>
+            <label className="form-field"><span>运行用户</span>
+              <input className="input mono" placeholder="1000:1000 或 root" value={user} onChange={(e) => setUser(e.target.value)} />
+            </label>
+            <label className="form-field"><span>主机名</span>
+              <input className="input mono" placeholder="my-host (留空用容器名)" value={hostname} onChange={(e) => setHostname(e.target.value)} />
+            </label>
+            <label className="form-field"><span>工作目录</span>
+              <input className="input mono" placeholder="/app (留空用镜像默认)" value={workdir} onChange={(e) => setWorkdir(e.target.value)} />
+            </label>
+          </div>
+          <div className="form-row2" style={{ alignItems: 'center' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={privileged} onChange={(e) => setPrivileged(e.target.checked)} style={{ accentColor: 'var(--accent,#7c6cf6)' }} />
+              特权模式 <span className="dim">(--privileged)</span>
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={autoHealth} onChange={(e) => setAutoHealth(e.target.checked)} style={{ accentColor: 'var(--accent,#7c6cf6)' }} />
+              简易健康检查 <span className="dim">(curl 127.0.0.1)</span>
+            </label>
+            {restart === 'on-failure' && (
+              <label className="form-field" style={{ flex: 1 }}><span>on-failure 重启上限</span>
+                <input className="input" type="number" min={1} max={99} placeholder="如 5 (留空=无限)" value={restartDelay} onChange={(e) => setRestartDelay(e.target.value)} />
+              </label>
+            )}
+          </div>
+
           <div className="modal-actions">
             <button className="btn-glass-soft" onClick={onClose}>取消</button>
             <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !name.trim() || !image.trim()}
@@ -377,6 +499,17 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
 interface PullJobState {
   id: string; done: boolean; err: string; image: string
   lines: string[]; secs: number; layersDone: number; layersTotal: number
+  rt?: string
+}
+
+function fmtBytes(n: number): string {
+  if (!isFinite(n) || n < 0) return '—'
+  if (n < 1024) return `${n} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  let v = n
+  let i = -1
+  do { v /= 1024; i++ } while (v >= 1024 && i < units.length - 1)
+  return `${v.toFixed(1)} ${units[i]}`
 }
 
 function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
@@ -387,6 +520,14 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [out, setOut] = useState('')
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [job, setJob] = useState<PullJobState | null>(null)
+  const [tagModal, setTagModal] = useState<string | null>(null)
+  const [histModal, setHistModal] = useState<string | null>(null)
+  const [tagInput, setTagInput] = useState('')
+  const [hist, setHist] = useState<any[] | null>(null)
+  const [regFilter, setRegFilter] = useState('')
+  const [pullRT, setPullRT] = useState('') // 目标运行时: '' 自动 | docker | podman | crictl | ctr
+  const [migrateModal, setMigrateModal] = useState('') // 跨运行时迁移的镜像名
+  const [migrateImage, setMigrateImage] = useState('')
 
   // 轮询拉取进度
   useEffect(() => {
@@ -426,20 +567,41 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
     setSel(next)
   }
 
-  const startPull = () => {
+  // ── 仓库来源筛选: 按镜像名前缀提取仓库域名 ──
+  const regOf = (repo: string): string => {
+    const r = (repo || '').trim()
+    if (!r || r === '<none>') return '悬挂镜像(<none>)'
+    const first = r.split('/')[0]
+    // 第一段含 . 或 : 视为仓库地址(域名/端口), 否则为官方/本地无前缀
+    return first.includes('.') || first.includes(':') ? first : '无前缀(官方/本地)'
+  }
+  const registries = Array.from(new Set(images.map((im) => regOf(im.repo)))).sort((a, b) => a.localeCompare(b))
+  const visible = regFilter ? images.filter((im) => regOf(im.repo) === regFilter) : images
+
+  const startPull = (rt?: string) => {
     const img = pullImage.trim()
+    const target = rt ?? pullRT
     if (!img) return
     setBusy(true); setOut(''); setSel(new Set())
-    postJSON('/api/plugins/containers/docker/pull/async', { host: selected?.id || '', image: img })
+    postJSON('/api/plugins/containers/docker/pull/async', { host: selected?.id || '', image: img, rt: target })
       .then((d: any) => {
         if (d.ok) {
-          setJob({ id: d.jobId, done: false, err: '', image: img, lines: [], secs: 0, layersDone: 0, layersTotal: 0 })
+          setJob({ id: d.jobId, done: false, err: '', image: img, lines: [], secs: 0, layersDone: 0, layersTotal: 0, rt: target })
         } else {
           onMsg?.('✗ ' + (d.error || '发起失败'))
         }
       })
       .catch((e) => onMsg?.('✗ ' + String(e)))
       .finally(() => setBusy(false))
+  }
+
+  const startMigrate = () => {
+    const image = migrateImage.trim()
+    if (!image) return
+    setMigrateModal('')
+    setPullRT('ctr')           // 迁移路径固定以 ctr(k8s.io) 为目标通道
+    setPullImage(image)
+    startPull('ctr')
   }
 
   const removeOne = (image: string) => {
@@ -469,19 +631,62 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
     setTimeout(load, 500)
   }
 
+  const doTag = (image: string) => {
+    const t = tagInput.trim()
+    if (!t) return
+    setBusy(true)
+    postJSON('/api/plugins/containers/docker/image/tag', { host: selected?.id || '', image, tag: t })
+      .then((d: any) => {
+        if (d.ok) { onMsg?.(`✓ 已打标签 ${image} → ${t}`); setTagModal(null); setTagInput(''); setTimeout(load, 500) }
+        else onMsg?.('✗ ' + (d.error || '失败'))
+      })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+
+  const doPush = (image: string) => {
+    setBusy(true); setOut('')
+    postJSON('/api/plugins/containers/docker/image/push', { host: selected?.id || '', image })
+      .then((d: any) => {
+        if (d.ok) { onMsg?.(`✓ 推送完成: ${image}`); setOut(d.output || '') }
+        else { onMsg?.('✗ ' + (d.error || '推送失败(镜像名需含仓库前缀)')); setOut(d.output || d.error || '') }
+      })
+      .catch((e) => { onMsg?.('✗ ' + String(e)); setOut(String(e)) })
+      .finally(() => setBusy(false))
+  }
+
+  const openHistory = (image: string) => {
+    setHistModal(image); setHist(null)
+    getJSON<{ ok?: boolean; history?: any[] }>(`/api/plugins/containers/docker/image/history?${hostQ.replace('&', '')}&image=${encodeURIComponent(image)}`)
+      .then((d) => setHist(d.history || []))
+      .catch((e) => onMsg?.('✗ ' + String(e)))
+  }
+
   return (
     <>
       <Card title="拉取镜像" subtitle="异步拉取 · 实时显示层进度">
         <div className="btn-row" style={{ alignItems: 'center' }}>
-          <input className="input" style={{ flex: 1, minWidth: 260 }} value={pullImage} onChange={(e) => setPullImage(e.target.value)}
+          <input className="input" style={{ flex: 1, minWidth: 200 }} value={pullImage} onChange={(e) => setPullImage(e.target.value)}
             placeholder="镜像名, 如 nginx:1.27-alpine 或 registry.example.com/app:v1"
             onKeyDown={(e) => e.key === 'Enter' && !busy && startPull()} disabled={!!job && !job.done} />
-          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !pullImage.trim() || (!!job && !job.done)} onClick={startPull}>拉取</button>
+          <select className="input" style={{ width: 130, height: 'auto', flexShrink: 0 }}
+            value={pullRT} onChange={(e) => setPullRT(e.target.value)} title="拉取到哪个运行时 · crictl/ctr 将走迁移链(docker pull→save→import)">
+            <option value="">自动(探测)</option>
+            <option value="docker">docker</option>
+            <option value="podman">podman</option>
+            <option value="crictl">crictl(K8s)</option>
+            <option value="ctr">ctr→k8s.io</option>
+          </select>
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !pullImage.trim() || (!!job && !job.done)} onClick={() => startPull()}>拉取</button>
         </div>
         {job && (
           <div style={{ marginTop: '0.625rem' }}>
             <div className="btn-row" style={{ justifyContent: 'space-between', fontSize: '0.6875rem' }}>
-              <span>{job.done ? (job.err ? `✗ ${job.image} 失败` : `✓ ${job.image} 完成`) : `拉取中: ${job.image}`}</span>
+              <span>
+                {job.done ? (job.err ? `✗ ${job.image} 失败` : `✓ ${job.image} 完成`) : `拉取中: ${job.image}`}
+                {job.rt === 'crictl' || job.rt === 'ctr'
+                  ? <span className="pill pill-sub" style={{ marginLeft: 6 }}>迁移链: docker→.{job.rt}</span>
+                  : <span className="pill pill-sub" style={{ marginLeft: 6 }}>→ {job.rt || '自动'}</span>}
+              </span>
               <span className="dim">
                 {job.layersTotal > 0 ? `${Math.min(job.layersDone, job.layersTotal)}/${job.layersTotal} 层` : '准备中…'} · {job.secs}s
               </span>
@@ -497,16 +702,52 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                 {job.lines.slice(-4).join('\n')}
               </pre>
             )}
+            {job.done && job.err && job.rt !== 'crictl' && job.rt !== 'ctr' && (
+              <div className="btn-row" style={{ marginTop: '0.5rem', gap: 8 }}>
+                <span className="dim" style={{ fontSize: '0.75rem' }}>直接拉取失败? 常见原因是目标机无 docker/podman 或网络与镜像源不通</span>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
+                  onClick={() => { setMigrateModal(job.image); setTimeout(() => setJob(null), 0) }}>
+                  改用跨运行时迁移(dock→ctr)
+                </button>
+              </div>
+            )}
           </div>
         )}
         {out && <pre className="code-block" style={{ maxHeight: 140, overflow: 'auto', marginTop: '0.5rem', fontSize: '0.6875rem' }}>{out}</pre>}
       </Card>
+
+      {migrateModal && (
+        <div className="modal-overlay" onClick={() => setMigrateModal('')}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
+            <h3>跨运行时迁移: {migrateModal}</h3>
+            <p className="dim" style={{ marginTop: '0.5rem', lineHeight: 1.7 }}>
+              目标机自动使用 docker(兼容别名亦可)拉取; 若直连失败将改走迁移链:<br />
+              <span className="mono" style={{ fontSize: '0.75rem' }}>① docker pull → ② docker save 成 tar → ③ ctr -n k8s.io images import</span>
+              <br />常用于 containerd(K8s 托管)无法直连镜像源、或知名代理被墙时。
+            </p>
+            <div className="btn-row" style={{ marginTop: '1rem' }}>
+              <input className="input" style={{ flex: 1 }} defaultValue={migrateModal} placeholder="可修改镜像名" disabled={busy}
+                onChange={(e) => setMigrateImage(e.target.value)} />
+              <button className="btn-glass-soft" onClick={() => setMigrateModal('')}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy} onClick={startMigrate}>开始迁移</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card className="images-card" title={`镜像列表 (${images.length})`} subtitle={`已选 ${sel.size} · 支持全选/反选/批量删除`}>
         <div className="toolbar-strip">
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleInvert}>反选</button>
           <span className="dim">已选 {sel.size}</span>
+          <select className="input" style={{ width: 210, height: 'auto', marginLeft: 'auto' }}
+            value={regFilter} onChange={(e) => setRegFilter(e.target.value)}
+            title="按仓库来源筛选镜像">
+            <option value="">全部仓库 ({images.length})</option>
+            {registries.map((r) => (
+              <option key={r} value={r}>{r} ({images.filter((im) => regOf(im.repo) === r).length})</option>
+            ))}
+          </select>
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={batchRemove}>删除选中</button>
         </div>
         <div className="table-wrap">
@@ -517,8 +758,8 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
               <th style={{ width: '14%' }}>ID</th><th style={{ width: '12%' }}>大小</th><th style={{ width: '28%' }}>操作</th>
             </tr></thead>
             <tbody>
-              {images.length === 0 && <tr><td colSpan={6} className="dim">（无镜像）</td></tr>}
-              {images.map((im, i) => (
+              {visible.length === 0 && <tr><td colSpan={6} className="dim">{images.length === 0 ? '（无镜像）' : '（该仓库下无镜像）'}</td></tr>}
+              {visible.map((im, i) => (
                 <tr key={i}>
                   <td><input type="checkbox" checked={sel.has(im.key)} onChange={() => toggleOne(im.key)} /></td>
                   <td className="mono">{im.repo}</td>
@@ -526,6 +767,9 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="mono dim">{im.id}</td>
                   <td>{im.size}</td>
                   <td><div className="btn-row k8s-row-actions">
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="镜像历史层" onClick={() => openHistory(im.key)}>历史</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="打标签" onClick={() => { setTagModal(im.key); setTagInput('') }}>tag</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="推送到仓库(镜像名需含仓库前缀)" onClick={() => doPush(im.key)}>push</button>
                     <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy} onClick={() => removeOne(im.key)}>删除</button>
                   </div></td>
                 </tr>
@@ -534,11 +778,224 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           </table>
         </div>
       </Card>
+
+      {tagModal && (
+        <div className="modal-overlay" onClick={() => setTagModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <h3>打标签: <span className="mono" style={{ fontWeight: 600 }}>{tagModal}</span></h3>
+            <p className="dim" style={{ marginTop: '0.5rem' }}>新标签可含仓库前缀以准备推送, 如 <span className="mono">registry.example.com/app:v2</span></p>
+            <div className="btn-row" style={{ alignItems: 'center', marginTop: '0.625rem' }}>
+              <input className="input" style={{ flex: 1, minWidth: 0 }} value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)} placeholder="新标签, 如 my-app:v2"
+                onKeyDown={(e) => e.key === 'Enter' && !busy && doTag(tagModal)} autoFocus />
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setTagModal(null)}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy || !tagInput.trim()} onClick={() => doTag(tagModal)}>确认</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {histModal && (
+        <div className="modal-overlay" onClick={() => setHistModal(null)}>
+          <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 860 }}>
+            <div className="modal-head">
+              <div className="modal-title">镜像历史层: {histModal}</div>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setHistModal(null)}>关闭</button>
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 420, border: 'none' }}>
+              <table className="data-table">
+                <thead><tr>
+                  <th style={{ width: '14%' }}>ID</th><th style={{ width: '10%' }}>创建时间</th>
+                  <th style={{ width: '12%' }}>大小</th><th style={{ width: '64%' }}>指令</th>
+                </tr></thead>
+                <tbody>
+                  {!hist && <tr><td colSpan={4} className="dim">加载中…</td></tr>}
+                  {hist && hist.length === 0 && <tr><td colSpan={4} className="dim">（无层信息）</td></tr>}
+                  {hist?.map((h, i) => (
+                    <tr key={i}>
+                      <td className="mono dim">{String(h.ID || '').slice(0, 12) || '<missing>'}</td>
+                      <td className="dim">{new Date(h.CreatedAt || Date.now()).toLocaleString()}</td>
+                      <td className="dim">{Number(h.SizeBytes || 0) < 1 ? (h.SizeBytes === undefined ? h.Size ?? '0B' : '0B') : fmtBytes(Number(h.SizeBytes))}</td>
+                      <td className="mono dim" style={{ fontSize: '0.6875rem' }}>{h.CreatedBy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
 
-// ── 镜像源面板(daemon.json registry-mirrors / insecure-registries) ──
+// ── Volumes 卷管理 ──
+
+function VolumesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
+  const { selected } = useHost()
+  const [vols, setVols] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [confirmDel, setConfirmDel] = useState<string | null>(null)
+
+  const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
+  const load = () => getJSON<{ ok?: boolean; volumes?: any[] }>(`/api/plugins/containers/docker/volumes?_=${Date.now()}${hostQ}`)
+    .then((d) => setVols(d.volumes || [])).catch(() => setVols([]))
+  useEffect(() => { load() }, [selected?.id])
+
+  const doCreate = () => {
+    const n = createName.trim()
+    if (!n) return
+    setBusy(true)
+    postJSON('/api/plugins/containers/docker/volumes/action', { host: selected?.id || '', name: n, action: 'create' })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ 卷 ${n} 创建成功` : '✗ ' + (d.error || '失败')); if (d.ok) setCreateName(''); setTimeout(load, 400) })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+
+  const doRemove = (n: string) => {
+    setConfirmDel(null); setBusy(true)
+    postJSON('/api/plugins/containers/docker/volumes/action', { host: selected?.id || '', name: n, action: 'remove' })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ 卷 ${n} 已删除` : '✗ ' + (d.error || '失败')); setTimeout(load, 400) })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+
+  return (
+    <>
+      <Card title="创建卷" subtitle="Docker named volume · 挂载到容器时可用卷名代替宿主路径">
+        <div className="btn-row" style={{ alignItems: 'center' }}>
+          <input className="input" style={{ flex: 1, minWidth: 240 }} value={createName} onChange={(e) => setCreateName(e.target.value)}
+            placeholder="卷名, 如 app-data" onKeyDown={(e) => e.key === 'Enter' && !busy && doCreate()} />
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !createName.trim()} onClick={doCreate}>创建</button>
+        </div>
+      </Card>
+      <Card title={`Volumes (${vols.length})`} subtitle="Docker 数据卷列表 · 删除前需先解绑占用容器">
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr>
+              <th style={{ width: '30%' }}>名称</th><th style={{ width: '14%' }}>Driver</th>
+              <th style={{ width: '36%' }}>挂载点</th><th style={{ width: '20%' }}>操作</th>
+            </tr></thead>
+            <tbody>
+              {vols.length === 0 && <tr><td colSpan={4} className="dim">（无卷）</td></tr>}
+              {vols.map((v, i) => (
+                <tr key={i}>
+                  <td className="mono">{v.Name}</td>
+                  <td className="dim">{v.Driver || 'local'}</td>
+                  <td className="mono dim" style={{ fontSize: '0.6875rem' }}>{v.Mountpoint || '—'}</td>
+                  <td><div className="btn-row k8s-row-actions">
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy} onClick={() => setConfirmDel(v.Name)}>删除</button>
+                  </div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {confirmDel && (
+        <div className="modal-overlay" onClick={() => setConfirmDel(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <h3>删除卷: {confirmDel}</h3>
+            <p className="dim">目标主机 <b>{selected?.label || '本机'}</b> · 若被容器占用将报错</p>
+            <div className="modal-actions">
+              <button className="btn-glass-soft" onClick={() => setConfirmDel(null)}>取消</button>
+              <button className="btn btn-danger" onClick={() => doRemove(confirmDel)}>确认删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Networks 网络管理 ──
+
+function NetworksPanel({ onMsg }: { onMsg?: (m: string) => void }) {
+  const { selected } = useHost()
+  const [nets, setNets] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createDriver, setCreateDriver] = useState('bridge')
+  const [confirmDel, setConfirmDel] = useState<string | null>(null)
+
+  const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
+  const load = () => getJSON<{ ok?: boolean; networks?: any[] }>(`/api/plugins/containers/docker/networks?_=${Date.now()}${hostQ}`)
+    .then((d) => setNets(d.networks || [])).catch(() => setNets([]))
+  useEffect(() => { load() }, [selected?.id])
+
+  const doCreate = () => {
+    const n = createName.trim()
+    if (!n) return
+    setBusy(true)
+    postJSON('/api/plugins/containers/docker/networks/action', { host: selected?.id || '', name: n, driver: createDriver, action: 'create' })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ 网络 ${n} 创建成功` : '✗ ' + (d.error || '失败')); if (d.ok) setCreateName(''); setTimeout(load, 400) })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+
+  const doRemove = (n: string) => {
+    setConfirmDel(null); setBusy(true)
+    postJSON('/api/plugins/containers/docker/networks/action', { host: selected?.id || '', name: n, action: 'remove' })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ 网络 ${n} 已删除` : '✗ ' + (d.error || '失败')); setTimeout(load, 400) })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+
+  const isDefault = (n: any) => ['bridge', 'host', 'none'].includes(n.Name)
+
+  return (
+    <>
+      <Card title="创建网络" subtitle="Docker Network · bridge 用于容器互联, overlay 用于 Swarm">
+        <div className="btn-row" style={{ alignItems: 'center' }}>
+          <select className="input" style={{ width: 120 }} value={createDriver} onChange={(e) => setCreateDriver(e.target.value)}>
+            <option value="bridge">bridge</option><option value="host">host</option>
+            <option value="overlay">overlay</option><option value="macvlan">macvlan</option>
+            <option value="none">none</option>
+          </select>
+          <input className="input" style={{ flex: 1, minWidth: 240 }} value={createName} onChange={(e) => setCreateName(e.target.value)}
+            placeholder="网络名, 如 app-net" onKeyDown={(e) => e.key === 'Enter' && !busy && doCreate()} />
+          <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || !createName.trim()} onClick={doCreate}>创建</button>
+        </div>
+      </Card>
+      <Card title={`Networks (${nets.length})`} subtitle="内建 bridge/host/none 不可删除">
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr>
+              <th style={{ width: '20%' }}>名称</th><th style={{ width: '16%' }}>Driver</th>
+              <th style={{ width: '12%' }}>ID</th><th style={{ width: '28%' }}>子网</th><th style={{ width: '24%' }}>操作</th>
+            </tr></thead>
+            <tbody>
+              {nets.length === 0 && <tr><td colSpan={5} className="dim">（无网络）</td></tr>}
+              {nets.map((n, i) => (
+                <tr key={i}>
+                  <td className="mono">{n.Name}</td>
+                  <td className="dim">{n.Driver}</td>
+                  <td className="mono dim">{n.ID}</td>
+                  <td className="mono dim" style={{ fontSize: '0.6875rem' }}>{n.Subnet ? `${n.Subnet}${n.Gateway ? ' · gw ' + n.Gateway : ''}` : '—'}</td>
+                  <td><div className="btn-row k8s-row-actions">
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || isDefault(n)} title={isDefault(n) ? '内建网络不可删除' : ''}
+                      onClick={() => setConfirmDel(n.Name)}>删除</button>
+                  </div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {confirmDel && (
+        <div className="modal-overlay" onClick={() => setConfirmDel(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <h3>删除网络: {confirmDel}</h3>
+            <p className="dim">目标主机 <b>{selected?.label || '本机'}</b> · 删除失败时可能仍有容器连接</p>
+            <div className="modal-actions">
+              <button className="btn-glass-soft" onClick={() => setConfirmDel(null)}>取消</button>
+              <button className="btn btn-danger" onClick={() => doRemove(confirmDel)}>确认删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
 
 function RegistriesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const { selected } = useHost()
