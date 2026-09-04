@@ -757,7 +757,7 @@ body {
 
 .editor-textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 0.1875rem rgba(10, 132, 255, 0.15);
+  box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 /* ── Disk drill-down ── */
@@ -819,7 +819,7 @@ body {
   outline: none;
 }
 
-.input:focus { border-color: var(--accent); box-shadow: 0 0 0 0.1875rem rgba(10, 132, 255, 0.15); }
+.input:focus { border-color: var(--accent); box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent); }
 
 /* ── Modal ── */
 .modal-overlay {
@@ -906,7 +906,7 @@ body {
 }
 
 .ipt { min-width: 9.375rem; }
-.sel:focus, .ipt:focus { border-color: var(--accent); box-shadow: 0 0 0 0.1875rem rgba(10, 132, 255, 0.15); }
+.sel:focus, .ipt:focus { border-color: var(--accent); box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent); }
 .chk { display: inline-flex; align-items: center; gap: 0.3125rem; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; }
 
 .log-warn { padding: 0.5rem 1.25rem; font-size: 0.75rem; color: #ff453a; background: rgba(255, 69, 58, 0.08); }
@@ -983,7 +983,7 @@ body {
 
 .form-row input:focus, .form-row select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 0.1875rem rgba(10, 132, 255, 0.15);
+  box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .form-row select option { background: var(--surface-solid); color: var(--text); }
