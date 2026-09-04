@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { getJSON } from '../../api/client'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -160,12 +159,10 @@ export function StatusBadge({ status, suffix }: { status: string; suffix?: strin
 export function ErrBanner({ msg, onClose, className }: { msg: string; onClose?: () => void; className?: string }) {
   if (!msg) return null
   return (
-    <Alert variant="destructive" className={cn('mb-3', className)}>
-      <AlertDescription className="flex items-center justify-between gap-3">
-        <span className="whitespace-pre-wrap">{msg}</span>
-        {onClose && <button className="opacity-70 hover:opacity-100" onClick={onClose}>✕</button>}
-      </AlertDescription>
-    </Alert>
+    <div className={cn('banner banner-err flex items-center justify-between gap-3', className)}>
+      <span className="whitespace-pre-wrap">{msg}</span>
+      {onClose && <button className="opacity-70 hover:opacity-100" onClick={onClose}>✕</button>}
+    </div>
   )
 }
 
