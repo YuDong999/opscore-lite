@@ -1,11 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
-// base: './' 让构建产物用相对路径,便于被 Go 的 go:embed 直接托管。
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   base: './',
   resolve: {
     alias: {
@@ -20,4 +18,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
   },
+  css: {
+    postcss: './postcss.config.js'
+  }
 })

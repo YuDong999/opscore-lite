@@ -381,15 +381,17 @@ export default function LogMonitorModule() {
     }
   }
 
-  async function toggleDiscoverPanel() {
+  async   function toggleDiscoverPanel() {
     const next = !discOpen
     setDiscOpen(next)
-    if (!next) return
-    setDiscLoading(true)
-    try {
-      await Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster)])
-    } finally {
-      setDiscLoading(false)
+    // Only load data when opening the panel (not when closing)
+    if (next) {
+      setDiscLoading(true)
+      try {
+        await Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster)])
+      } finally {
+        setDiscLoading(false)
+      }
     }
   }
 
@@ -1076,7 +1078,14 @@ export default function LogMonitorModule() {
           {/* 从已连接资源添加: 选择权交给用户 */}
           {!discOpen ? (
             <div className="log-filter-row" style={{ marginTop: 12 }}>
-              <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel}>从已连接资源添加</button>
+              <button
+              className="btn-glass btn-sm"
+              onClick={toggleDiscoverPanel}
+              style={{ minWidth: '120px', padding: '6px 16px' }} // 调整宽度和内边距
+              title={discOpen ? '隐藏已连接资源面板' : '从已连接资源添加'}
+            >
+              从已连接资源添加
+            </button>
               <span style={{ marginLeft: 10, color: 'var(--text-dim)', fontSize: 12 }}>选择接入本机容器 / 已连接 K8S 集群的日志</span>
             </div>
           ) : (
@@ -1101,7 +1110,7 @@ export default function LogMonitorModule() {
               <div className="kib-form-row" style={{ marginTop: 8 }}>
                 <h4 style={{ margin: 0, color: 'var(--text)' }}>本机容器 (docker/podman)</h4>
                 {discContainers.length > 0 && <span className="kib-badge">{discContainers.length} 个</span>}
-                {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
+                {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" style={{ minWidth: '100px', padding: '4px 8px' }} onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
               </div>
               {discContainers.length === 0 ? (
                 <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
@@ -1120,7 +1129,7 @@ export default function LogMonitorModule() {
               <div className="kib-form-row" style={{ marginTop: 12 }}>
                 <h4 style={{ margin: 0, color: 'var(--text)' }}>K8S Pod (已连接集群)</h4>
                 {discK8sPods.length > 0 && <span className="kib-badge">{discK8sPods.length} 个</span>}
-                {discK8sPods.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelPods(new Set(discK8sPods.map((p) => `${p.namespace}/${p.name}`)))}>全选</button>}
+                {discK8sPods.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" style={{ minWidth: '100px', padding: '4px 8px' }} onClick={() => setSelPods(new Set(discK8sPods.map((p) => `${p.namespace}/${p.name}`)))}>全选</button>}
               </div>
               <div className="kib-form-row">
                 <label>集群</label>

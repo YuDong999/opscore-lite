@@ -3,9 +3,9 @@
    2) 仅补 shadcn 组件依赖的 border 默认样式(border-width:0 solid);
    3) 主题色全部引用既有 data-theme 变量(--text/--border/--accent...),
       5 套主题自动适配, 不新增任何色值。 */
-@layer theme, base, components, utilities;
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 @import "tw-animate-css";
 
 *, ::before, ::after {
