@@ -3111,8 +3111,6 @@ body {
 .lv-db > .db-tree-label { color: inherit !important; opacity: 0.92; }
 .lv-group > .db-tree-label { color: inherit !important; opacity: 0.65; font-weight: 600 !important; }
 
-/* 主侧栏: 溢出时用细滚动条(替代浏览器默认粗滑块) */
-.sidebar { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.sidebar::-webkit-scrollbar { width: 4px; }
-.sidebar::-webkit-scrollbar-track { background: transparent; }
-.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* 主侧栏: 不显示滚动条(用户明确要求; 滚轮仍可滚动) */
+.sidebar { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar::-webkit-scrollbar { width: 0; height: 0; display: none; }

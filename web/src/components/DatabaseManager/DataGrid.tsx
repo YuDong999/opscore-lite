@@ -122,8 +122,6 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
       { label: '复制值', icon: <ActionIcon kind="copy" />, onClick: () => copyCell(cellValue) },
       { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
       { label: '复制列名', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(colName) },
-      { divider: true },
-      { label: `筛选 ${colName} = 值`, icon: <ActionIcon kind="search" />, onClick: () => { /* 外部通过 onFilter 回调处理 */ } },
     ]
     return items
   }, [result, copyCell])
@@ -258,7 +256,9 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
                 key={i}
                 onContextMenu={e => {
                   e.preventDefault()
-                  if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'TD') {
+                  // 只在行空白处(非单元格)弹行菜单; 打开前行菜单先关单元格菜单
+                  if (e.target === e.currentTarget) {
+                    setCtxMenu(null)
                     setRowCtxMenu({ row: i, x: e.clientX, y: e.clientY })
                   }
                 }}
@@ -270,6 +270,8 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
                     title={typeof cell === 'string' ? cell : undefined}
                     onContextMenu={e => {
                       e.preventDefault()
+                      e.stopPropagation() // 防冒泡到 tr 造成双菜单叠加
+                      setRowCtxMenu(null)
                       setCtxMenu({ row: i, col: j, x: e.clientX, y: e.clientY })
                     }}
                     onClick={() => {
