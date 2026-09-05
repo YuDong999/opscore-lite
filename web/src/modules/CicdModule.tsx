@@ -1657,21 +1657,21 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   }
 
   return (
-    <Card className="h-full">
-      <CardHeader className="pb-2">
+    <Card className="h-full flex flex-col overflow-hidden min-h-0">
+      <CardHeader className="pb-2 shrink-0">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle>Stage View</CardTitle>
           <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="全部流水线"
             items={list.map(p => ({ value: p.id, label: p.name }))} />
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1 min-h-0 flex flex-col">
         {all ? (
           // 全部流水线视图: 阶段结构各不相同, 用通用的阶段进度段条呈现
           runsNewest.length === 0 ? (
             <div className="text-sm text-muted-foreground py-4">暂无运行记录</div>
           ) : (
-            <div className="overflow-auto hover-scroll max-h-[calc(100vh-21rem)]">
+            <div className="flex-1 min-h-0 overflow-auto hover-scroll">
               <Table className="[&_td]:py-1 [&_th]:py-1.5">
                 <TableHeader>
                   <TableRow>
@@ -1703,7 +1703,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
         ) : runs.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
         ) : (
-          <div className="overflow-auto hover-scroll max-h-[calc(100vh-21rem)]">
+          <div className="flex-1 min-h-0 overflow-auto hover-scroll">
             <Table className="[&_td]:py-1 [&_th]:py-1.5">
               <TableHeader>
                 <TableRow>
@@ -2162,9 +2162,9 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
   const waitingRun: Run | undefined = (data.recentRuns || []).find((r: Run) => r.status === 'waiting')
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {/* 指标条: 一行内联, 不再一张卡一个数字 */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap lg:shrink-0">
         <StatChip label="流水线" value={String(data.pipelines)} />
         <StatChip label="运行中 / 排队" value={`${data.running} / ${data.queued}`} />
         <StatChip label="等待审批" value={String(waiting)} warn={waiting > 0} />
@@ -2177,19 +2177,24 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
       {waiting > 0 && (
         <button
           onClick={() => { if (waitingRun) onOpenRun(waitingRun.id); else onMore?.() }}
-          className="w-full rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn flex items-center justify-between hover:bg-warn/15 transition-colors">
+          className="w-full shrink-0 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn flex items-center justify-between hover:bg-warn/15 transition-colors">
           <span className="flex items-center gap-2"><Pause className="size-4 shrink-0" />{waiting} 个运行待审批{waitingRun ? ', 点击直接处理' : ''}</span>
           <ChevronRight className="size-4" />
         </button>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
-        <div className="lg:col-span-2 min-w-0">
+      {/* 双栏底对齐撑满剩余高度, 内容各自框内滑动(整页不滚) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch lg:flex-1 lg:min-h-0">
+        <div className="lg:col-span-2 min-w-0 min-h-0">
           <StageViewCard onOpenRun={onOpenRun} />
         </div>
-        <div className="flex flex-col gap-3 min-w-0">
-          <RecentActivity runs={data.recentRuns} onOpenRun={onOpenRun} onMore={onMore} />
-          <AuditCard />
+        <div className="flex flex-col gap-3 min-w-0 min-h-0">
+          <div className="lg:flex-[3] min-h-0">
+            <RecentActivity runs={data.recentRuns} onOpenRun={onOpenRun} onMore={onMore} />
+          </div>
+          <div className="lg:flex-[2] min-h-0">
+            <AuditCard />
+          </div>
         </div>
       </div>
     </div>
@@ -2208,11 +2213,11 @@ function AuditCard() {
   const { data } = useResource<{ ts: string; actor: string; action: string; target: string; detail: string }[]>(API.audit)
   const list = (data || []).slice(0, 8)
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="h-full flex flex-col overflow-hidden min-h-0">
+      <CardHeader className="pb-2 shrink-0">
         <CardTitle className="text-sm">操作审计</CardTitle>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="pt-0 flex-1 min-h-0 hover-scroll">
         <div className="flex flex-col">
           {list.length === 0 && <div className="text-sm text-muted-foreground py-3">暂无记录</div>}
           {list.map((a, i) => (
