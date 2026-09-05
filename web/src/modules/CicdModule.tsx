@@ -1593,15 +1593,14 @@ const STAGE_CELL_COLOR: Record<string, string> = {
 function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   const pipes = useResource<PipelineView[]>(API.pipelines)
   const list = pipes.data || []
-  const [pid, setPid] = useState('')
-  useEffect(() => {
-    if (!pid && list.length > 0) setPid(list[0].id)
-  }, [list, pid])
+  const [pid, setPid] = useState('') // 空 = 全部流水线(默认)
+  const all = pid === ''
   const sel = list.find(p => p.id === pid) || null
-  const runsRes = useResource<Run[]>(pid ? `${API.runs}?limit=15&pipeline=${pid}` : '')
-  const runs = (runsRes.data || []).slice().reverse() // 旧→新, 渲染时再倒序显示
+  const runsRes = useResource<Run[]>(all ? `${API.runs}?limit=20` : `${API.runs}?limit=15&pipeline=${pid}`)
+  const runsNewest = runsRes.data || []
+  const runs = runsNewest.slice().reverse() // 旧→新, 矩阵视图用(#1 在最下)
 
-  // 列 = 流水线定义的阶段名(稳定顺序)
+  // 列 = 流水线定义的阶段名(稳定顺序); 仅单流水线矩阵用
   const cols = (sel?.stages || []).map(st => st.name)
   const cellOf = (r: Run, col: string, idx: number): StageRun | undefined =>
     r.stages.find(x => x.name === col) || r.stages[idx]
@@ -1622,12 +1621,44 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle>Stage View</CardTitle>
-          <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="选择流水线"
+          <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="全部流水线"
             items={list.map(p => ({ value: p.id, label: p.name }))} />
         </div>
       </CardHeader>
       <CardContent>
-        {!sel ? (
+        {all ? (
+          // 全部流水线视图: 阶段结构各不相同, 用通用的阶段进度段条呈现
+          runsNewest.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-4">暂无运行记录</div>
+          ) : (
+            <div className="overflow-auto hover-scroll max-h-[calc(100vh-21rem)]">
+              <Table className="[&_td]:py-1 [&_th]:py-1.5">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>构建名</TableHead>
+                    <TableHead className="min-w-32">阶段进度</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>耗时</TableHead>
+                    <TableHead>时间</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {runsNewest.map(r => (
+                    <TableRow key={r.id} className="cursor-pointer" onClick={() => onOpenRun(r.id)}>
+                      <TableCell className="text-xs font-semibold max-w-36 truncate" title={r.pipeline}>{r.pipeline}</TableCell>
+                      <TableCell><StageSegments stages={r.stages} /></TableCell>
+                      <TableCell><StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} /></TableCell>
+                      <TableCell className="text-xs tabular-nums">{fmtDur(r.durationMs)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {r.startedAt ? new Date(r.startedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )
+        ) : !sel ? (
           <div className="text-sm text-muted-foreground py-4">暂无流水线</div>
         ) : runs.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
