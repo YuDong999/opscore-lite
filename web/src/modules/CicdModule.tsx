@@ -1,7 +1,6 @@
 // ── CI/CD 流水线模块(shadcn 版): 流水线编排 / 运行历史 / 脚本库 / 仓库 / 凭据 / 概览 ──
-//    审查落地: R1 API 常量 · R2 useResource · R3 Dialog 化 · R4 受控 Select 复位
-//              U1 AlertDialog 确认 · U2 异步按钮 busy 防抖 · U3 tabular-nums · U4 Dialog 动画
-//    日志面板保留 legacy 终端样式(log-text, 主题自适应), 其余全部 shadcn 组件。
+//    v3 布局: 流水线页改主从式 —— 左列清单选条目, 右栏单一详情区(运行记录/配置摘要),
+//    层级用面板切换表达而非表格+弹窗堆叠; 其余页签维持表格布局。
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { postJSON } from '../api/client'
@@ -379,18 +378,23 @@ function priorArtifactSteps(p: Pipeline, si: number, i: number): { value: string
   return out
 }
 
-// ==================== 流水线 Tab ====================
+// ==================== 流水线 Tab(v3 主从布局: 左列表 + 右详情) ====================
 
 function PipelinesTab({ onChanged }: { onChanged: () => void }) {
   const { data, err, setErr, reload } = useResource<PipelineView[]>(API.pipelines)
   const pipes = data || []
+  const [selId, setSelId] = useState('')
   const [editing, setEditing] = useState<Pipeline | null>(null)
   const [webhookOf, setWebhookOf] = useState<Pipeline | null>(null)
   const [detailRun, setDetailRun] = useState('')
   const [busy, setBusy] = useState('')
   const [runSel, setRunSel] = useState<Pipeline | null>(null)
   const [tplOpen, setTplOpen] = useState(false)
+  const [tick, setTick] = useState(0) // 右栏运行列表手动刷新信号
   const { confirm, confirmEl } = useConfirm()
+
+  // 选中项不存在(未加载/已被删)时回落到第一条
+  const sel = pipes.find(p => p.id === selId) || pipes[0] || null
 
   const run = async (p: PipelineView) => {
     if (p.source.repoId || (p.params?.length ?? 0) > 0) {
@@ -407,7 +411,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     setBusy(id)
     try {
       const d = await postJSON<{ run: Run }>(API.pipelineRun, { id, branch, params })
-      setErr(''); setDetailRun(d.run.id); onChanged()
+      setErr(''); setDetailRun(d.run.id); setTick(t => t + 1); onChanged()
     } catch (e: any) { setErr(`触发失败: ${e.message}`) } finally { setBusy('') }
   }
   const remove = async (p: PipelineView) => {
@@ -430,93 +434,77 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     <div>
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle className="tabular-nums">流水线 ({pipes.length})</CardTitle>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
-                const t = localStorage.getItem('opscore-token')
-                window.open(`${API.pipelineExport}${t ? `?token=${encodeURIComponent(t)}` : ''}`)
-              }}><Download />导出</Button>
-              <Button asChild variant="outline" size="sm" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
-                <label className="cursor-pointer">
-                  导入
-                  <input type="file" accept=".json,application/json" className="hidden" onChange={async ev => {
-                    const f = ev.target.files?.[0]
-                    ev.target.value = ''
-                    if (!f) return
-                    try {
-                      const d = await postJSON<{ imported: number; skipped: number }>(API.pipelineImport, JSON.parse(await f.text()))
-                      setErr('')
-                      await confirm(`导入完成: 成功 ${d.imported} 条${d.skipped ? `, 跳过 ${d.skipped} 条(结构无效)` : ''}`)
-                      reload(); onChanged()
-                    } catch (e: any) { setErr('导入失败: ' + e.message) }
-                  }} />
-                </label>
-              </Button>
-              <Button size="sm" onClick={() => setTplOpen(true)}><Plus />新建流水线</Button>
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-3 items-start">
+        {/* 左: 流水线清单(主) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-1">
+              <CardTitle className="text-sm tabular-nums">流水线 ({pipes.length})</CardTitle>
+              <div className="flex gap-1">
+                <Button asChild variant="ghost" size="icon" className="size-7" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
+                  <label className="cursor-pointer">
+                    <Upload className="size-4" />
+                    <input type="file" accept=".json,application/json" className="hidden" onChange={async ev => {
+                      const f = ev.target.files?.[0]
+                      ev.target.value = ''
+                      if (!f) return
+                      try {
+                        const d = await postJSON<{ imported: number; skipped: number }>(API.pipelineImport, JSON.parse(await f.text()))
+                        setErr('')
+                        await confirm(`导入完成: 成功 ${d.imported} 条${d.skipped ? `, 跳过 ${d.skipped} 条(结构无效)` : ''}`)
+                        reload(); onChanged()
+                      } catch (e: any) { setErr('导入失败: ' + e.message) }
+                    }} />
+                  </label>
+                </Button>
+                <Button variant="ghost" size="icon" className="size-7" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
+                  const t = localStorage.getItem('opscore-token')
+                  window.open(`${API.pipelineExport}${t ? `?token=${encodeURIComponent(t)}` : ''}`)
+                }}><Download className="size-4" /></Button>
+                <Button size="sm" className="h-7" onClick={() => setTplOpen(true)}><Plus />新建</Button>
+              </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>名称</TableHead><TableHead>阶段</TableHead><TableHead>触发器</TableHead>
-                <TableHead>最近运行</TableHead><TableHead className="w-44">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pipes.length === 0 && (
-                <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  暂无流水线, 点击右上角「新建流水线」开始编排
-                </TableCell></TableRow>
-              )}
-              {pipes.map(p => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <div className="font-semibold">{p.name}</div>
-                    {p.description && <div className="text-xs text-muted-foreground">{p.description}</div>}
-                  </TableCell>
-                  <TableCell className="tabular-nums">{p.stageCount}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {p.trigger.manual && <Badge variant="secondary">手动</Badge>}
-                      {p.trigger.webhook && <Badge variant="outline">Webhook</Badge>}
-                      {p.trigger.cron && <Badge variant="outline">定时</Badge>}
+          </CardHeader>
+          <CardContent className="px-2 pb-2 pt-0">
+            {pipes.length === 0 && (
+              <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">暂无流水线, 点「新建」开始编排</div>
+            )}
+            <div className="flex flex-col gap-1">
+              {pipes.map(p => {
+                const active = p.id === sel?.id
+                return (
+                  <button key={p.id} onClick={() => setSelId(p.id)}
+                    className={cn('text-left rounded-lg px-3 py-2 border transition-colors',
+                      active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted/60')}>
+                    <div className="flex items-center gap-2">
+                      <LastRunDot run={p.lastRun} />
+                      <span className="font-medium text-sm truncate flex-1">{p.name}</span>
                     </div>
-                    {p.nextCron && <div className="text-xs text-muted-foreground tabular-nums">下次 {fmtTime(p.nextCron)}</div>}
-                  </TableCell>
-                  <TableCell>
-                    {p.lastRun ? (
-                      <div className="flex gap-2 items-center">
-                        <StatusBadge status={p.lastRun.status} />
-                        <span className="text-xs text-muted-foreground">{fmtTime(p.lastRun.startedAt)}</span>
-                        <span className="text-xs text-muted-foreground tabular-nums">{fmtDur(p.lastRun.durationMs)}</span>
-                        {p.lastRun.commit && (
-                          <span className="text-xs text-muted-foreground font-mono truncate max-w-52" title={p.lastRun.commit}>
-                            <GitCommitHorizontal className="inline size-3.5 mr-0.5 -mt-0.5" />{p.lastRun.commit}
-                          </span>
-                        )}
-                      </div>
-                    ) : <span className="text-xs text-muted-foreground">从未运行</span>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="icon" className="size-8" disabled={!!busy} title="运行" onClick={() => run(p)}><Play /></Button>
-                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="复制" onClick={() => copy(p)}><Copy /></Button>
-                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="Webhook" onClick={() => loadOne(p, setWebhookOf)}><Link2 /></Button>
-                      <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="编辑" onClick={() => loadOne(p, setEditing)}><Pencil /></Button>
-                      <Button variant="destructive" size="icon" className="size-8" disabled={!!busy} title="删除" onClick={() => remove(p)}><Trash2 /></Button>
+                    <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
+                      {p.lastRun ? (
+                        <>
+                          <span>{fmtTime(p.lastRun.startedAt)}</span>
+                          <span className="tabular-nums">{fmtDur(p.lastRun.durationMs)}</span>
+                        </>
+                      ) : <span>从未运行</span>}
+                      {p.trigger.webhook && <Badge variant="outline" className="px-1 py-0 text-[10px]">Hook</Badge>}
+                      {p.trigger.cron && <Badge variant="outline" className="px-1 py-0 text-[10px]">定时</Badge>}
                     </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                  </button>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 右: 选中流水线详情(从) */}
+        {sel && (
+          <PipelineDetail p={sel} busy={busy} tick={tick}
+            onRun={() => run(sel)} onEdit={() => loadOne(sel, setEditing)}
+            onWebhook={() => loadOne(sel, setWebhookOf)} onCopy={() => copy(sel)}
+            onDelete={() => remove(sel)} onOpenRun={setDetailRun} />
+        )}
+      </div>
 
       {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b, params) => { const id = runSel.id; setRunSel(null); doRun(id, b, params) }} />}
       {tplOpen && (
@@ -540,7 +528,202 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
       {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
-      {detailRun && <RunDetail runId={detailRun} onRerun={setDetailRun} onChanged={() => { reload(); onChanged() }} onClose={() => { setDetailRun(''); reload(); onChanged() }} />}
+      {detailRun && <RunDetail runId={detailRun} onRerun={setDetailRun} onChanged={() => { reload(); setTick(t => t + 1); onChanged() }} onClose={() => { setDetailRun(''); reload(); setTick(t => t + 1); onChanged() }} />}
+    </div>
+  )
+}
+
+// ── 左列表状态点(最近一次运行的状态色) ──
+function LastRunDot({ run }: { run?: Run }) {
+  const c = run ? (STAGE_COLOR[run.status] || 'var(--text-dim)') : 'var(--border)'
+  return (
+    <span
+      className={cn('size-2 rounded-full shrink-0', run?.status === 'running' && 'animate-pulse')}
+      style={{ background: c }}
+    />
+  )
+}
+
+// ── 右详情面板: 头部操作区 + 运行记录 / 配置摘要 两个子页签 ──
+function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDelete, onOpenRun }: {
+  p: PipelineView
+  busy: string
+  tick: number
+  onRun: () => void
+  onEdit: () => void
+  onWebhook: () => void
+  onCopy: () => void
+  onDelete: () => void
+  onOpenRun: (id: string) => void
+}) {
+  const [now, setNow] = useState(Date.now())
+  const live = ['running', 'queued', 'waiting'].includes(p.lastRun?.status || '')
+  useEffect(() => {
+    if (!live) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [live, p.lastRun?.id])
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 flex-wrap">
+              {p.name}
+              {p.lastRun && <StatusBadge status={p.lastRun.status} suffix={p.lastRun.status === 'running' && p.lastRun.canceling ? '(取消中)' : undefined} />}
+            </CardTitle>
+            {p.description && <div className="text-xs text-muted-foreground mt-1">{p.description}</div>}
+            <div className="text-xs text-muted-foreground mt-1 flex gap-2 items-center flex-wrap">
+              <span className="tabular-nums">{p.stageCount} 阶段</span>
+              {p.trigger.manual && <Badge variant="secondary">手动</Badge>}
+              {p.trigger.webhook && <Badge variant="outline">Webhook</Badge>}
+              {p.trigger.cron && <Badge variant="outline">定时</Badge>}
+              {p.nextCron && <span className="tabular-nums">下次 {fmtTime(p.nextCron)}</span>}
+            </div>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            <Button size="sm" disabled={!!busy} title="运行" onClick={onRun}><Play />运行</Button>
+            <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="编辑" onClick={onEdit}><Pencil /></Button>
+            <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="Webhook" onClick={onWebhook}><Link2 /></Button>
+            <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="复制" onClick={onCopy}><Copy /></Button>
+            <Button variant="destructive" size="icon" className="size-8" disabled={!!busy} title="删除" onClick={onDelete}><Trash2 /></Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="runs">
+          <TabsList className="mb-3">
+            <TabsTrigger value="runs">运行记录</TabsTrigger>
+            <TabsTrigger value="config">流水线配置</TabsTrigger>
+          </TabsList>
+          <TabsContent value="runs" className="mt-0">
+            {p.lastRun && (
+              <div className="mb-4">
+                <div className="text-xs text-muted-foreground mb-1 flex gap-2 items-center flex-wrap">
+                  <span>最近一次运行 {fmtTime(p.lastRun.startedAt)}</span>
+                  {p.lastRun.branch && <span className="font-mono">{p.lastRun.branch}</span>}
+                  {p.lastRun.commit && (
+                    <span className="font-mono truncate max-w-52" title={p.lastRun.commit}>
+                      <GitCommitHorizontal className="inline size-3.5 mr-0.5 -mt-0.5" />{p.lastRun.commit}
+                    </span>
+                  )}
+                </div>
+                <StageFlow stages={p.lastRun.stages} now={now} onStepClick={() => p.lastRun && onOpenRun(p.lastRun.id)} />
+              </div>
+            )}
+            <PipelineRunsList pipelineId={p.id} tick={tick} onOpenRun={onOpenRun} />
+          </TabsContent>
+          <TabsContent value="config" className="mt-0">
+            <PipelineConfigSummary p={p} onEdit={onEdit} />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── 单条流水线的运行列表(后端按 pipeline 过滤, 5s 轮询跟活) ──
+function PipelineRunsList({ pipelineId, tick, onOpenRun }: { pipelineId: string; tick: number; onOpenRun: (id: string) => void }) {
+  const [runs, setRuns] = useState<Run[]>([])
+  useEffect(() => {
+    let on = true
+    const load = () => {
+      fetch(`${API.runs}?limit=20&pipeline=${encodeURIComponent(pipelineId)}`)
+        .then(r => r.json()).then((d: Run[]) => { if (on) setRuns(d || []) }).catch(() => {})
+    }
+    load()
+    const t = setInterval(load, 5000)
+    return () => { on = false; clearInterval(t) }
+  }, [pipelineId, tick])
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>状态</TableHead><TableHead>触发</TableHead>
+          <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
+          <TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {runs.length === 0 && (
+          <TableRow><TableCell colSpan={6} className="h-16 text-center text-muted-foreground">该流水线还没有运行记录</TableCell></TableRow>
+        )}
+        {runs.map(r => (
+          <TableRow key={r.id}>
+            <TableCell>
+              <StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} />
+              {r.error && <div className="text-xs text-muted-foreground max-w-64">{r.error}</div>}
+            </TableCell>
+            <TableCell><Badge variant="secondary">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge></TableCell>
+            <TableCell>
+              <div className="flex items-center gap-2 min-w-36">
+                <StageSegments stages={r.stages} />
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
+              </div>
+            </TableCell>
+            <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
+            <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
+            <TableCell>
+              <Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+// ── 配置摘要(不弹窗即可读: 基础信息 + 参数 + 阶段编排一览) ──
+function PipelineConfigSummary({ p, onEdit }: { p: PipelineView; onEdit: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={onEdit}><Pencil />编辑流水线</Button>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+        <ConfigCell label="代码源" value={p.source.repoId || '未配置'} />
+        <ConfigCell label="分支" value={p.source.branch || '仓库默认'} />
+        <ConfigCell label="超时" value={p.timeoutMin ? `${p.timeoutMin} 分钟` : '不限'} />
+        <ConfigCell label="历史保留" value={`${p.maxRuns} 次`} />
+      </div>
+      {(p.params?.length ?? 0) > 0 && (
+        <div>
+          <div className="text-xs text-muted-foreground mb-1.5">构建参数(触发运行时填写)</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {p.params!.map(d => (
+              <Badge key={d.name} variant="outline" className="font-normal">
+                {d.label || d.name}<span className="text-muted-foreground ml-1">{d.type || 'text'}</span>
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      <div>
+        <div className="text-xs text-muted-foreground mb-1.5">阶段编排</div>
+        <div className="space-y-1.5">
+          {p.stages.map((st, i) => (
+            <div key={i} className="rounded-md border px-3 py-1.5 text-sm flex gap-2 items-center flex-wrap">
+              <span className="font-medium">{i + 1}. {st.name}</span>
+              {st.approval && <Badge variant="outline" className="text-warn">审批门禁</Badge>}
+              <span className="text-xs text-muted-foreground">{st.host ? `主机 ${st.host}` : '本机'}</span>
+              <span className="text-xs text-muted-foreground truncate flex-1 min-w-40">
+                {st.steps.map(s => s.name).join(' · ')}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfigCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="truncate" title={value}>{value}</div>
     </div>
   )
 }
