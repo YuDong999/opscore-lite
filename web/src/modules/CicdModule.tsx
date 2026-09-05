@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
-  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal,
+  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal, ChevronRight,
 } from 'lucide-react'
 import {
   API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
@@ -310,7 +310,7 @@ export default function CicdModule() {
         <TabsContent value="scripts"><ScriptsTab /></TabsContent>
         <TabsContent value="repos"><ReposTab /></TabsContent>
         <TabsContent value="creds"><CredentialsTab /></TabsContent>
-        <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} /></TabsContent>
+        <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} onMore={() => setTab('runs')} /></TabsContent>
       </Tabs>
 
       {detailRunId && <RunDetail runId={detailRunId} onRerun={setDetailRunId} onChanged={loadOverview} onClose={() => setDetailRunId('')} />}
@@ -1632,11 +1632,11 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
         ) : runs.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
+          <div className="overflow-auto hover-scroll max-h-[calc(100vh-21rem)]">
+            <Table className="[&_td]:py-1 [&_th]:py-1.5">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="sticky left-0 bg-card min-w-32 z-10">构建</TableHead>
+                  <TableHead className="sticky left-0 bg-card min-w-24 z-10">构建</TableHead>
                   {cols.map((c, i) => (
                     <TableHead key={c + i} className="text-center min-w-24">
                       <div>{c}</div>
@@ -1664,7 +1664,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
                       return (
                         <TableCell key={c + i} className="p-1">
                           <button
-                            className="w-full rounded-md px-2 py-1.5 text-xs tabular-nums hover:opacity-75 transition-opacity"
+                            className="w-full rounded-md px-2 py-1 text-xs tabular-nums hover:opacity-75 transition-opacity"
                             title={`${c}: ${statusText(st.status)}`}
                             style={{
                               background: `color-mix(in srgb, ${color} 13%, transparent)`,
@@ -2080,67 +2080,86 @@ function CredentialsTab() {
 
 // ==================== 概览 Tab ====================
 
-function OverviewTab({ data, onOpenRun }: { data: any; onOpenRun: (id: string) => void }) {
+// ==================== 概览 Tab(单屏仪表盘: 指标条 + Stage View + 紧凑活动列表) ====================
+
+function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: string) => void; onMore?: () => void }) {
   if (!data) return <div className="text-center text-muted-foreground py-8">加载中...</div>
-  const stats = [
-    { label: '流水线总数', value: String(data.pipelines) },
-    { label: '运行中 / 排队', value: `${data.running} / ${data.queued}` },
-    { label: '等待审批', value: String(data.waitingApproval ?? 0), warn: (data.waitingApproval ?? 0) > 0 },
-    { label: '24h 成功 / 失败', value: `${data.success24h} / ${data.failed24h}` },
-  ]
+  const ok24 = data.success24h ?? 0
+  const fail24 = data.failed24h ?? 0
+  const total24 = ok24 + fail24
+  const waiting = data.waitingApproval ?? 0
+  const waitingRun: Run | undefined = (data.recentRuns || []).find((r: Run) => r.status === 'waiting')
+
   return (
-    <div>
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
-        <div className="lg:col-span-3 flex lg:flex-col gap-3 flex-wrap">
-          {stats.map(s => (
-            <Card key={s.label} className="flex-1 min-w-32 lg:min-w-0">
-              <CardContent className="pt-3 pb-3">
-                <div className="text-xs text-muted-foreground">{s.label}</div>
-                <div className={cn('text-2xl font-bold tabular-nums', s.warn && 'text-warn')}>{s.value}</div>
-              </CardContent>
-            </Card>
-          ))}
-          {(data.waitingApproval ?? 0) > 0 && (
-            <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs flex-1 min-w-32 lg:min-w-0 self-stretch flex items-center">
-              ⏸ {data.waitingApproval} 个运行待审批 —— 「运行历史」中批准
-            </div>
-          )}
-        </div>
-        <div className="lg:col-span-9 min-w-0">
+    <div className="space-y-3">
+      {/* 指标条: 一行内联, 不再一张卡一个数字 */}
+      <div className="flex gap-2 flex-wrap">
+        <StatChip label="流水线" value={String(data.pipelines)} />
+        <StatChip label="运行中 / 排队" value={`${data.running} / ${data.queued}`} />
+        <StatChip label="等待审批" value={String(waiting)} warn={waiting > 0} />
+        <StatChip label="24h 成功" value={String(ok24)} tone="text-ok" />
+        <StatChip label="24h 失败" value={String(fail24)} tone={fail24 > 0 ? 'text-destructive' : undefined} />
+        <StatChip label="24h 成功率" value={total24 > 0 ? `${Math.round(ok24 * 100 / total24)}%` : '-'} />
+      </div>
+
+      {/* 待审批: 可点击直达运行详情, 没有则不占位 */}
+      {waiting > 0 && (
+        <button
+          onClick={() => { if (waitingRun) onOpenRun(waitingRun.id); else onMore?.() }}
+          className="w-full rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn flex items-center justify-between hover:bg-warn/15 transition-colors">
+          <span>⏸ {waiting} 个运行待审批{waitingRun ? ', 点击直接处理' : ''}</span>
+          <ChevronRight className="size-4" />
+        </button>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+        <div className="lg:col-span-2 min-w-0">
           <StageViewCard onOpenRun={onOpenRun} />
         </div>
+        <RecentActivity runs={data.recentRuns} onOpenRun={onOpenRun} onMore={onMore} />
       </div>
-      <Card>
-        <CardHeader className="pb-3"><CardTitle>最近运行</CardTitle></CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow><TableHead>流水线</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead><TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead><TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead></TableRow>
-            </TableHeader>
-            <TableBody>
-              {(data.recentRuns || []).length === 0 && (
-                <TableRow><TableCell colSpan={7} className="h-16 text-center text-muted-foreground">暂无数据</TableCell></TableRow>
-              )}
-              {(data.recentRuns || []).map((r: Run) => (
-                <TableRow key={r.id}>
-                  <TableCell>{r.pipeline}</TableCell>
-                  <TableCell>{TRIGGER_TEXT[r.trigger] || r.trigger}</TableCell>
-                  <TableCell><StatusBadge status={r.status} /></TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 min-w-36">
-                      <StageSegments stages={r.stages} />
-                      <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
-                  <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
-                  <TableCell><Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
     </div>
+  )
+}
+
+function StatChip({ label, value, warn, tone }: { label: string; value: string; warn?: boolean; tone?: string }) {
+  return (
+    <div className="rounded-lg border bg-card/60 px-3 py-1.5 flex items-baseline gap-2">
+      <span className="text-xs text-muted-foreground whitespace-nowrap">{label}</span>
+      <span className={cn('text-lg font-bold tabular-nums', warn && 'text-warn', tone)}>{value}</span>
+    </div>
+  )
+}
+
+// 紧凑活动列表: 状态点 + 名称 + 触发 + 耗时 + 时间, 行高减半
+function RecentActivity({ runs, onOpenRun, onMore }: { runs: Run[]; onOpenRun: (id: string) => void; onMore?: () => void }) {
+  const list = (runs || []).slice(0, 9)
+  return (
+    <Card className="h-full flex flex-col overflow-hidden">
+      <CardHeader className="pb-2 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">最近运行</CardTitle>
+          {onMore && <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={onMore}>全部 <ChevronRight className="size-3.5" /></Button>}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0 flex-1 min-h-0 hover-scroll">
+        <div className="flex flex-col">
+          {list.length === 0 && <div className="text-sm text-muted-foreground py-4">暂无数据</div>}
+          {list.map((r: Run) => (
+            <button key={r.id} onClick={() => onOpenRun(r.id)}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/60 text-left transition-colors">
+              <LastRunDot run={r} />
+              <span className="text-sm font-medium truncate flex-1 min-w-0">{r.pipeline}</span>
+              {r.status === 'running' && <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>}
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] shrink-0">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge>
+              <span className="text-xs text-muted-foreground tabular-nums w-16 text-right shrink-0">{fmtDur(r.durationMs)}</span>
+              <span className="text-[11px] text-muted-foreground tabular-nums w-24 text-right shrink-0 hidden lg:block">
+                {r.startedAt ? new Date(r.startedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+              </span>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
