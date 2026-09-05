@@ -3110,3 +3110,9 @@ body {
 /* 库行字色层级(k8s-side-item 同款 inherit) */
 .lv-db > .db-tree-label { color: inherit !important; opacity: 0.92; }
 .lv-group > .db-tree-label { color: inherit !important; opacity: 0.65; font-weight: 600 !important; }
+
+/* 主侧栏: 溢出时用细滚动条(替代浏览器默认粗滑块) */
+.sidebar { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }

@@ -127,7 +127,7 @@ export default function ConnectionTree({
     const isOpen = expanded.has(node.key)
     return (
       <div
-        className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-black/[0.06]${selected ? ' bg-black/[0.08]' : ''}`}
+        className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
         style={{ paddingLeft: `${8 + depth * 16}px`, contain: 'layout style' }}
         onClick={() => onNodeClick(node)}
         onContextMenu={e => {
@@ -139,7 +139,7 @@ export default function ConnectionTree({
       >
         {canExpand ? (
           <button
-            className="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[var(--text-dim)] hover:bg-black/10 hover:text-[var(--text)]"
+            className="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
             onClick={e => { e.stopPropagation(); onNodeClick(node) }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
@@ -348,10 +348,10 @@ export default function ConnectionTree({
   }, [menu])
 
   return (
-    <div className="db-tree">
+    <div className="db-tree" style={{ fontSize: '14px' }}>
       <div className="db-tree-header">
         <input
-          className="input db-tree-search"
+          className="db-tree-search w-full h-6 rounded border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1"
           placeholder="搜索连接 / 库 / 表..."
           value={filter}
           onChange={e => setFilter(e.target.value)}
@@ -400,9 +400,9 @@ export default function ConnectionTree({
                 {renderRow(node, depth, (
                   <>
                     <NodeIcon level={node.level} />
-                    <span className="truncate text-[0.8125rem] leading-tight">{node.label}</span>
+                    <span className="truncate">{node.label}</span>
                     {node.count !== undefined && (
-                      <span className="ml-0.5 rounded-full bg-black/[0.08] px-1.5 text-[0.6rem] leading-4 text-[var(--text-dim)]">{node.count}</span>
+                      <span className="ml-0.5 inline-flex h-4 items-center rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{node.count}</span>
                     )}
                   </>
                 ))}
@@ -414,10 +414,10 @@ export default function ConnectionTree({
                       <span className="relative flex h-3.5 w-3.5 shrink-0">
                         {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
                       </span>
-                      <span className="truncate text-[0.8125rem] leading-tight">
+                      <span className="truncate">
                         {t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
                       </span>
-                      <span className="ml-auto shrink-0 text-[0.625rem] text-[var(--text-dim)] opacity-0 group-hover:opacity-100">@{node.db}</span>
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
                     </>
                   ))
                 })}
@@ -428,7 +428,7 @@ export default function ConnectionTree({
           return renderRow(node, depth, (
             <>
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} size={14} /> : <NodeIcon level={node.level} />}
-              <span className="truncate text-[0.8125rem] leading-tight">{node.label}</span>
+              <span className="truncate">{node.label}</span>
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>
