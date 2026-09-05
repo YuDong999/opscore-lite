@@ -325,7 +325,7 @@ func cloneCommand(url, branch string, cred *Credential) string {
 	auth := gitAuthURL(url, cred)
 	name := repoName(url)
 	return fmt.Sprintf(
-		"if [ -d .git ]; then R=$(git remote get-url origin 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
+		"if [ -d .git ]; then R=$(git config --get remote.origin.url 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
 			"if [ \"$R\" != %s ]; then echo \"工作目录是其他仓库($R), 拒绝重置\"; exit 64; fi; "+
 			"git fetch origin %s && git reset --hard origin/%s && git clean -fd; "+
 			"else git clone --depth 1 -b %s %s .; fi; "+
