@@ -851,7 +851,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="sm:max-w-4xl h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-6xl h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle>{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</DialogTitle>
         </DialogHeader>
