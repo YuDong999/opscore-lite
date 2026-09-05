@@ -76,7 +76,7 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
 }
 
 /** 小操作图标(全部为 SVG, 禁止 emoji/dingbat): 测试/编辑/删除/刷新/关闭/新建查询/查看数据/复制/齿轮/表结构 */
-export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload'; size?: number }) {
+export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (kind) {
     case 'test':
@@ -157,6 +157,12 @@ export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delet
         <svg {...common}>
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <path d="M7 8l5-5 5 5M12 3v12" />
+        </svg>
+      )
+    case 'pin':
+      return (
+        <svg {...common}>
+          <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
         </svg>
       )
     default:

@@ -527,3 +527,13 @@ export async function deleteSavedQuery(id: string): Promise<void> {
     body: JSON.stringify({ id }),
   }).then(r => { if (!r.ok) throw new Error('删除失败') })
 }
+
+// ── 右键菜单: DDL / 全表 INSERT ──
+export async function fetchTableDDL(id: string, database: string, table: string): Promise<string> {
+  const d = await describeTable(id, database, table)
+  return d.ddl || ''
+}
+
+export async function fetchTableInserts(id: string, database: string, table: string, maxRows = 1000): Promise<{ text: string; rows: number; truncated: boolean }> {
+  return getJSON(`/api/dbmanager/table-inserts?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&maxRows=${maxRows}`)
+}

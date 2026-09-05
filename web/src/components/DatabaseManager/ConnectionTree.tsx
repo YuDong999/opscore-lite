@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection,
+  type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection, describeTable, fetchTableDDL, fetchTableInserts,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -40,6 +40,21 @@ export default function ConnectionTree({
   const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({})
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
+
+  // 置顶表(localStorage)
+  const [pins, setPins] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('dbmanager:pinned') || '[]') } catch { return [] }
+  })
+  const pinKey = (connId: string, db: string, table: string) => `${connId}|${db}|${table}`
+  const isPinned = (connId: string, db: string, table: string) => pins.includes(pinKey(connId, db, table))
+  const togglePin = (connId: string, db: string, table: string) => {
+    setPins(prev => {
+      const k = pinKey(connId, db, table)
+      const next = prev.includes(k) ? prev.filter(x => x !== k) : [k, ...prev]
+      try { localStorage.setItem('dbmanager:pinned', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   const isSystemDb = (db: string) => {
     return db === 'information_schema' || db === 'performance_schema' || db === 'mysql' || db === 'sys' || db.startsWith('pg_')
@@ -115,13 +130,32 @@ export default function ConnectionTree({
       ]
     }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
+      const pinned = isPinned(node.conn.id, node.db, node.table)
       return [
         { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
         { label: '查看结构 / DDL', icon: <ActionIcon kind="doc" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
         { label: '表属性', icon: <ActionIcon kind="gear" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
         { divider: true },
-        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
-        { label: '复制表名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!) } },
+        { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '复制表名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!); notify(true, `已复制 ${node.table}`) } },
+        { label: '复制建表 DDL', icon: <ActionIcon kind="copy" />, onClick: async () => {
+            try {
+              const ddl = await fetchTableDDL(node.conn!.id, node.db!, node.table!)
+              await navigator.clipboard?.writeText(ddl)
+              notify(true, `已复制 ${node.table} 建表 DDL`)
+            } catch (e: any) { notify(false, '复制 DDL 失败: ' + e.message) }
+          } },
+        node.level === 'table'
+          ? { label: `复制全表 INSERT${pinned ? '' : ''}`, icon: <ActionIcon kind="copy" />, onClick: async () => {
+              try {
+                const r = await fetchTableInserts(node.conn!.id, node.db!, node.table!, 500)
+                await navigator.clipboard?.writeText(r.text)
+                notify(true, `已复制 ${node.table} 全表 INSERT (${r.rows} 行${r.truncated ? ', 截断至 500' : ''})`)
+              } catch (e: any) { notify(false, '复制 INSERT 失败: ' + e.message) }
+            } }
+          : { divider: true },
+        { divider: true },
+        { label: pinned ? '取消置顶' : '置顶表', icon: <ActionIcon kind="pin" />, onClick: () => togglePin(node.conn!.id, node.db!, node.table!) },
       ]
     }
     return []
@@ -230,7 +264,13 @@ export default function ConnectionTree({
             const tables = objs ? objs.tables.filter(t => !f || t.toLowerCase().includes(f)) : []
             const views = objs ? objs.views.filter(t => !f || t.toLowerCase().includes(f)) : []
             const isTableGroup = node.label.startsWith('表')
-            const items = isTableGroup ? tables : views
+            const allItems = isTableGroup ? tables : views
+            // 置顶表排前
+            const items = [...allItems].sort((a, b) => {
+              const pa = isPinned(node.conn!.id, node.db!, a) ? 0 : 1
+              const pb = isPinned(node.conn!.id, node.db!, b) ? 0 : 1
+              return pa - pb
+            })
             const itemLevel = isTableGroup ? 'table' : 'view'
 
             return (
@@ -258,12 +298,16 @@ export default function ConnectionTree({
                       return (
                         <div
                           key={tblKey}
-                          className="db-tree-card"
+                          className={`db-tree-card${isPinned(node.conn!.id, node.db!, t) ? ' pinned' : ''}`}
                           onClick={() => onOpenTable(node.conn!, node.db!, t, itemLevel === 'view')}
-                          title={`${t} @ ${node.db}`}
+                          onContextMenu={e => {
+                            e.preventDefault()
+                            setMenu({ x: e.clientX, y: e.clientY, node: { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true } })
+                          }}
+                          title={`${t} @ ${node.db} (右键更多操作)`}
                         >
                           <span className="db-tree-card-icon">{itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}</span>
-                          <span className="db-tree-card-label">{t}</span>
+                          <span className="db-tree-card-label">{t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}</span>
                           <span className="db-tree-card-db">@{node.db}</span>
                           <button
                             className="db-tree-card-close"

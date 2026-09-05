@@ -1,6 +1,7 @@
 // 通用右键菜单: 定位式浮层, 点击外部自动关闭。
 
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
   label?: string
@@ -46,7 +47,8 @@ export default function ContextMenu({
   if (x + estW > window.innerWidth) style.left = Math.max(4, x - estW)
   if (y + estH > window.innerHeight) style.top = Math.max(4, y - estH)
 
-  return (
+  // portal 到 body: 脱离 .db-side 层叠上下文, 否则被兄弟 .db-main 盖住
+  return createPortal(
     <div className="db-ctx-menu" ref={ref} style={style}>
       {items.map((it, i) =>
         it.divider ? (
@@ -67,6 +69,7 @@ export default function ContextMenu({
           </button>
         ),
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

@@ -199,3 +199,6 @@ func buildInsertSQL(schema, table string, columns []string, colBases map[string]
 	}
 	return b.String()
 }
+
+// QuoteValue 导出单值内联(供 dbmanager 复制为 INSERT 使用)。
+func QuoteValue(v any, dst Dialect, colBase string) string { return quoteValue(v, dst, colBase) }
