@@ -17,6 +17,7 @@ import DataGrid from '../components/DatabaseManager/DataGrid'
 import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
 import QuickOpen from '../components/DatabaseManager/QuickOpen'
+import SyncDialog from '../components/DatabaseManager/SyncDialog'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 import DriverManagement from '../components/DatabaseManager/DriverManagement'
@@ -53,6 +54,7 @@ export default function DatabaseManagerModule() {
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
   const [showQuickOpen, setShowQuickOpen] = useState(false)
+  const [showSync, setShowSync] = useState(false)
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
@@ -146,7 +148,7 @@ export default function DatabaseManagerModule() {
   const handleSyncDb = (c: ConnectionInfo, db: string) => {
     setConn(c)
     syncSeedRef.current = { connId: c.id, db }
-    openTab({ key: `sync:${c.id}`, kind: 'sync', connId: c.id, label: '跨库同步' })
+    setShowSync(true)
   }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
@@ -255,6 +257,14 @@ export default function DatabaseManagerModule() {
         onOpenTable={handleOpenTable}
         onNewQuery={handleNewQuery}
       />
+      {showSync && (
+        <SyncDialog
+          conns={conns}
+          activeConnId={conn?.id}
+          presetDb={syncSeedRef.current?.db}
+          onClose={() => { setShowSync(false); syncSeedRef.current = null }}
+        />
+      )}
       <div className="db-layout">
         <aside className="db-side">
           <ConnectionTree

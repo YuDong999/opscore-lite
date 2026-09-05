@@ -3126,3 +3126,6 @@ body {
 .qo-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qo-hint { margin-left: auto; font-size: 0.6875rem; color: var(--text-dim); }
 .qo-empty { padding: 1rem 0.75rem; text-align: center; color: var(--text-dim); font-size: 0.78rem; }
+
+/* 同步弹窗宽度 */
+.db-sync-dialog { width: min(46rem, 94vw) !important; }
