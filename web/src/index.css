@@ -3065,3 +3065,48 @@ body {
 .db-tree-node.selected, .db-tree-card.selected { background: rgb(235 235 235) !important; box-shadow: none !important; }
 [data-theme='obsidian'] .db-tree-node.selected, [data-theme='obsidian'] .db-tree-card.selected,
 [data-theme='黑曜石'] .db-tree-node.selected { background: rgb(36 36 36) !important; }
+
+/* ═══ V14: 数据库侧栏统一到项目侧栏设计语言(同 k8s-side, opencode 审查版) ═══
+   覆盖 V7-V13 的补丁式覆盖, 全部值取自 .k8s-side 体系, 单一来源 */
+/* 容器: 与 k8s-side 同构的卡片(唯一一层框) */
+.db-side {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: none !important;
+  padding: 0.625rem 0.375rem !important;
+}
+/* 行: k8s-side-item 值 — 28px、0.4rem 圆角、hover 灰 8% */
+.db-tree-node, .db-tree-card {
+  min-height: 1.75rem !important; height: auto !important;
+  padding: 0.25rem 0.5rem !important;
+  border-radius: 0.4rem !important;
+  border: none !important; background: transparent !important; box-shadow: none !important;
+  display: flex; align-items: center; gap: 0.4rem !important;
+  font-size: 0.8125rem !important; font-weight: 500 !important;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.db-tree-node:hover, .db-tree-card:hover { background: rgba(127, 127, 127, 0.08) !important; }
+/* 选中: k8s-side-item.active = accent 12% 底 + accent 字色 + 600 字重 */
+.db-tree-node.selected, .db-tree-card.selected {
+  background: color-mix(in srgb, var(--accent, #7c6cf6) 12%, transparent) !important;
+  color: var(--accent, #7c6cf6) !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+.db-tree-node.selected .db-tree-label, .db-tree-card.selected .db-tree-card-label { color: var(--accent, #7c6cf6) !important; }
+/* caret: k8s-fold-arrow 同款(细箭头, 低透明度, hover 加深) */
+.db-tree-caret, .db-tree-caret-leaf { width: 0.875rem !important; height: 0.875rem !important; }
+.db-tree-caret { color: var(--text-dim) !important; opacity: 0.6; border-radius: 0.25rem !important; }
+.db-tree-caret:hover { opacity: 1; background: transparent !important; }
+.db-tree-caret:hover::before { border-left-color: var(--text) !important; }
+/* 图标/标签字号统一 */
+.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.9375rem !important; height: 0.9375rem !important; }
+.db-tree-label, .db-tree-card-label { font-size: 0.8125rem !important; line-height: 1.3 !important; }
+.db-tree-count { background: rgba(127, 127, 127, 0.12) !important; border: none !important; }
+/* 搜索条: 填充式, 与卡片融合 */
+.db-tree-search { background: rgba(127, 127, 127, 0.08) !important; border: none !important; }
+.db-tree-search:focus { background: var(--surface-solid) !important; }
+/* 库行字色层级(k8s-side-item 同款 inherit) */
+.lv-db > .db-tree-label { color: inherit !important; opacity: 0.92; }
+.lv-group > .db-tree-label { color: inherit !important; opacity: 0.65; font-weight: 600 !important; }
