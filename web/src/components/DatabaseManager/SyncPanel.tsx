@@ -36,7 +36,9 @@ interface Job {
 }
 interface SyncRequest {
   sourceId: string; sourceDb: string; targetId: string; targetDb: string
-  tables?: string[]; mode: SyncMode; incrementalColumn?: string
+  tables?: string[]
+  tableMaps?: Array<{ source: string; target: string }>
+  mode: SyncMode; incrementalColumn?: string
   options?: { batchRows?: number; maxRows?: number; truncate?: boolean; whereClause?: string }
 }
 
@@ -62,6 +64,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
   const [dstDbs, setDstDbs] = useState<string[]>([])
   const [srcTables, setSrcTables] = useState<string[]>([])
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
+  const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [mode, setMode] = useState<SyncMode>('schema_full')
   const [plan, setPlan] = useState<SyncPlan | null>(null)
   const [job, setJob] = useState<Job | null>(null)
@@ -107,7 +110,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
     if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return }
     setBusy(true)
     try {
-      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tables: [...pickedTables] }
+      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })) }
       const r = await post<{ plan: SyncPlan }>('/api/dbmanager/sync/plan', req)
       setPlan(r.plan)
       if (r.plan.unsupported?.length) toast.error(r.plan.unsupported.join('; '))
@@ -122,7 +125,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
     if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return }
     setBusy(true)
     try {
-      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tables: [...pickedTables] }
+      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })) }
       const r = await post<{ jobId: string }>('/api/dbmanager/sync/run', req)
       toast.success(`任务已启动: ${r.jobId}`)
       poll(r.jobId)
@@ -209,10 +212,24 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', maxHeight: '8rem', overflowY: 'auto' }}>
               {srcTables.map(t => (
-                <label key={t} className="db-advanced-toggle">
-                  <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
-                  {t}
-                </label>
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                  <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '8rem' }}>
+                    <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
+                    {t}
+                  </label>
+                  {pickedTables.has(t) && (
+                    <>
+                      <span className="dim">→</span>
+                      <input
+                        className="input"
+                        style={{ height: '1.6rem', fontSize: '0.75rem', padding: '0.1rem 0.4rem', flex: 1, minWidth: 0 }}
+                        value={targetNames[t] ?? ''}
+                        onChange={e => setTargetNames(prev => ({ ...prev, [t]: e.target.value }))}
+                        placeholder="目标表名(留空=同名, 自定义则自动建表)"
+                      />
+                    </>
+                  )}
+                </div>
               ))}
             </div>
           </div>

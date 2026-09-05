@@ -57,19 +57,39 @@ func (r *Runner) BuildPlan(ctx context.Context, req SyncRequest) (*SyncPlan, err
 		return nil, fmt.Errorf("源库与目标库相同, 拒绝同步")
 	}
 
-	tables := req.Tables
-	if len(tables) == 0 {
+	// 表清单: TableMaps(自定义目标名)优先, 其次 Tables(同名), 都空=全库
+	type tableRef struct{ source, target string }
+	var tableRefs []tableRef
+	for _, m := range req.TableMaps {
+		if strings.TrimSpace(m.Source) != "" {
+			tgt := strings.TrimSpace(m.Target)
+			if tgt == "" {
+				tgt = m.Source
+			}
+			tableRefs = append(tableRefs, tableRef{m.Source, tgt})
+		}
+	}
+	if len(tableRefs) == 0 {
+		for _, t := range req.Tables {
+			if strings.TrimSpace(t) != "" {
+				tableRefs = append(tableRefs, tableRef{t, t})
+			}
+		}
+	}
+	if len(tableRefs) == 0 {
 		names, err := srcDB.GetTables(req.SourceDB)
 		if err != nil {
 			return nil, fmt.Errorf("列举源表失败: %w", err)
 		}
-		sort.Strings(tables)
-		tables = names
-		sort.Strings(tables)
+		sort.Strings(names)
+		for _, n := range names {
+			tableRefs = append(tableRefs, tableRef{n, n})
+		}
 	}
 
-	for _, t := range tables {
-		tp := TablePlan{Source: t, Target: t}
+	for _, tr := range tableRefs {
+		t := tr.source
+		tp := TablePlan{Source: tr.source, Target: tr.target}
 		cols, err := srcDB.GetColumns(req.SourceDB, t)
 		if err != nil {
 			tp.Skipped, tp.SkipReason = true, "读取源表结构失败: "+err.Error()
@@ -83,10 +103,13 @@ func (r *Runner) BuildPlan(ctx context.Context, req SyncRequest) (*SyncPlan, err
 		}
 		tp.SourcePK = primaryKeyOf(cols)
 
-		ddl, idxDDL, notes := GenerateCreateDDL(req.TargetDB, t, cols, idx, srcDialect, dstDialect)
+		ddl, idxDDL, notes := GenerateCreateDDL(req.TargetDB, tr.target, cols, idx, srcDialect, dstDialect)
 		tp.CreateDDL = ddl
 		tp.IndexDDL = idxDDL
 		tp.Notes = notes
+		if tr.target != tr.source {
+			tp.Notes = append(tp.Notes, fmt.Sprintf("目标表为自定义名 %s (源 %s), 将自动建表", tr.target, tr.source))
+		}
 
 		// 增量策略探测
 		tp.IncrColumn, tp.IncrStrategy = detectIncremental(cols, req.IncrementalColumn)

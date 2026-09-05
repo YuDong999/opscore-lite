@@ -67,9 +67,16 @@ type SyncRequest struct {
 	TargetID   string   `json:"targetId"`            // 目标连接 ID
 	TargetDB   string   `json:"targetDb"`            // 目标库名
 	Tables     []string `json:"tables,omitempty"`    // 指定表列表, 空=源库全部 BASE TABLE
+	TableMaps  []TableMap `json:"tableMaps,omitempty"` // 表映射(源→目标自定义名); 非空时优先于 Tables
 	Mode       SyncMode `json:"mode"`
 	IncrementalColumn string `json:"incrementalColumn,omitempty"` // 增量列(默认自动探测)
 	Options    SyncOptions `json:"options,omitempty"`
+}
+
+// TableMap 表映射: 源表 → 目标自定义表名(目标不存在时 plan/run 自动建表)。
+type TableMap struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
 }
 
 // ColumnMapping 单列的类型映射结果(计划预览用)。
