@@ -115,6 +115,11 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 			if sp.PullArtifact != "" && !cicd.ValidArtifactFile(sp.PullArtifact) {
 				return fmt.Sprintf("步骤 %q 拉取制品文件名无效", sp.Name)
 			}
+			if sp.Action != "" {
+				if err := cicd.ValidateActionParams(sp.Action, sp.Params); err != nil {
+					return fmt.Sprintf("步骤 %q 动作配置无效: %v", sp.Name, err)
+				}
+			}
 		}
 	}
 	return ""
@@ -705,6 +710,39 @@ func CicdArtifactDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
 	http.ServeFile(w, r, path)
+}
+
+// ── 动作注册表 ─────────────────────────────────────────────
+
+// CicdActions 动作定义列表(前端 ActionPicker 与动态表单的 schema 来源)
+func CicdActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	WriteJSON(w, cicd.Actions())
+}
+
+// CicdActionPreview 按参数合成动作命令(前端"转 Shell"用)
+func CicdActionPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Action string            `json:"action"`
+		Params map[string]string `json:"params"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	cmd, err := cicd.CompileAction(body.Action, body.Params)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, map[string]any{"command": cmd})
 }
 
 // ── 导入/导出 ─────────────────────────────────────────────

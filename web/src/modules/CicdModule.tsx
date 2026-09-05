@@ -26,7 +26,7 @@ import {
   fmtDur, fmtTime, fmtSize, TRIGGER_TEXT,
   type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
   type Credential, type Repo, type Registry, type Script,
-  type StageRun,
+  type StageRun, type ActionSpec,
 } from './cicd/shared'
 
 const CRED_TYPE_TEXT: Record<string, string> = {
@@ -550,6 +550,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
   const registries = useResource<Registry[]>(API.registries)
   const creds = useResource<Credential[]>(API.credentials)
   const scripts = useResource<Script[]>(API.scripts)
+  const actions = useResource<ActionSpec[]>(API.actions)
   const { confirm, confirmEl } = useConfirm()
   const isNew = !value.id
 
@@ -739,6 +740,19 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
                 {st.steps.map((sp, i) => (
                   <div key={i} className="border rounded-lg p-2 mb-2">
                     <div className="flex gap-2 items-center mb-1.5 flex-wrap">
+                      <Select value={sp.action || '__shell__'} onValueChange={v => {
+                        if (v === '__shell__') { setStep(si, i, { action: undefined, params: undefined }); return }
+                        const spec = (actions.data || []).find(a => a.type === v)
+                        const params: Record<string, string> = {}
+                        spec?.fields.forEach(f => { params[f.name] = f.placeholder || '' })
+                        setStep(si, i, { action: v, params })
+                      }}>
+                        <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="Shell 命令" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__shell__">Shell 命令</SelectItem>
+                          {(actions.data || []).map(a => <SelectItem key={a.type} value={a.type}>{a.title}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
                       <Input className="flex-1 min-w-32" value={sp.name} placeholder="步骤名" onChange={e => setStep(si, i, { name: e.target.value })} />
                       <Input className="w-24" type="number" min={0} max={1440} title="步骤超时(分钟)" value={sp.timeoutMin} onChange={e => setStep(si, i, { timeoutMin: +e.target.value })} />
                       <label className="flex items-center gap-1.5 text-sm" title="失败后继续执行后续步骤">
@@ -755,8 +769,32 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
                       <Button variant="ghost" size="icon" onClick={() => setStage(si, { steps: move(st.steps, i, 1) })}><ChevronDown /></Button>
                       <Button variant="ghost" size="icon" className="text-destructive" onClick={() => setStage(si, { steps: st.steps.filter((_, idx) => idx !== i) })}><Trash2 /></Button>
                     </div>
+                    {sp.action ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {((actions.data || []).find(a => a.type === sp.action)?.fields || []).map(f => (
+                          <div key={f.name}>
+                            <Label className="text-xs">{f.label}{f.required ? ' *' : ''}</Label>
+                            <Input className="h-8 text-xs font-mono" value={sp.params?.[f.name] || ''} placeholder={f.placeholder || f.label}
+                              onChange={e => setStep(si, i, { params: { ...sp.params, [f.name]: e.target.value } })} />
+                          </div>
+                        ))}
+                        <div className="md:col-span-2 flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground font-mono truncate flex-1" title="运行时按参数合成 shell 命令, $变量自动注入">
+                            ${((actions.data || []).find(a => a.type === sp.action)?.fields || []).map(f => f.name).join(' $')}
+                          </span>
+                          <Button variant="ghost" size="sm" className="h-6 text-xs" title="按当前参数合成 Shell 命令, 转为普通步骤"
+                            onClick={() => {
+                              fetch(API.actions, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: sp.action, params: sp.params }) })
+                                .then(r => r.json())
+                                .then((d: any) => setStep(si, i, { action: undefined, params: undefined, command: d.command || sp.command }))
+                                .catch(() => setStep(si, i, { action: undefined, params: undefined }))
+                            }}>转 Shell</Button>
+                        </div>
+                      </div>
+                    ) : (
                     <Textarea className="font-mono min-h-16" rows={2} value={sp.command} placeholder="shell 命令, 如: make build"
                       onChange={e => setStep(si, i, { command: e.target.value })} />
+                    )}
                     <div className="flex gap-2 items-center mt-1.5 flex-wrap">
                       <span className="text-xs text-muted-foreground whitespace-nowrap"><Package className="inline size-3.5 mr-0.5" />制品:</span>
                       <Input className="flex-1 min-w-48" value={(sp.artifacts || []).join(', ')}

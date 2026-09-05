@@ -39,6 +39,7 @@ export const API = {
   repoDelete: '/api/cicd/repo/delete',
   repoTest: '/api/cicd/repo/test',
   repoBranches: '/api/cicd/repo/branches',
+  actions: '/api/cicd/actions',
   registries: '/api/cicd/registries',
   registrySave: '/api/cicd/registry/save',
   registryDelete: '/api/cicd/registry/delete',
@@ -58,7 +59,10 @@ export interface Trigger { manual: boolean; webhook: boolean; secret: string; cr
 export interface Step {
   name: string; command: string; continueOnFail: boolean; timeoutMin: number
   artifacts?: string[]; pullArtifact?: string
+  action?: string; params?: Record<string, string>
 }
+export interface ActionField { name: string; label: string; type: string; placeholder?: string; required?: boolean }
+export interface ActionSpec { type: string; title: string; category: string; fields: ActionField[] }
 export interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 export interface Source { repoId: string; branch: string }
 export interface Pipeline {

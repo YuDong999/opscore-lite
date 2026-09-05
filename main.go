@@ -456,6 +456,8 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/run/approve", Handler: handlers.CicdRunApprove},
 			{Path: "/api/cicd/run/delete", Handler: handlers.CicdRunDelete},
 			{Path: "/api/cicd/artifact/download", Handler: handlers.CicdArtifactDownload},
+			{Path: "/api/cicd/actions", Handler: handlers.CicdActions},
+			{Path: "/api/cicd/actions/preview", Handler: handlers.CicdActionPreview},
 			{Path: "/api/cicd/pipeline/export", Handler: handlers.CicdPipelineExport},
 			{Path: "/api/cicd/pipeline/import", Handler: handlers.CicdPipelineImport},
 			{Path: "/api/cicd/pipeline/nextfire", Handler: handlers.CicdNextFire},

@@ -72,6 +72,8 @@ type Step struct {
 	TimeoutMin     int      `json:"timeoutMin"`
 	Artifacts      []string `json:"artifacts"`     // 制品路径(相对工作目录, 支持 * 通配), 步骤成功后归档
 	PullArtifact   string   `json:"pullArtifact"`  // 运行前把同次运行已收集的制品推送到本步骤主机工作目录
+	Action         string   `json:"action,omitempty"`         // 结构化动作类型(空=按 command 作 shell 执行)
+	Params         map[string]string `json:"params,omitempty"` // 动作参数(注入步骤环境变量)
 }
 
 // Stage 顺序执行的阶段, 回答"在哪台主机上做什么"
@@ -959,6 +961,26 @@ overall:
 				}
 			}
 			if execErr == nil {
+				// 结构化动作: 编译为 shell 命令(仅写运行视图, 不碰流水线定义), 参数注入步骤环境变量; 编译失败 = 步骤失败
+				cmd := step.Command
+				if step.Action != "" {
+					compiled, cerr := CompileAction(step.Action, step.Params)
+					if cerr != nil {
+						exit, execErr = -1, cerr
+					} else {
+						cmd = compiled
+						stepEnv = append(append([]Var{}, stageEnv...),
+							Var{Name: "CICD_ACTION", Value: step.Action})
+						for k, v := range step.Params {
+							if k != "" {
+								stepEnv = append(stepEnv, Var{Name: k, Value: v, Secret: false})
+							}
+						}
+						e.mu.Lock()
+						spr.Command = compiled
+						e.mu.Unlock()
+					}
+				}
 				stepOnLine := writeLine
 				isCloneStep := i == 0 && rt.clone != nil && j == 0
 				if isCloneStep {
@@ -985,7 +1007,7 @@ overall:
 				if step.TimeoutMin > 0 {
 					stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMin)*time.Minute)
 				}
-				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stepEnv, stepOnLine)
+				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, cmd, stepEnv, stepOnLine)
 				stepCancel()
 			} else {
 				exit = -1
