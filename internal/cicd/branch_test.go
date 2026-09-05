@@ -42,7 +42,7 @@ func TestTriggerBranchOverride(t *testing.T) {
 		return r.Status == StatusSuccess
 	})
 	// 覆盖 main → 用 main
-	r2, err := e.TriggerBranch(p.ID, TriggerManual, "main")
+	r2, err := e.TriggerBranch(p.ID, TriggerManual, "main", nil)
 	if err != nil {
 		t.Fatalf("TriggerBranch: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRunBranchRecorded(t *testing.T) {
 	e.SavePipeline(p)
 	e.repos = append(e.repos, &Repo{ID: "repo-x", Name: "app", URL: "https://git.example.com/team/app.git", DefaultBranch: "master"})
 
-	r, _ := e.TriggerBranch(p.ID, TriggerManual, "release-1")
+	r, _ := e.TriggerBranch(p.ID, TriggerManual, "release-1", nil)
 	waitCond(t, "成功", func() bool {
 		r, _ := e.GetRun(r.ID)
 		return r.Status == StatusSuccess

@@ -40,6 +40,7 @@ export const API = {
   repoTest: '/api/cicd/repo/test',
   repoBranches: '/api/cicd/repo/branches',
   actions: '/api/cicd/actions',
+  runLogDownload: '/api/cicd/run/log/download',
   registries: '/api/cicd/registries',
   registrySave: '/api/cicd/registry/save',
   registryDelete: '/api/cicd/registry/delete',
@@ -65,9 +66,11 @@ export interface ActionField { name: string; label: string; type: string; placeh
 export interface ActionSpec { type: string; title: string; category: string; fields: ActionField[] }
 export interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 export interface Source { repoId: string; branch: string }
+export interface ParamDef { name: string; label: string; type: string; default?: string; options?: string[]; required?: boolean }
 export interface Pipeline {
   id: string; name: string; description: string
   env: Var[]; trigger: Trigger; stages: Stage[]
+  params?: ParamDef[]
   source: Source; registryId: string; kubeCredId: string
   timeoutMin: number; maxRuns: number; notifyURL: string
   notifyChannel?: string; notifySecret?: string
@@ -82,7 +85,7 @@ export interface StepRun { name: string; command: string; status: string; exitCo
 export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
-  commit?: string; branch?: string
+  commit?: string; branch?: string; runParams?: Record<string, string>
   canceling?: boolean; progress: number; stages: StageRun[]; startedAt?: string; finishedAt?: string
   durationMs: number; error?: string
 }

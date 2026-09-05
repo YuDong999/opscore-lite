@@ -393,20 +393,20 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
   const { confirm, confirmEl } = useConfirm()
 
   const run = async (p: PipelineView) => {
-    if (p.source.repoId) {
-      // 有代码源 → 弹分支选择(自由选择分支构建)
+    if (p.source.repoId || (p.params?.length ?? 0) > 0) {
+      // 有代码源或参数定义 → 弹运行配置(选分支/填参数)
       try {
         const full = await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json()) as Pipeline
         setRunSel(full)
       } catch (e: any) { setErr(e.message) }
       return
     }
-    doRun(p.id, '')
+    doRun(p.id, '', {})
   }
-  const doRun = async (id: string, branch: string) => {
+  const doRun = async (id: string, branch: string, params: Record<string, string>) => {
     setBusy(id)
     try {
-      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id, branch })
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id, branch, params })
       setErr(''); setDetailRun(d.run.id); onChanged()
     } catch (e: any) { setErr(`触发失败: ${e.message}`) } finally { setBusy('') }
   }
@@ -518,7 +518,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         </CardContent>
       </Card>
 
-      {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b) => { const id = runSel.id; setRunSel(null); doRun(id, b) }} />}
+      {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b, params) => { const id = runSel.id; setRunSel(null); doRun(id, b, params) }} />}
       {tplOpen && (
         <Dialog open onOpenChange={o => !o && setTplOpen(false)}>
           <DialogContent className="sm:max-w-2xl">
@@ -839,15 +839,18 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
 
 // ==================== 运行分支选择弹窗 ====================
 
-function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onClose: () => void; onRun: (branch: string) => void }) {
-  const defaultBranch = pipeline.source.branch ||
-    pipeline.stages.find(() => true) && '' || ''
+function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onClose: () => void; onRun: (branch: string, params: Record<string, string>) => void }) {
+  const hasSource = !!pipeline.source.repoId
+  const hasParams = (pipeline.params?.length ?? 0) > 0
+  const defaultBranch = pipeline.source.branch
   const [branches, setBranches] = useState<string[] | null>(null)
   const [sel, setSel] = useState('__default__')
   const [err, setErr] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(hasSource)
+  const [pvals, setPvals] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    if (!hasSource) return
     fetch(`${API.repoBranches}?id=${pipeline.source.repoId}`)
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((list: string[]) => {
@@ -862,11 +865,14 @@ function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onC
       .finally(() => setLoading(false))
   }, [])
 
+  const missing = (pipeline.params || []).filter(d => d.required && !(pvals[d.name] || d.default || '').trim())
+
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>运行流水线: {pipeline.name}</DialogTitle></DialogHeader>
         <ErrBanner msg={err} onClose={() => setErr('')} />
+        {hasSource && (
         <div>
           <Label>选择分支(构建发布用)</Label>
           {loading ? <div className="text-sm text-muted-foreground py-2">获取远端分支中...</div> : (
@@ -880,9 +886,41 @@ function RunBranchDialog({ pipeline, onClose, onRun }: { pipeline: Pipeline; onC
           )}
           <div className="text-xs text-muted-foreground mt-1">首阶段将从所选分支拉取代码并构建发布</div>
         </div>
+        )}
+        {hasParams && (
+        <div>
+          <Label>构建参数</Label>
+          <div className="space-y-2 mt-1">
+            {(pipeline.params || []).map(d => (
+              <div key={d.name}>
+                <Label className="text-xs">{d.label}{d.required ? ' *' : ''}</Label>
+                {d.type === 'select' && d.options?.length ? (
+                  <Select value={pvals[d.name] || d.default || '__none__'} onValueChange={v => setPvals({ ...pvals, [d.name]: v === '__none__' ? '' : v })}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>{d.options.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+                  </Select>
+                ) : d.type === 'textarea' ? (
+                  <Textarea className="font-mono min-h-16 text-xs" value={pvals[d.name] || d.default || ''} onChange={e => setPvals({ ...pvals, [d.name]: e.target.value })} />
+                ) : (
+                  <Input className="h-8 text-xs" type={d.type === 'number' ? 'number' : 'text'} value={pvals[d.name] || d.default || ''} onChange={e => setPvals({ ...pvals, [d.name]: e.target.value })} placeholder={d.default ? `默认: ${d.default}` : ''} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button disabled={loading} onClick={() => onRun(sel === '__default__' ? '' : sel)}><Play />运行</Button>
+          <Button disabled={loading || missing.length > 0}
+            title={missing.length ? `缺少必填参数: ${missing.map(d => d.label).join(', ')}` : ''}
+            onClick={() => {
+              const params: Record<string, string> = {}
+              for (const d of pipeline.params || []) {
+                const v = (pvals[d.name] ?? d.default ?? '').trim()
+                if (v) params[d.name] = v
+              }
+              onRun(sel === '__default__' ? '' : sel, params)
+            }}><Play />运行</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1180,6 +1218,9 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
               </DialogTitle>
               <div className="text-xs text-muted-foreground font-normal tabular-nums mt-0.5">
                 {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)}{run.branch ? ` · ${run.branch}` : ''} · {run.id}
+                {run.runParams && Object.keys(run.runParams).length > 0 && (
+                  <span className="font-mono"> · {Object.entries(run.runParams).map(([k, v]) => `${k}=${v}`).join(' ')}</span>
+                )}
               </div>
             </div>
             <div className="flex gap-1.5 shrink-0">

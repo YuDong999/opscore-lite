@@ -85,6 +85,16 @@ type Stage struct {
 	Steps     []Step `json:"steps"`
 }
 
+// ParamDef 参数化构建的参数定义(触发时可填值, 注入为环境变量)
+type ParamDef struct {
+	Name    string   `json:"name"`              // 注入的环境变量名(建议大写)
+	Label   string   `json:"label"`
+	Type    string   `json:"type"`              // text | textarea | select | number
+	Default string   `json:"default,omitempty"`
+	Options []string `json:"options,omitempty"` // select 用
+	Required bool    `json:"required"`
+}
+
 // Source 代码源: 配置后引擎在首阶段自动注入"拉取代码"步骤
 type Source struct {
 	RepoID string `json:"repoId"` // 空=不自动拉取
@@ -99,8 +109,9 @@ type Pipeline struct {
 	Env         []Var     `json:"env"`
 	Trigger     Trigger   `json:"trigger"`
 	Stages      []Stage   `json:"stages"`
-	Source      Source    `json:"source"`               // 代码源(可选)
-	RegistryID  string    `json:"registryId,omitempty"` // 镜像仓库 → 注入 REGISTRY/REGISTRY_USER/REGISTRY_PASS
+	Params      []ParamDef `json:"params,omitempty"`    // 参数化构建(触发时可填值)
+	Source      Source     `json:"source"`              // 代码源(可选)
+	RegistryID  string     `json:"registryId,omitempty"` // 镜像仓库 → 注入 REGISTRY/REGISTRY_USER/REGISTRY_PASS
 	KubeCredID  string    `json:"kubeCredId,omitempty"` // kubeconfig 凭据 → 注入 KUBECONFIG
 	TimeoutMin  int       `json:"timeoutMin"`
 	MaxRuns     int       `json:"maxRuns"`
@@ -147,6 +158,7 @@ type Run struct {
 	Status     string     `json:"status"`
 	Commit     string     `json:"commit,omitempty"` // 拉取代码步骤捕获的 git commit(hash+标题)
 	Branch     string     `json:"branch,omitempty"` // 本次运行所用分支(重跑用)
+	RunParams  map[string]string `json:"runParams,omitempty"` // 触发时填写的参数值
 	Canceling  bool       `json:"canceling,omitempty"`
 	Progress   int        `json:"progress"` // 完成步骤占比(读取时计算)
 	Stages     []StageRun `json:"stages"`
@@ -210,7 +222,7 @@ type runtimeCtx struct {
 }
 
 // resolveRuntime 触发时解析代码源/镜像仓库/kubeconfig 凭据为运行时资源
-func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride string) (*runtimeCtx, error) {
+func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride string, runParams map[string]string) (*runtimeCtx, error) {
 	// 安全护栏: 代码源要求首阶段显式工作目录 —— 防止 git 操作落到服务器进程 cwd
 	if p.Source.RepoID != "" {
 		if len(p.Stages) == 0 || strings.TrimSpace(p.Stages[0].Workspace) == "" {
@@ -280,7 +292,23 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride str
 			log.Printf("[cicd] 流水线 %s 引用的 kubeconfig 凭据不存在或类型不符: %s", p.Name, p.KubeCredID)
 		}
 	}
-	// 5. 用户变量最后追加(可覆盖内置变量)
+	// 5. 参数化构建: 校验必填/回填默认值, 注入为环境变量(运行时值优先于静态配置)
+	if len(p.Params) > 0 {
+		env = append(env, Var{Name: "CICD_HAS_PARAMS", Value: "1"})
+		for _, def := range p.Params {
+			v := strings.TrimSpace(runParams[def.Name])
+			if v == "" {
+				v = def.Default
+			}
+			if v == "" && def.Required {
+				return nil, fmt.Errorf("缺少必填参数: %s(%s)", def.Label, def.Name)
+			}
+			if v != "" {
+				env = append(env, Var{Name: def.Name, Value: v})
+			}
+		}
+	}
+	// 6. 用户变量最后追加(可覆盖内置变量)
 	env = append(env, p.Env...)
 	rt.env = env
 	return rt, nil
@@ -660,11 +688,11 @@ func maskPipeline(p Pipeline) Pipeline {
 
 // Trigger 按 ID 触发一次运行(手动/webhook/cron 共用)
 func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
-	return e.TriggerBranch(pipelineID, trigger, "")
+	return e.TriggerBranch(pipelineID, trigger, "", nil)
 }
 
-// TriggerBranch 同 Trigger, 但允许运行时覆盖代码源分支(空=用流水线定义的分支)
-func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run, error) {
+// TriggerBranch 同 Trigger, 支持运行时覆盖代码源分支与填写构建参数
+func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string, runParams map[string]string) (*Run, error) {
 	if e.Maintenance() {
 		return nil, errors.New("维护模式已开启, 暂停接受新的运行(可在设置中关闭)")
 	}
@@ -693,12 +721,15 @@ func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run
 	snap := *pipe // 定义快照, 后续编辑不影响在跑任务
 	e.mu.RUnlock()
 
-	rt, err := e.resolveRuntime(&snap, buildNumber, branchOverride)
+	rt, err := e.resolveRuntime(&snap, buildNumber, branchOverride, runParams)
 	if err != nil {
 		return nil, err
 	}
 	run := newRun(&snap, trigger, rt)
 	run.Branch = rt.Branch
+	if len(runParams) > 0 {
+		run.RunParams = runParams
+	}
 	run.Progress = 0
 	for i := range rt.env {
 		switch rt.env[i].Name {

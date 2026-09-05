@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -119,6 +120,19 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 				if err := cicd.ValidateActionParams(sp.Action, sp.Params); err != nil {
 					return fmt.Sprintf("步骤 %q 动作配置无效: %v", sp.Name, err)
 				}
+			}
+		}
+		for _, def := range p.Params {
+			if def.Name == "" || strings.ContainsAny(def.Name, " \t\r\n") || len(def.Name) > 64 {
+				return "参数名无效(非空, 无空白, ≤64 字符)"
+			}
+			switch def.Type {
+			case "", "text", "textarea", "number", "select":
+			default:
+				return fmt.Sprintf("参数 %s 类型无效", def.Name)
+			}
+			if def.Type == "select" && len(def.Options) == 0 {
+				return fmt.Sprintf("参数 %s 为下拉类型但未配置选项", def.Name)
 			}
 		}
 	}
@@ -359,8 +373,9 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID     string `json:"id"`
-		Branch string `json:"branch"`
+		ID     string            `json:"id"`
+		Branch string            `json:"branch"`
+		Params map[string]string `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "请求格式错误", http.StatusBadRequest)
@@ -379,7 +394,7 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "该流水线未启用手动触发", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.TriggerBranch(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch))
+	run, err := cicdEngine.TriggerBranch(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch), body.Params)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
@@ -497,6 +512,29 @@ func CicdRunLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, map[string]any{"content": content, "offset": newOffset})
+}
+
+// CicdRunLogDownload 导出运行日志为 txt(GET ?id=, 支持 ?token=)
+func CicdRunLogDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID := r.URL.Query().Get("id")
+	run, ok := cicdEngine.GetRun(runID)
+	if !ok {
+		writeErr(w, "运行记录不存在", http.StatusNotFound)
+		return
+	}
+	path := filepath.Join("cicd", "logs", runID+".log")
+	content, err := os.ReadFile(filepath.Join("data", path))
+	if err != nil {
+		writeErr(w, "日志文件不存在(可能已被清理)", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+run.Pipeline+`-`+runID+`.log.txt"`)
+	w.Write(content)
 }
 
 // CicdRunStream SSE: 日志增量 + 状态推送, 终态后补发一帧并结束
