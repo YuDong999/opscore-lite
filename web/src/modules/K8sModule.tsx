@@ -207,6 +207,52 @@ const COLS: Partial<Record<K8sRes, Col[]>> = {
   ],
 }
 
+// 通用列推导: CRD 短名查不到内置 COLS, 从首行 row 动态生成列.
+// 优先列: name / namespace / age / status; 剩余按字母序. 数值列宽 12, 字符串 18.
+function crdCols(rows: any[]): Col[] {
+  if (!rows || rows.length === 0) {
+    return [['name', '名称', 30, 'mono'], ['namespace', '命名空间', 20, 'dim'], ['age', '年龄', 12, 'dim']]
+  }
+  const sample = rows[0] || {}
+  const allKeys = Object.keys(sample)
+  // 已知优先字段
+  const priority: Record<string, [string, number, ('mono' | 'dim' | 'status')?]> = {
+    name: ['名称', 26, 'mono'],
+    namespace: ['命名空间', 16, 'dim'],
+    status: ['状态', 12, 'status'],
+    phase: ['阶段', 12, 'status'],
+    age: ['年龄', 10, 'dim'],
+    labels: ['标签数', 8],
+  }
+  const cols: Col[] = []
+  for (const [k, v] of Object.entries(priority)) {
+    if (allKeys.includes(k)) cols.push([k, v[0], v[1], v[2]])
+  }
+  // status_* / spec.* / 剩余
+  const used = new Set(cols.map((c) => c[0]))
+  const others = allKeys.filter((k) => !used.has(k)).sort()
+  for (const k of others) {
+    const v = sample[k]
+    let label = k
+    if (k.startsWith('status_')) label = '状态·' + k.slice(7)
+    else if (k === 'replicas') label = '副本'
+    else if (k === 'image') label = '镜像'
+    else if (k === 'host') label = 'Host'
+    else if (k === 'schedule') label = '计划'
+    // 列宽: 短字段 14, 字段名长 18
+    const w = k.length > 12 || (typeof v === 'string' && (v as string).length > 20) ? 18 : 14
+    cols.push([k, label, w, typeof v === 'number' ? undefined : 'dim'])
+  }
+  return cols
+}
+
+// 取列定义: 内置 res 走 COLS, CRD 走动态 crdCols
+function colsForRes(res: string, rows: any[]): Col[] {
+  const builtin = COLS[res as K8sRes]
+  if (builtin) return builtin
+  return crdCols(rows)
+}
+
 const FOLD_KEY = 'k8s-side-fold'
 
 export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
@@ -249,7 +295,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   }
   const sortedRows = useMemo(() => {
     if (!sortKey) return rows
-    if (!(COLS[res as K8sRes] || []).some((c) => c[0] === sortKey)) return rows
+    if (!(colsForRes(res, rows) || []).some((c) => c[0] === sortKey)) return rows
     const dir = sortDir === 'desc' ? -1 : 1
     const ageVal = (s: any): number => {
       const parts = String(s ?? '').match(/(\d+)([smhd])/g)
@@ -579,7 +625,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                         onChange={toggleSelectAll}
                         disabled={rows.length === 0} />
                     </th>
-                    {(COLS[res as K8sRes] || []).map(([k, t, w]) => (
+                    {(colsForRes(res, rows) || []).map(([k, t, w]) => (
                       <th key={k} style={{ width: `${w}%`, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort(k)} title="点击排序">
                         {t}
                         <span style={{ opacity: sortKey === k ? 1 : 0.3, marginLeft: 3, fontSize: '0.5rem' }}>
@@ -591,7 +637,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                  </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={(COLS[res as K8sRes] || []).length + 2} className="dim">{loading ? '加载中…' : '（无数据）'}</td></tr>
+                    <tr><td colSpan={(colsForRes(res, rows) || []).length + 2} className="dim">{loading ? '加载中…' : '（无数据）'}</td></tr>
                   )}
                   {sortedRows.map((r, i) => {
                     const rk = rowKey(r, i)
@@ -612,7 +658,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                             setSelected(next)
                           }} />
                       </td>
-                      {(COLS[res as K8sRes] || []).map(([k, , , typ]) => (
+                      {(colsForRes(res, rows) || []).map(([k, , , typ]) => (
                         <td key={k} className={`${typ === 'dim' ? 'dim' : typ === 'mono' ? 'mono' : ''}`}
                           style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {typ === 'status' ? (
