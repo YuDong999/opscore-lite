@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '../Toast'
-import { CategoryIcon } from './DbIcons'
+import { CategoryIcon, EngineIcon } from './DbIcons'
 import {
   type ConnectionInfo,
   type ConnectionConfig,
@@ -236,6 +236,7 @@ export default function ConnectionPanel({
                       : e.description + (e.reason ? `\n${e.reason}` : '')}
                     style={off ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
                   >
+                    <span className="db-engine-card-logo"><EngineIcon engine={e.type} size={26} /></span>
                     <div className="db-engine-card-name">{e.label}</div>
                     <div className="db-engine-card-meta">
                       <span className={`pill ${sl.cls}`} style={{ fontSize: '0.5rem', padding: '0 0.25rem' }}>{sl.text}</span>

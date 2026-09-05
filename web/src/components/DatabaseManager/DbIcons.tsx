@@ -20,9 +20,59 @@ export function engineColor(engine: string | undefined): string {
   return ENGINE_COLORS[String(engine || '').toLowerCase()] || '#5b6abf'
 }
 
-/** 引擎图标: 圆角方块底 + 数据库桶形线条 */
+/** 品牌资源表(源自 GoNavi /db-icons, Apache-2.0): 有官方 logo 的引擎优先用图片 */
+const BRAND_ASSETS: Record<string, { src: string; scale?: number; bg?: string }> = {
+  mysql: { src: '/db-icons/mysql.svg' },
+  mariadb: { src: '/db-icons/mariadb.svg' },
+  postgres: { src: '/db-icons/postgres.svg' },
+  oceanbase: { src: '/db-icons/oceanbase.png', scale: 0.72 },
+  redis: { src: '/db-icons/redis.svg' },
+  mongodb: { src: '/db-icons/mongodb.svg' },
+  elasticsearch: { src: '/db-icons/elasticsearch.svg' },
+  kingbase: { src: '/db-icons/kingbase.ico', scale: 0.72 },
+  dameng: { src: '/db-icons/dameng.png', scale: 0.72 },
+  oracle: { src: '/db-icons/oracle.ico', scale: 0.72 },
+  sqlserver: { src: '/db-icons/sqlserver.svg' },
+  clickhouse: { src: '/db-icons/clickhouse.svg' },
+  sqlite: { src: '/db-icons/sqlite.svg' },
+  duckdb: { src: '/db-icons/duckdb.svg' },
+  vastbase: { src: '/db-icons/vastbase.svg', scale: 0.84 },
+  opengauss: { src: '/db-icons/opengauss.ico', scale: 0.72 },
+  gaussdb: { src: '/db-icons/gaussdb.ico', scale: 0.72 },
+  goldendb: { src: '/db-icons/goldendb.ico', scale: 0.72 },
+  highgo: { src: '/db-icons/highgo.ico', scale: 0.72 },
+  iris: { src: '/db-icons/iris.png', scale: 0.72 },
+  tdengine: { src: '/db-icons/tdengine.ico', scale: 0.72 },
+  iotdb: { src: '/db-icons/iotdb.svg', scale: 0.82, bg: '#0F766E' },
+  rocketmq: { src: '/db-icons/rocketmq.png', scale: 0.72, bg: '#0F172A' },
+  mqtt: { src: '/db-icons/mqtt.svg' },
+  kafka: { src: '/db-icons/kafka.png', scale: 0.72 },
+  rabbitmq: { src: '/db-icons/rabbitmq.svg' },
+  chroma: { src: '/db-icons/chroma.svg' },
+  qdrant: { src: '/db-icons/qdrant.svg' },
+  milvus: { src: '/db-icons/milvus.svg' },
+  starrocks: { src: '/db-icons/starrocks.png', scale: 0.72 },
+  sphinx: { src: '/db-icons/sphinx.svg' },
+  diros: { src: '/db-icons/diros.svg' },
+}
+
+/** 引擎图标: 有品牌 logo 用品牌图, 否则色块+桶形线条 */
 export function EngineIcon({ engine, size = 16 }: { engine: string | EngineType | undefined; size?: number }) {
+  const key = String(engine || '').toLowerCase()
   const color = engineColor(engine as string)
+  const brand = BRAND_ASSETS[key]
+  if (brand) {
+    const s = size * (brand.scale || 0.86)
+    return (
+      <span
+        className="dbx-engine-icon"
+        style={{ width: size, height: size, background: brand.bg || 'transparent', borderColor: 'transparent', borderRadius: Math.max(3, size * 0.18) }}
+        title={String(engine || '')}
+      >
+        <img src={brand.src} width={s} height={s} alt="" draggable={false} style={{ borderRadius: 2 }} />
+      </span>
+    )
+  }
   return (
     <span
       className="dbx-engine-icon"

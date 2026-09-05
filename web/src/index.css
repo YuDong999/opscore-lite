@@ -3034,3 +3034,17 @@ body {
 }
 /* 空分组(无子级)不显示箭头 */
 .db-tree-caret.leaf::before { border-left-color: transparent !important; }
+
+/* ═══ V12: 向导横向化(dbx 式宽对话框) + 引擎卡品牌图标 ═══ */
+.db-conn-panel { width: min(62rem, 94vw) !important; max-height: 86vh; }
+/* 选引擎步骤: 居中标题 + 多列网格 + 卡片竖排(图标上/名下) */
+.db-conn-panel .db-engine-grid { grid-template-columns: repeat(auto-fill, minmax(8.6rem, 1fr)) !important; gap: 0.5rem; }
+.db-engine-card { align-items: center !important; text-align: center; padding: 0.7rem 0.5rem !important; gap: 0.4rem; }
+.db-engine-card-logo { display: flex; align-items: center; justify-content: center; }
+.db-engine-card-name { font-size: 0.8125rem; }
+.db-engine-card-meta { justify-content: center; }
+/* 配置表单: 双栏网格(窄项成对, 宽项跨栏) */
+.db-conn-panel .db-form { display: grid; grid-template-columns: 1fr 1fr; column-gap: 0.9rem; row-gap: 0.55rem; }
+.db-conn-panel .db-form > label:first-child, .db-conn-panel .db-form > label[style] { grid-column: auto; }
+.db-conn-panel .db-form > label:has(> textarea), .db-conn-panel .db-form > label:has(.db-advanced) { grid-column: 1 / -1; }
+.db-conn-panel .db-advanced { grid-column: 1 / -1; }
