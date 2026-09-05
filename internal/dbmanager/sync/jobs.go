@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -98,5 +97,3 @@ func newJobID() (string, error) {
 	return fmt.Sprintf("sync_%d_%s", time.Now().Unix(), hex.EncodeToString(b)), nil
 }
 
-// 供 context 取消链使用(保留 import 语义)。
-var _ = context.Background

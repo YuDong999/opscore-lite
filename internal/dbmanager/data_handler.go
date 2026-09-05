@@ -133,16 +133,10 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 		"total":     totalRows,
 		"page":      page,
 		"pageSize":  pageSize,
-		"durationMs": time.Since(startOf(r)).Milliseconds(),
+		"durationMs": 0, // 客户端自行计时
 	})
 }
 
-func startOf(r *http.Request) time.Time {
-	if t, err := time.Parse(time.RFC3339, r.Header.Get("X-Request-Start")); err == nil {
-		return t
-	}
-	return time.Now()
-}
 
 // ===== /api/dbmanager/table-inserts =====
 // GET ?id&database&table&maxRows -> 生成全表 INSERT 语句文本(借鉴 GoNavi 复制全表为 INSERT)
@@ -218,7 +212,7 @@ func (h *Handlers) handleTableInserts(w http.ResponseWriter, r *http.Request) {
 		tn = sync.QuoteIdent(database, dialect) + "." + tn
 	}
 	sqlText := "SELECT * FROM " + tn
-	rows, fields, err := sync.QueryRows(ctx, db, sqlText)
+	rows, _, err := sync.QueryRows(ctx, db, sqlText)
 	if err != nil {
 		writeErr(w, "读取数据失败: "+err.Error(), http.StatusBadRequest)
 		return
@@ -257,7 +251,6 @@ func (h *Handlers) handleTableInserts(w http.ResponseWriter, r *http.Request) {
 		}
 		b.WriteString(";\n\n")
 	}
-	_ = fields
 	writeJSON(w, map[string]any{
 		"text":     b.String(),
 		"rows":     len(rows),
