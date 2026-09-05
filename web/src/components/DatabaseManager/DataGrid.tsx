@@ -277,10 +277,8 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
                     onClick={() => {
                       if (editingCell?.row === i && editingCell?.col === j) return
                       if (isEditable) handleCellClick(i, j)
-                      else copyCell(cell)
                     }}
                     className={editingCell?.row === i && editingCell?.col === j ? 'editing' : ''}
-                    style={!isEditable ? { cursor: 'copy' } : undefined}
                   >
                     {editingCell?.row === i && editingCell?.col === j ? (
                       <input
