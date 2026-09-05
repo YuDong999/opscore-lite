@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection, describeTable, fetchTableDDL, fetchTableInserts,
+  type ConnectionInfo, listConnections, listDatabases, listTables, testConnection, deleteConnection, describeTable, fetchTableDDL, fetchTableInserts,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -23,6 +23,7 @@ interface TreeNode {
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
   onSyncDb, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
+  onRefresh,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -39,6 +40,7 @@ export default function ConnectionTree({
   onOpenExplain: (conn: ConnectionInfo, db: string, table: string) => void
   onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
   onExportTable: (conn: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => void
+  onRefresh: () => void
 }) {
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -218,6 +220,45 @@ export default function ConnectionTree({
     }
   }
 
+  const refreshAll = () => {
+    setDbCache({}); setTablesCache({}); setExpanded(new Set())
+    notify(true, '已刷新, 重新展开连接加载')
+  }
+
+  const onExportConns = () => {
+    const payload = conns.map(c => ({ name: c.name, engine: c.engine, config: { ...c.config, password: undefined } }))
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `opscore-connections-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    notify(true, `已导出 ${payload.length} 个连接(不含密码)`)
+  }
+
+  const onImportConns = async (file: File) => {
+    try {
+      const list = JSON.parse(await file.text()) as Array<{ name: string; engine: string; config: any }>
+      let ok = 0
+      for (const item of list) {
+        if (!item?.name || !item?.engine) continue
+        try {
+          const token = localStorage.getItem('opscore-token')
+          await fetch('/api/dbmanager/connections', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ name: item.name + '(导入)', engine: item.engine, config: item.config || {}, password: '' }),
+          })
+          ok++
+        } catch { /* 单条失败继续 */ }
+      }
+      notify(true, `导入完成: ${ok} 个连接(密码需重新填写)`)
+      onConnsChange(await listConnections())
+    } catch (e: any) {
+      notify(false, '导入失败: ' + e.message)
+    }
+  }
+
   // 组装可见行
   const rows: TreeNode[] = []
   for (const c of visibleConns) {
@@ -281,7 +322,19 @@ export default function ConnectionTree({
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
-        <button className="db-tree-add" onClick={onNewConn} title="新建连接">+</button>
+        <div className="db-tree-header-actions">
+          <button className="db-tree-tool" onClick={() => { refreshAll(); onRefresh() }} title="刷新全部缓存">⟳</button>
+          <button className="db-tree-tool" onClick={onExportConns} title="导出连接配置 (JSON)">↑</button>
+          <label className="db-tree-tool" title="导入连接配置 (JSON)">
+            ↓
+            <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
+              const f = e.target.files?.[0]
+              if (f) onImportConns(f)
+              e.target.value = ''
+            }} />
+          </label>
+          <button className="db-tree-add" onClick={onNewConn} title="新建连接">+</button>
+        </div>
       </div>
       <div className="db-tree-body">
         {rows.length === 0 && <div className="db-empty-sm">{conns.length === 0 ? '暂无连接, 点右上 + 新建' : '无匹配对象'}</div>}
@@ -313,7 +366,7 @@ export default function ConnectionTree({
               <React.Fragment key={node.key}>
                 <div
                   className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
-                  style={{ paddingLeft: `${0.3 + depth * 0.9}rem` }}
+                  style={{ paddingLeft: `${8 + depth * 16}px` }}
                   onClick={() => onNodeClick(node)}
                   onContextMenu={e => {
                     e.preventDefault()
@@ -366,7 +419,7 @@ export default function ConnectionTree({
             <div
               key={node.key}
               className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
-              style={{ paddingLeft: `${0.3 + depth * 0.9}rem` }}
+              style={{ paddingLeft: `${8 + depth * 16}px` }}
               onClick={() => onNodeClick(node)}
               onContextMenu={e => {
                 e.preventDefault()

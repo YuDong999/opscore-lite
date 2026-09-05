@@ -252,6 +252,7 @@ export default function DatabaseManagerModule() {
             onOpenExplain={handleOpenExplain}
             onNewQueryWithSQL={handleNewQueryWithSQL}
             onExportTable={handleExportTable}
+            onRefresh={() => listConnections().then(setConns).catch(() => {})}
           />
           <ConnectionPanel
             selected={null}
