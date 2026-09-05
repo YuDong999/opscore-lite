@@ -60,6 +60,13 @@ html {
   border-radius: var(--radius-sm);
 }
 
+/* 输入类元素以边框变色表达聚焦, 不要外扩 outline(避免与相邻元素叠) */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
 :root, [data-theme='light'] {
   color-scheme: light;
   --bg: #e0e8f5;
@@ -757,10 +764,7 @@ body {
   tab-size: 2;
 }
 
-.editor-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent);
-}
+.editor-textarea:focus { border-color: var(--accent); }
 
 /* ── Disk drill-down ── */
 .mini-table tr.clickable { cursor: pointer; transition: background 0.15s ease; }
@@ -821,7 +825,7 @@ body {
   outline: none;
 }
 
-.input:focus { border-color: var(--accent); box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent); }
+.input:focus { border-color: var(--accent); }
 
 /* ── Modal ── */
 .modal-overlay {
@@ -908,7 +912,7 @@ body {
 }
 
 .ipt { min-width: 9.375rem; }
-.sel:focus, .ipt:focus { border-color: var(--accent); box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent); }
+.sel:focus, .ipt:focus { border-color: var(--accent); }
 .chk { display: inline-flex; align-items: center; gap: 0.3125rem; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; }
 
 .log-warn { padding: 0.5rem 1.25rem; font-size: 0.75rem; color: #ff453a; background: rgba(255, 69, 58, 0.08); }
@@ -983,10 +987,7 @@ body {
   outline: none;
 }
 
-.form-row input:focus, .form-row select:focus {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 0.1875rem color-mix(in srgb, var(--accent) 15%, transparent);
-}
+.form-row input:focus, .form-row select:focus { border-color: var(--accent); }
 
 .form-row select option { background: var(--surface-solid); color: var(--text); }
 
