@@ -851,7 +851,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="sm:max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-5xl h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle>{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</DialogTitle>
         </DialogHeader>
@@ -914,10 +914,12 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
             </div>
           )}
           {!!p.trigger.cron && (
-            <div className="flex-[2] min-w-48">
+            <div className="flex-[4] min-w-96">
               <Label>cron 表达式(分 时 日 月 周)</Label>
-              <Input className="font-mono" value={p.trigger.cron} onChange={e => set({ trigger: { ...p.trigger, cron: e.target.value } })} placeholder="0 3 * * *" />
-              <div className="text-xs text-muted-foreground">支持 * 、*/n 、a-b 、a,b; 如 0 3 * * * = 每天 03:00</div>
+              <div className="flex items-center gap-2">
+                <Input className="font-mono w-40 shrink-0" value={p.trigger.cron} onChange={e => set({ trigger: { ...p.trigger, cron: e.target.value } })} placeholder="0 3 * * *" />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">支持 * 、*/n 、a-b 、a,b; 如 0 3 * * * = 每天 03:00</span>
+              </div>
             </div>
           )}
         </div>
