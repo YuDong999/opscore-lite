@@ -5,6 +5,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { postJSON } from '../api/client'
 import { useToast } from '../components/Toast'
+import { ContextMenu, type CtxMenuItem } from './cicd/ContextMenu'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -431,6 +432,31 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     try { set(await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json())) } catch (e: any) { setErr(e.message) }
   }
 
+  // 右键菜单(左列表): 对象级操作收纳, 表格行不再堆按钮
+  const [ctx, setCtx] = useState<{ x: number; y: number; p: PipelineView } | null>(null)
+  const toast = useToast()
+  const exportOne = async (p: PipelineView) => {
+    try {
+      const full = await fetch(`${API.pipelineGet}?id=${p.id}`).then(r => r.json()) as Pipeline
+      const clean = { ...full, trigger: { ...full.trigger, secret: '' } } // 与全局导出一致: 不带触发凭证
+      const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `pipeline-${p.name}.json`
+      a.click(); URL.revokeObjectURL(a.href)
+      toast.success(`已导出 ${p.name}.json`)
+    } catch (e: any) { setErr('导出失败: ' + e.message) }
+  }
+  const pipelineMenu = (p: PipelineView): CtxMenuItem[] => [
+    { label: '运行', icon: <Play />, onSelect: () => run(p) },
+    { label: '编辑', icon: <Pencil />, onSelect: () => loadOne(p, setEditing) },
+    { label: 'Webhook', icon: <Link2 />, onSelect: () => loadOne(p, setWebhookOf) },
+    { label: '复制流水线', icon: <Copy />, onSelect: () => copy(p) },
+    { label: '导出此流水线 (JSON)', icon: <Download />, onSelect: () => exportOne(p) },
+    { sep: true, label: '' },
+    { label: '删除', icon: <Trash2 />, danger: true, disabled: !!busy, onSelect: () => remove(p) },
+  ]
+
   return (
     <div>
       {confirmEl}
@@ -476,6 +502,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                 const active = p.id === sel?.id
                 return (
                   <button key={p.id} onClick={() => setSelId(p.id)}
+                    onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
                     className={cn('text-left rounded-lg px-3 py-2 border transition-colors',
                       active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted/60')}>
                     <div className="flex items-center gap-2">
@@ -504,7 +531,8 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
           <PipelineDetail p={sel} busy={busy} tick={tick}
             onRun={() => run(sel)} onEdit={() => loadOne(sel, setEditing)}
             onWebhook={() => loadOne(sel, setWebhookOf)} onCopy={() => copy(sel)}
-            onDelete={() => remove(sel)} onOpenRun={setDetailRun} />
+            onDelete={() => remove(sel)} onOpenRun={setDetailRun}
+            onRunsChanged={() => setTick(t => t + 1)} />
         )}
       </div>
 
@@ -531,6 +559,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
       )}
       {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
       {detailRun && <RunDetail runId={detailRun} onRerun={setDetailRun} onChanged={() => { reload(); setTick(t => t + 1); onChanged() }} onClose={() => { setDetailRun(''); reload(); setTick(t => t + 1); onChanged() }} />}
+      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={pipelineMenu(ctx.p)} onClose={() => setCtx(null)} />}
     </div>
   )
 }
@@ -547,7 +576,7 @@ function LastRunDot({ run }: { run?: Run }) {
 }
 
 // ── 右详情面板: 头部操作区 + 运行记录 / 配置摘要 两个子页签 ──
-function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDelete, onOpenRun }: {
+function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDelete, onOpenRun, onRunsChanged }: {
   p: PipelineView
   busy: string
   tick: number
@@ -557,6 +586,7 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
   onCopy: () => void
   onDelete: () => void
   onOpenRun: (id: string) => void
+  onRunsChanged: () => void
 }) {
   const [now, setNow] = useState(Date.now())
   const live = ['running', 'queued', 'waiting'].includes(p.lastRun?.status || '')
@@ -614,7 +644,7 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
                 <StageFlow stages={p.lastRun.stages} now={now} onStepClick={() => p.lastRun && onOpenRun(p.lastRun.id)} />
               </div>
             )}
-            <PipelineRunsList pipelineId={p.id} tick={tick} onOpenRun={onOpenRun} />
+            <PipelineRunsList pipelineId={p.id} tick={tick} onOpenRun={onOpenRun} onChanged={onRunsChanged} />
           </TabsContent>
           <TabsContent value="config" className="mt-0">
             <PipelineConfigSummary p={p} onEdit={onEdit} />
@@ -625,9 +655,13 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
   )
 }
 
-// ── 单条流水线的运行列表(后端按 pipeline 过滤, 5s 轮询跟活) ──
-function PipelineRunsList({ pipelineId, tick, onOpenRun }: { pipelineId: string; tick: number; onOpenRun: (id: string) => void }) {
+// ── 单条流水线的运行列表(后端按 pipeline 过滤, 5s 轮询跟活; 行右键: 详情/重跑/导出日志/删除) ──
+function PipelineRunsList({ pipelineId, tick, onOpenRun, onChanged }: { pipelineId: string; tick: number; onOpenRun: (id: string) => void; onChanged: () => void }) {
   const [runs, setRuns] = useState<Run[]>([])
+  const [ctx, setCtx] = useState<{ x: number; y: number; r: Run } | null>(null)
+  const [busy, setBusy] = useState('')
+  const { confirm, confirmEl } = useConfirm()
+  const toast = useToast()
   useEffect(() => {
     let on = true
     const load = () => {
@@ -639,41 +673,72 @@ function PipelineRunsList({ pipelineId, tick, onOpenRun }: { pipelineId: string;
     return () => { on = false; clearInterval(t) }
   }, [pipelineId, tick])
 
+  const rerun = async (r: Run) => {
+    setBusy(r.id)
+    try {
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: r.pipelineId, branch: r.branch || '' })
+      toast.success('已重新触发运行'); onOpenRun(d.run.id); onChanged()
+    } catch (e: any) { toast.error('重新执行失败: ' + e.message) } finally { setBusy('') }
+  }
+  const removeRun = async (r: Run) => {
+    if (!(await confirm('删除这条运行记录？', { desc: '日志与制品将一并删除。', danger: true, okText: '删除' }))) return
+    setBusy(r.id)
+    try { await postJSON(API.runDelete, { runId: r.id }); onChanged() } catch (e: any) { toast.error(e.message) } finally { setBusy('') }
+  }
+  const downloadLog = (r: Run) => {
+    const t = localStorage.getItem('opscore-token')
+    window.open(`${API.runLogDownload}?id=${r.id}${t ? `&token=${encodeURIComponent(t)}` : ''}`)
+  }
+  const runMenu = (r: Run): CtxMenuItem[] => [
+    { label: '查看详情', icon: <FileCode2 />, onSelect: () => onOpenRun(r.id) },
+    { label: '重新执行', icon: <RefreshCw />, disabled: !!busy, onSelect: () => rerun(r) },
+    { label: '导出日志 txt', icon: <Download />, onSelect: () => downloadLog(r) },
+    { sep: true, label: '' },
+    ...(r.status !== 'running' && r.status !== 'queued' ? [
+      { label: '删除记录', icon: <Trash2 />, danger: true, disabled: !!busy, onSelect: () => removeRun(r) },
+    ] : []),
+  ]
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>状态</TableHead><TableHead>触发</TableHead>
-          <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
-          <TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {runs.length === 0 && (
-          <TableRow><TableCell colSpan={6} className="h-16 text-center text-muted-foreground">该流水线还没有运行记录</TableCell></TableRow>
-        )}
-        {runs.map(r => (
-          <TableRow key={r.id}>
-            <TableCell>
-              <StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} />
-              {r.error && <div className="text-xs text-muted-foreground max-w-64">{r.error}</div>}
-            </TableCell>
-            <TableCell><Badge variant="secondary">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge></TableCell>
-            <TableCell>
-              <div className="flex items-center gap-2 min-w-36">
-                <StageSegments stages={r.stages} />
-                <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
-              </div>
-            </TableCell>
-            <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
-            <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
-            <TableCell>
-              <Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button>
-            </TableCell>
+    <div>
+      {confirmEl}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>状态</TableHead><TableHead>触发</TableHead>
+            <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
+            <TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {runs.length === 0 && (
+            <TableRow><TableCell colSpan={6} className="h-16 text-center text-muted-foreground">该流水线还没有运行记录</TableCell></TableRow>
+          )}
+          {runs.map(r => (
+            <TableRow key={r.id}
+              onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, r }) }}>
+              <TableCell>
+                <StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} />
+                {r.error && <div className="text-xs text-muted-foreground max-w-64">{r.error}</div>}
+              </TableCell>
+              <TableCell><Badge variant="secondary">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge></TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2 min-w-36">
+                  <StageSegments stages={r.stages} />
+                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-xs">{fmtTime(r.startedAt)}</TableCell>
+              <TableCell className="tabular-nums">{fmtDur(r.durationMs)}</TableCell>
+              <TableCell>
+                <Button variant="outline" size="sm" onClick={() => onOpenRun(r.id)}>详情</Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={runMenu(ctx.r)} onClose={() => setCtx(null)} />}
+    </div>
   )
 }
 
