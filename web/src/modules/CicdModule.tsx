@@ -63,6 +63,9 @@ const STEP_TEMPLATES: { name: string; steps: Step[] }[] = [
   },
 ]
 
+// 表头吸附统一形态(skill 复用原则: 全模块只此一份定义, 配合滚动容器使用)
+const STICKY_THEAD = "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead_th]:bg-card"
+
 // ── Blue Ocean 式阶段节点 ──
 const STAGE_COLOR: Record<string, string> = {
   success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
@@ -714,7 +717,7 @@ function PipelineRunsList({ pipelineId, tick, onOpenRun, onChanged }: { pipeline
   return (
     <div>
       {confirmEl}
-      <Table>
+      <Table className={STICKY_THEAD}>
         <TableHeader>
           <TableRow>
             <TableHead>状态</TableHead><TableHead>触发</TableHead>
@@ -868,7 +871,7 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
           <DialogTitle>{isNew ? '新建流水线' : `编辑流水线: ${value.name}`}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
+        <div className="flex-1 overflow-y-auto hover-scroll px-6 space-y-3 min-h-0">
         <ErrBanner msg={err} onClose={() => setErr('')} />
 
         <div className="flex gap-3 flex-wrap">
@@ -1288,19 +1291,19 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
   }
 
   return (
-    <div>
+    <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <CardTitle className="tabular-nums">运行历史 ({runs.length})</CardTitle>
             <OptSelect className="w-52" value={filter} onChange={setFilter} placeholder="全部流水线"
               items={(pipes.data || []).map(p => ({ value: p.id, label: p.name }))} />
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
+        <CardContent className="flex-1 min-h-0 hover-scroll">
+          <Table className={STICKY_THEAD}>
             <TableHeader>
               <TableRow>
                 <TableHead>流水线</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead>
@@ -1529,7 +1532,7 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
         {run.error && <div className="mx-6 mb-1 shrink-0"><ErrBanner msg={run.error} /></div>}
         <ErrBanner msg={err} onClose={() => setErr('')} className="mx-6 shrink-0" />
 
-        <div className="flex-1 overflow-y-auto px-6 space-y-3 min-h-0">
+        <div className="flex-1 overflow-y-auto hover-scroll px-6 space-y-3 min-h-0">
         <div className="rounded-lg border bg-background/60 px-4 py-2">
           <StageFlow stages={run.stages} now={now} onStepClick={(si, j) => {
             const st = run.stages[si]
@@ -1603,8 +1606,8 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
           <h3 className="font-semibold text-sm tabular-nums">执行日志({lines.length} 行)</h3>
           {active && <span className="text-xs text-muted-foreground">实时跟随时勿上滚</span>}
         </div>
-        {/* 终端样式保留 legacy 主题适配类 */}
-        <div className="log-text" ref={logRef} onScroll={onScroll} style={{ maxHeight: 320, overflowY: 'auto' }}>
+        {/* 终端样式保留 legacy 主题适配类; 定高+悬停滚动条与其他滚动容器同规范 */}
+        <div className="log-text max-h-80 hover-scroll" ref={logRef} onScroll={onScroll}>
           {lines.length === 0 && <div className="log-loading">暂无日志输出</div>}
           {lines.map((l, i) => <div key={i} className="log-line">{l}</div>)}
         </div>
@@ -1672,7 +1675,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
             <div className="text-sm text-muted-foreground py-4">暂无运行记录</div>
           ) : (
             <div className="flex-1 min-h-0 overflow-auto hover-scroll">
-              <Table className="[&_td]:py-1 [&_th]:py-1.5">
+              <Table className={STICKY_THEAD + " [&_td]:py-1 [&_th]:py-1.5"}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>构建名</TableHead>
@@ -1704,7 +1707,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
           <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
         ) : (
           <div className="flex-1 min-h-0 overflow-auto hover-scroll">
-            <Table className="[&_td]:py-1 [&_th]:py-1.5">
+            <Table className={STICKY_THEAD + " [&_td]:py-1 [&_th]:py-1.5"}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="sticky left-0 bg-card min-w-24 z-10">构建</TableHead>
@@ -1775,11 +1778,11 @@ function ScriptsTab() {
   }
 
   return (
-    <div>
+    <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">脚本库 ({scripts.length})</CardTitle>
             <Button size="sm" onClick={() => setEditing({ id: '', name: '', description: '', content: '', updatedAt: '' })}>
@@ -1787,8 +1790,8 @@ function ScriptsTab() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
+        <CardContent className="flex-1 min-h-0 hover-scroll">
+          <Table className={STICKY_THEAD}>
             <TableHeader>
               <TableRow><TableHead>名称</TableHead><TableHead>描述</TableHead><TableHead>更新时间</TableHead><TableHead className="w-36">操作</TableHead></TableRow>
             </TableHeader>
@@ -1909,7 +1912,7 @@ function ReposTab() {
             <Button size="sm" onClick={() => setEditingRepo({ id: '', name: '', url: '', credId: '', defaultBranch: 'master' })}><Plus />新建代码仓库</Button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1 min-h-0 hover-scroll">
           <Table>
             <TableHeader>
               <TableRow><TableHead>名称</TableHead><TableHead>地址</TableHead><TableHead>凭据</TableHead><TableHead>默认分支</TableHead><TableHead className="w-52">操作</TableHead></TableRow>
@@ -1936,14 +1939,14 @@ function ReposTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="lg:flex-[2] lg:min-h-0 flex flex-col overflow-hidden">
+        <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">镜像仓库 ({(registries.data || []).length})</CardTitle>
             <Button size="sm" onClick={() => setEditingReg({ id: '', name: '', server: '', credId: '' })}><Plus />新建镜像仓库</Button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1 min-h-0 hover-scroll">
           <Table>
             <TableHeader>
               <TableRow><TableHead>名称</TableHead><TableHead>地址</TableHead><TableHead>凭据</TableHead><TableHead className="w-52">操作</TableHead></TableRow>
@@ -2048,18 +2051,18 @@ function CredentialsTab() {
   const isKube = editing?.type === 'kubeconfig'
 
   return (
-    <div>
+    <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">凭据中心 ({creds.length})</CardTitle>
             <Button size="sm" onClick={() => setEditing({ id: '', name: '', type: 'git', username: '', server: '', hasData: false, note: '', updatedAt: '', data: '' })}><Plus />新建凭据</Button>
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
+        <CardContent className="flex-1 min-h-0 hover-scroll">
+          <Table className={STICKY_THEAD}>
             <TableHeader>
               <TableRow><TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>用户名</TableHead><TableHead>备注</TableHead><TableHead>更新时间</TableHead><TableHead className="w-36">操作</TableHead></TableRow>
             </TableHeader>
