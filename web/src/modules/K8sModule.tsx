@@ -278,6 +278,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   // 资源弹层: 双击行或行内操作打开
   const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
   const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string } | null>(null)
+  // 加入节点弹层: 生成 kubeadm join 命令
+  const [joinNode, setJoinNode] = useState(false)
 
   const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe', r: any) => {
     if (!clusterID || !r?.name) return
@@ -590,6 +592,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 )}
                 <div className="k8s-head-actions">
                   <button className="btn-glass-soft btn-glass-soft-sm" onClick={loadRows}>刷新</button>
+                  {res === 'nodes' && (
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => setJoinNode(true)}>+ 加入节点</button>
+                  )}
                   {CREATE_KIND_OF[res] && (
                     <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={() => { setCreateKind(CREATE_KIND_OF[res]); setRes('create' as any) }}>+ 创建</button>
                   )}
@@ -760,6 +765,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {joinNode && clusterID && (
+        <NodeJoinModal cluster={clusterID} onClose={() => setJoinNode(false)} onMsg={onMsg || ((m: string) => window.alert(m))} />
       )}
 
       {/* 集群右键菜单 */}
@@ -1151,6 +1160,14 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [imageDraft, setImageDraft] = useState('')
   const [revs, setRevs] = useState<any[] | null>(null)
   const [rollTo, setRollTo] = useState<number>(0)
+  // 节点操作: 打标签 / drain 驱逐选项 / 删除节点
+  const [nodePanel, setNodePanel] = useState<'label' | 'drain' | 'delete' | null>(null)
+  const [nLabelKey, setNLabelKey] = useState('')
+  const [nLabelVal, setNLabelVal] = useState('')
+  const [drainForce, setDrainForce] = useState(false)
+  const [drainIgnoreDS, setDrainIgnoreDS] = useState(false)
+  const [drainEmptyDir, setDrainEmptyDir] = useState(false)
+  const [drainGrace, setDrainGrace] = useState('30')
 
   // 容器名列表(供 exec / log-stream 弹层使用)
   const logContainers = (): string[] => {
@@ -1293,12 +1310,12 @@ function ResourceModal({ info, onClose, act, onMsg }: {
                   `封锁节点 ${info.name}(不再调度新 Pod)?`)}>cordon 封锁</button>
               <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
                 onClick={() => act({ res: 'nodes', name: info.name, action: 'uncordon' })}>uncordon 解除</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
+                onClick={() => setNodePanel(nodePanel === 'label' ? null : 'label')}>打标签</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!!detail}
+                onClick={() => setNodePanel(nodePanel === 'drain' ? null : 'drain')}>drain 排空</button>
               <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={!!detail}
-                onClick={() => {
-                  if (!confirm(`排空节点 ${info.name}?\n将驱逐其上所有业务 Pod(自动跳过 DaemonSet/static pod)。`)) return
-                  if (!confirm('再次确认: 这是高危操作, 业务会短暂中断。继续?')) return
-                  act({ res: 'nodes', name: info.name, action: 'drain' })
-                }}>drain 排空</button>
+                onClick={() => setNodePanel(nodePanel === 'delete' ? null : 'delete')}>删除节点</button>
             </>
           )}
           {info.kind === 'yaml' && <span className="pill pill-sub">{info.res === 'secrets' ? '只读(Secret 已脱敏)' : '双击行进入 · 支持编辑保存'}</span>}
@@ -1306,6 +1323,99 @@ function ResourceModal({ info, onClose, act, onMsg }: {
 
         <div style={{ padding: '1rem 1.25rem', maxHeight: '62vh', overflowY: 'auto' }}>
           {err && <div className="banner banner-err">{err}</div>}
+
+          {/* 节点操作: 打标签 / drain(驱逐选项) / 删除节点 */}
+          {info.kind === 'node' && nodePanel === 'label' && (
+            <div className="card" style={{ padding: '0.75rem 1rem', marginBottom: '0.75rem' }}>
+              <div className="dim" style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.5rem' }}>打标签/移除标签</div>
+              <div className="toolbar-strip">
+                <input className="input" style={{ width: 200 }} placeholder="key 如 rack=b / kubernetes.io/role"
+                  value={nLabelKey} onChange={(e) => setNLabelKey(e.target.value)} />
+                <input className="input" style={{ width: 160 }} placeholder="value(留空=移除)"
+                  value={nLabelVal} onChange={(e) => setNLabelVal(e.target.value)} />
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!nLabelKey.trim()}
+                  onClick={() => {
+                    if (!nLabelKey.trim()) return
+                    const prompt = nLabelVal.trim() ? `给节点 ${info.name} 打标签 ${nLabelKey.trim()}=${nLabelVal.trim()}?`
+                      : `移除节点 ${info.name} 的标签 ${nLabelKey.trim()}?`
+                    act({ res: 'nodes', name: info.name, action: 'label', key: nLabelKey.trim(), value: nLabelVal.trim(), overwrite: true }, prompt)
+                  }}>应用</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setNodePanel(null)}>收起</button>
+              </div>
+            </div>
+          )}
+          {info.kind === 'node' && nodePanel === 'drain' && (
+            <div className="card" style={{ padding: '0.75rem 1rem', marginBottom: '0.75rem' }}>
+              <div className="dim" style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+                Drain 排空(通过 Eviction 子资源, 尊重 PDB; 将自动 xx 节点封锁)
+              </div>
+              <div className="toolbar-strip" style={{ flexWrap: 'wrap', gap: '0.75rem 1rem' }}>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainForce} onChange={(e) => setDrainForce(e.target.checked)} />
+                  force 强制(跳过 PDB, grace=0)
+                </label>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainIgnoreDS} onChange={(e) => setDrainIgnoreDS(e.target.checked)} />
+                  ignore-daemonsets 忽略 DaemonSet
+                </label>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainEmptyDir} onChange={(e) => setDrainEmptyDir(e.target.checked)} />
+                  delete-emptydir-data
+                </label>
+                <span className="dim" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  grace(秒)
+                  <input className="input" type="number" style={{ width: 70 }} min={0} max={600} value={drainGrace}
+                    onChange={(e) => setDrainGrace(e.target.value)} />
+                </span>
+              </div>
+              <div className="toolbar-strip" style={{ marginTop: '0.625rem' }}>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
+                  onClick={() => {
+                    if (!confirm(`排空节点 ${info.name}?\n将驱逐其上所有业务 Pod(走 Eviction 子资源, 尊重 PDB)。`)) return
+                    act({
+                      res: 'nodes', name: info.name, action: 'drain',
+                      force: drainForce, ignoreDaemonsets: drainIgnoreDS,
+                      deleteEmptyDirData: drainEmptyDir, graceSeconds: Number(drainGrace) || 30,
+                    })
+                  }}>执行 drain</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setNodePanel(null)}>收起</button>
+              </div>
+            </div>
+          )}
+          {info.kind === 'node' && nodePanel === 'delete' && (
+            <div className="card" style={{ padding: '0.75rem 1rem', marginBottom: '0.75rem', borderColor: 'var(--danger, #ef4444)' }}>
+              <div className="dim" style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--danger, #ef4444)' }}>
+                删除节点 {info.name}(高危: 先 drain 驱逐 Pod, 再从集群移除 Node 对象)
+              </div>
+              <div className="toolbar-strip" style={{ flexWrap: 'wrap', gap: '0.75rem 1rem' }}>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainForce} onChange={(e) => setDrainForce(e.target.checked)} />
+                  force 强制驱逐
+                </label>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainIgnoreDS} onChange={(e) => setDrainIgnoreDS(e.target.checked)} />
+                  ignore-daemonsets
+                </label>
+                <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                  <input type="checkbox" checked={drainEmptyDir} onChange={(e) => setDrainEmptyDir(e.target.checked)} />
+                  delete-emptydir-data
+                </label>
+              </div>
+              <div className="toolbar-strip" style={{ marginTop: '0.625rem' }}>
+                <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
+                  onClick={() => {
+                    if (!confirm(`删除节点 ${info.name}?\n将先排空(Drain)视觉上所有业务 Pod, 然后从集群删除该 Node。`)) return
+                    if (!confirm('再次确认: 节点上未保护的临时数据可能丢失。若仍需清理该机器请在最终端上执行 kubeadm reset。继续?')) return
+                    act({
+                      res: 'nodes', name: info.name, action: 'delete-node',
+                      force: drainForce, ignoreDaemonsets: drainIgnoreDS,
+                      deleteEmptyDirData: drainEmptyDir, graceSeconds: Number(drainGrace) || 30,
+                    })
+                  }}>执行删除节点</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setNodePanel(null)}>收起</button>
+              </div>
+            </div>
+          )}
 
           {/* Pod 详情 */}
           {info.kind === 'pod' && tab === 'detail' && (!detail ? !err && <div className="loading">加载中…</div> : (
@@ -1738,6 +1848,55 @@ function NodePanel({ cluster, name }: { cluster: string; name: string }) {
       <b style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(m.memMiB)}MiB</b>
       <span className="usage-bar"><span className={`usage-fill ${m.memPct > 80 ? 'bg-danger' : 'bg-ok'}`} style={{ width: `${Math.min(m.memPct, 100)}%` }} /></span>
       <span className="dim">{m.memPct.toFixed(1)}%</span>
+    </div>
+  )
+}
+
+// ── 加入节点 (kubeadm join 命令) ──
+function NodeJoinModal({ cluster, onClose, onMsg }: { cluster: string; onClose: () => void; onMsg: (m: string) => void }) {
+  const [ttl, setTtl] = useState(1)
+  const [busy, setBusy] = useState(false)
+  const [cmd, setCmd] = useState('')
+  const [copied, setCopied] = useState(false)
+  const load = () => {
+    setBusy(true)
+    setCmd('')
+    getJSON<{ ok: boolean; command: string; error?: string }>(`/api/plugins/containers/k8s/node-join-command?cluster=${cluster}&ttl=${ttl}`)
+      .then((d) => { if (d.ok) setCmd(d.command); else onMsg('✗ ' + (d.error || '生成失败')) })
+      .catch((e) => onMsg('✗ ' + String(e)))
+      .finally(() => setBusy(false))
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { onMsg('✗ 复制失败(请手动选择复制)') }
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640, width: '90vw' }}>
+        <h3>加入节点 (kubeadm join)</h3>
+        <p className="dim" style={{ marginTop: '0.25rem', fontSize: '0.8125rem' }}>
+          在 control-plane 上生成 join 命令。前往目标新节点执行该命令即可入群。
+          注意: 新节点需已安装 kubeadm/kubelet/容器运行时, 且控制面端口可达。
+        </p>
+        <div className="toolbar-strip" style={{ margin: '0.75rem 0' }}>
+          <span className="dim">Token 有效期(小时)</span>
+          <input className="input" type="number" style={{ width: 90 }} min={1} max={720} value={ttl}
+            onChange={(e) => setTtl(Math.max(1, Number(e.target.value) || 1))} />
+          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy} onClick={load}>
+            {busy ? '生成中…' : (cmd ? '重新生成' : '生成 join 命令')}
+          </button>
+        </div>
+        {cmd && (
+          <pre className="code-block" style={{ fontSize: '0.75rem', overflow: 'auto', wordBreak: 'break-all', userSelect: 'text' }}>{cmd}</pre>
+        )}
+        <div className="btn-row" style={{ marginTop: '1rem', justifyContent: 'flex-end' }}>
+          {cmd && <button className="btn-glass-soft btn-glass-soft-sm" onClick={copy}>{copied ? '✓ 已复制' : '复制命令'}</button>}
+          <button className="btn-glass-soft" onClick={onClose}>关闭</button>
+        </div>
+      </div>
     </div>
   )
 }

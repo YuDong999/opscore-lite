@@ -200,6 +200,13 @@ type k8sResourceActionBody struct {
 	Storage  string `json:"storage,omitempty"`  // pvc 扩容目标容量
 	Image    string `json:"image,omitempty"`    // setImage
 	Force    bool   `json:"force,omitempty"`    // delete 时是否强制(grace=0)
+	Key       string `json:"key,omitempty"`    // label/annotate 键
+	Value     string `json:"value,omitempty"`  // label/annotate 值
+	Overwrite bool   `json:"overwrite,omitempty"` // label 覆盖已有
+	// drain 扩展: 驱逐选项
+	IgnoreDaemonsets  bool `json:"ignoreDaemonsets,omitempty"`
+	DeleteEmptyDirData bool `json:"deleteEmptyDirData,omitempty"`
+	GraceSeconds      int64 `json:"graceSeconds,omitempty"`
 }
 
 // K8sResourceActionHandler POST {cluster,res,ns,name,action[,replicas]}
@@ -278,6 +285,20 @@ func K8sResourceActionHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"ok": false, "error": "仅 nodes 支持 drain"})
 			return
 		}
+	case "label":
+		if b.Res == "overview" || b.Res == "events" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "资源类型不支持 label"})
+			return
+		}
+		if b.Key == "" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 key 参数"})
+			return
+		}
+	case "delete-node":
+		if b.Res != "nodes" {
+			WriteJSON(w, map[string]any{"ok": false, "error": "仅 nodes 支持删除"})
+			return
+		}
 	case "setImage":
 		if b.Res != "deployments" && b.Res != "statefulsets" && b.Res != "daemonsets" {
 			WriteJSON(w, map[string]any{"ok": false, "error": "仅 workload 支持镜像更新"})
@@ -330,8 +351,27 @@ func K8sResourceActionHandler(w http.ResponseWriter, r *http.Request) {
 		err = k8sMgr.NodeCordon(ctx, b.Cluster, b.Name, false)
 	case "drain":
 		var evicted, skipped int
-		evicted, skipped, err = k8sMgr.NodeDrain(ctx, b.Cluster, b.Name)
+		opt := kubernetes.DrainOptions{
+			IgnoreDaemonsets: b.IgnoreDaemonsets,
+			DeleteEmptyDir:   b.DeleteEmptyDirData,
+			Force:            b.Force,
+			GraceSeconds:     b.GraceSeconds,
+		}
+		evicted, skipped, err = k8sMgr.NodeDrain(ctx, b.Cluster, b.Name, opt)
 		extra = fmt.Sprintf("evicted=%d skipped(daemonset/static)=%d", evicted, skipped)
+	case "label":
+		err = k8sMgr.LabelResource(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Key, b.Value, b.Overwrite)
+		extra = fmt.Sprintf("key=%s value=%q overwrite=%v", b.Key, b.Value, b.Overwrite)
+	case "delete-node":
+		opt := kubernetes.DrainOptions{
+			IgnoreDaemonsets: b.IgnoreDaemonsets,
+			DeleteEmptyDir:   b.DeleteEmptyDirData,
+			Force:            b.Force,
+			GraceSeconds:     b.GraceSeconds,
+		}
+		var evicted, skipped int
+		evicted, skipped, err = k8sMgr.NodeDelete(ctx, b.Cluster, b.Name, opt)
+		extra = fmt.Sprintf("evicted=%d skipped=%d node-deleted", evicted, skipped)
 	case "setImage":
 		err = k8sMgr.SetWorkloadImage(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Image)
 		extra = "image=" + b.Image

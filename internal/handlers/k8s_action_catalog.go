@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"opscore/internal/kubernetes"
@@ -160,4 +161,37 @@ func K8sFeatureFlagsHandler(w http.ResponseWriter, r *http.Request) {
 		"ok":        true,
 		"ephemeral": kubernetes.EphemeralContainersAllowed(),
 	})
+}
+
+// K8sNodeJoinCommandHandler GET ?cluster=&ttl= → 生成 kubeadm join 命令
+// 独立端点 (非 catalog), 因为要返回命令文本给前端展示/复制。
+func K8sNodeJoinCommandHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	q := r.URL.Query()
+	cluster := q.Get("cluster")
+	if !reK8sClusterID.MatchString(cluster) {
+		WriteJSON(w, map[string]any{"ok": false, "error": "invalid cluster"})
+		return
+	}
+	var ttl int64 = 1
+	if v := q.Get("ttl"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			ttl = n
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	cmd, err := k8sMgr.NodeJoinCommand(ctx, cluster, ttl)
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	log.Printf("[K8S-AUDIT] action=node-join-command cluster=%s ttl=%dh done", cluster, ttl)
+	WriteJSON(w, map[string]any{"ok": true, "command": cmd, "ttlHours": ttl})
 }

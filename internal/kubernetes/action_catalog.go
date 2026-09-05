@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -141,6 +142,8 @@ func init() {
 	registerAction(catalogCordon())
 	registerAction(catalogUncordon())
 	registerAction(catalogDrain())
+	registerAction(catalogDeleteNode())
+	registerAction(catalogNodeJoin())
 	registerAction(catalogSetImage())
 	registerAction(catalogEditYAML())
 	registerAction(catalogPatch())
@@ -305,12 +308,100 @@ func catalogDrain() *ActionSpec {
 		Params: []Param{
 			{Name: "force", Label: "强制", Type: ParamBool, Default: false,
 				Help: "true 时使用 grace=0 删除 Pod; false 优雅"},
+			{Name: "ignoreDaemonsets", Label: "忽略 DaemonSet", Type: ParamBool, Default: false,
+				Help: "true 时也驱逐 DaemonSet Pod (控制器会重建); false 跳过并计数"},
+			{Name: "deleteEmptyDirData", Label: "删除 emptyDir 数据", Type: ParamBool, Default: false,
+				Help: "true 时允许驱逐挂载 emptyDir 的 Pod; 否则遇到即报错停止"},
+			{Name: "graceSeconds", Label: "优雅期 (秒)", Type: ParamNumber, Default: 30,
+				Help: "驱逐时每个 Pod 的 grace period; force=true 时强制为 0"},
 		},
 		Run: func(m *Manager, rc RunCtx) error {
-			_, _, err := m.NodeDrain(rc.Ctx, rc.Cluster, rc.Name)
+			opt := DrainOptions{
+				IgnoreDaemonsets: boolOpt(rc, "ignoreDaemonsets"),
+				DeleteEmptyDir:   boolOpt(rc, "deleteEmptyDirData"),
+				Force:            boolOpt(rc, "force"),
+				GraceSeconds:     int64Opt(rc, "graceSeconds", 30),
+			}
+			_, _, err := m.NodeDrain(rc.Ctx, rc.Cluster, rc.Name, opt)
 			return err
 		},
 	}
+}
+
+// catalogDeleteNode 删除节点: drain(可选择项) → 删除 Node 对象。
+// 高危, 走 catalog 面板给足选择项 + 前端二确认。
+func catalogDeleteNode() *ActionSpec {
+	return &ActionSpec{
+		Name: "delete-node", Label: "删除节点", Category: "lifecycle",
+		AllowedRes: []string{"nodes"},
+		Params: []Param{
+			{Name: "force", Label: "强制驱逐", Type: ParamBool, Default: false,
+				Help: "true 时跳过 PDB 与优雅期, 直接删除 Pod; false 尊重 PDB 走 Eviction"},
+			{Name: "ignoreDaemonsets", Label: "忽略 DaemonSet", Type: ParamBool, Default: false,
+				Help: "true 时也驱逐 DaemonSet Pod; false 跳过并计数"},
+			{Name: "deleteEmptyDirData", Label: "删除 emptyDir 数据", Type: ParamBool, Default: false,
+				Help: "true 时允许驱逐挂载 emptyDir 的 Pod; 否则遇到即报错停止"},
+			{Name: "graceSeconds", Label: "优雅期 (秒)", Type: ParamNumber, Default: 30,
+				Help: "驱逐优雅期; force=true 时强制为 0"},
+		},
+		Description: "排空节点(Drain)并从集群移除该节点。目标机上的 etcd/网络组件需另行处理(kubeadm reset)。",
+		Run: func(m *Manager, rc RunCtx) error {
+			opt := DrainOptions{
+				IgnoreDaemonsets: boolOpt(rc, "ignoreDaemonsets"),
+				DeleteEmptyDir:   boolOpt(rc, "deleteEmptyDirData"),
+				Force:            boolOpt(rc, "force"),
+				GraceSeconds:     int64Opt(rc, "graceSeconds", 30),
+			}
+			_, _, err := m.NodeDelete(rc.Ctx, rc.Cluster, rc.Name, opt)
+			return err
+		},
+	}
+}
+
+// catalogNodeJoin 生成"加入集群"的 kubeadm join 命令。
+// 依赖 control-plane 节点 (本平台运行的主机) 存在 kubeadm 与 /etc/kubernetes/pki。
+// join 命令需要返回给前端, 故不走 catalog 端点, 由独立 handler 提供。
+// (占位: 让目录里能看到该操作; 实际执行走 /k8s/node-join-command)
+// Run 无实际作用。
+func catalogNodeJoin() *ActionSpec {
+	return &ActionSpec{
+		Name: "node-join", Label: "获取加入命令", Category: "lifecycle",
+		AllowedRes: []string{"nodes"},
+		Params: []Param{
+			{Name: "ttl", Label: "Token 有效期", Type: ParamNumber, Default: 1,
+				Help: "小时 (≤720), 传给 kubeadm token create --ttl"},
+		},
+		Description: "在 control-plane 上生成 kubeadm join(含 token + ca-cert-hash)。命令由独立端点返回。",
+		Run: func(m *Manager, rc RunCtx) error {
+			return fmt.Errorf("此操作请使用加入集群面板 (前端独立入口)")
+		},
+	}
+}
+
+// boolOpt 从 rc.Params 取 bool 型参数。
+func boolOpt(rc RunCtx, key string) bool {
+	v, _ := rc.Params[key].(bool)
+	return v
+}
+
+// int64Opt 从 rc.Params 取数值参数, 缺省/非法回退 def。
+func int64Opt(rc RunCtx, key string, def int64) int64 {
+	switch v := rc.Params[key].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case string:
+		var n int64
+		if _, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func catalogSetImage() *ActionSpec {

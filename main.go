@@ -544,6 +544,7 @@ func registerCoreModules(r *registry.Registry) {
 			// 资源 × 操作 通用化(action catalog)
 			{Path: "/api/plugins/containers/k8s/action-catalog", Handler: handlers.K8sActionCatalogHandler},
 			{Path: "/api/plugins/containers/k8s/action", Handler: handlers.K8sActionHandler},
+			{Path: "/api/plugins/containers/k8s/node-join-command", Handler: handlers.K8sNodeJoinCommandHandler},
 			{Path: "/api/plugins/containers/k8s/feature-flags", Handler: handlers.K8sFeatureFlagsHandler},
 			{Path: "/api/plugins/containers/k8s/crds", Handler: handlers.K8sCRDsHandler},
 			// WS 通道
