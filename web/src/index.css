@@ -3129,3 +3129,16 @@ body {
 
 /* 同步弹窗宽度 */
 .db-sync-dialog { width: min(46rem, 94vw) !important; }
+
+/* 行过滤栏 */
+.db-row-filter { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.4rem; background: var(--surface-tint); border-radius: var(--radius-sm); }
+.db-row-filter-row { display: flex; gap: 0.35rem; align-items: center; min-width: 0; }
+.db-row-filter-row .input { height: 1.7rem; font-size: 0.75rem; padding: 0.1rem 0.4rem; }
+.db-row-filter-row select.input { width: auto; min-width: 0; flex: 0 1 auto; }
+.db-row-filter-row input.input { flex: 1; min-width: 4rem; }
+
+/* 单元格详情弹层 */
+.db-cell-detail { width: min(36rem, 90vw); max-height: 70vh; background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+.db-cell-detail-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); }
+.db-cell-detail-col { font-weight: 650; font-size: 0.8125rem; margin-right: auto; }
+.db-cell-detail-body { margin: 0; padding: 0.6rem; overflow: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; color: var(--text); flex: 1; }

@@ -3,6 +3,7 @@
 // 编辑功能：单单元格编辑 + 批量编辑 + 发送编辑请求到后端生成 SQL。
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { type QueryResult, type ColumnInfo, exportQuery, type ExportFormat } from './api'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { ActionIcon } from './DbIcons'
@@ -35,6 +36,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
   const [sortCol, setSortCol] = useState<number | null>(null)
   const [sortAsc, setSortAsc] = useState(true)
   const [copied, setCopied] = useState('')
+  const [detail, setDetail] = useState<{ v: any; col: string } | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null)
   const [rowCtxMenu, setRowCtxMenu] = useState<{ row: number; x: number; y: number } | null>(null)
 
@@ -274,6 +276,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
                       setRowCtxMenu(null)
                       setCtxMenu({ row: i, col: j, x: e.clientX, y: e.clientY })
                     }}
+                    onDoubleClick={() => setDetail({ v: cell, col: result.columns[j] })}
                     onClick={() => {
                       if (editingCell?.row === i && editingCell?.col === j) return
                       if (isEditable) handleCellClick(i, j)
@@ -320,6 +323,19 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
           items={buildRowCtxMenu(rowCtxMenu.row, rowCtxMenu.x, rowCtxMenu.y)}
           onClose={() => setRowCtxMenu(null)}
         />
+      )}
+      {detail && createPortal(
+        <div className="qo-overlay" onClick={() => setDetail(null)}>
+          <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
+            <div className="db-cell-detail-head">
+              <span className="db-cell-detail-col">{detail.col}</span>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(renderCell(detail.v)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(null)}>✕</button>
+            </div>
+            <pre className="db-cell-detail-body">{detail.v === null ? 'NULL' : typeof detail.v === 'object' ? JSON.stringify(detail.v, null, 2) : String(detail.v)}</pre>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

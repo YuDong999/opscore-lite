@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, applyCellEdit, type TableData } from './api'
+import { type ConnectionInfo, fetchData, describeTable, type TableData } from './api'
 import DataGrid from './DataGrid'
 
 type ViewMode = 'table' | 'json' | 'text'
@@ -17,7 +17,6 @@ export default function DataPanel({
 }) {
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
-  const [pkCols, setPkCols] = useState<string[]>([])
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -25,11 +24,29 @@ export default function DataPanel({
   const [viewMode, setViewMode] = useState<ViewMode>('table')
   const [visibleCols, setVisibleCols] = useState<Set<number>>(new Set())
   const [showColFilter, setShowColFilter] = useState(false)
+  const [showFilterRow, setShowFilterRow] = useState(false)
+  const [filters, setFilters] = useState<Array<{ col: string; op: string; value: string }>>([])
+  const where = useMemo(() => filters.map(f => {
+    const col = f.col
+    const v = f.value.replace(/'/g, "''")
+    switch (f.op) {
+      case '=': return `${col} = '${v}'`
+      case '!=': return `${col} != '${v}'`
+      case 'LIKE': return `${col} LIKE '%${v}%'`
+      case '>': return `${col} > '${v}'`
+      case '<': return `${col} < '${v}'`
+      case '>=': return `${col} >= '${v}'`
+      case '<=': return `${col} <= '${v}'`
+      case 'IS NULL': return `${col} IS NULL`
+      case 'IS NOT NULL': return `${col} IS NOT NULL`
+      default: return ''
+    }
+  }).filter(Boolean).join(' AND '), [filters])
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const d = await fetchData(conn.id, database, table, page, pageSize)
+      const d = await fetchData(conn.id, database, table, page, pageSize, '', 'ASC', where)
       setData(d)
       if (d.columns.length > 0 && visibleCols.size === 0) {
         setVisibleCols(new Set(d.columns.map((_, i) => i)))
@@ -40,20 +57,19 @@ export default function DataPanel({
     } finally {
       setBusy(false)
     }
-  }, [conn.id, database, table, page, pageSize])
+  }, [conn.id, database, table, page, pageSize, where])
 
   useEffect(() => {
     setColTypes(undefined)
     describeTable(conn.id, database, table)
       .then(d => {
         setColTypes(d.columns.map(c => c.type))
-        setPkCols(d.columns.filter(c => c.key === 'PRI').map(c => c.name))
       })
       .catch(() => setColTypes(undefined))
   }, [conn.id, database, table])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [database, table])
+  useEffect(() => { setPage(1) }, [database, table, where])
 
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -100,35 +116,6 @@ export default function DataPanel({
     })
   }, [data, viewMode, visibleCols])
 
-  // 行内编辑保存: 主键定位生成 UPDATE(后端转义+拦截链+审计), 完成后刷新
-  const handleEdit = useCallback(async (changes: Array<{ row: number; col: number; newValue: any; oldValue: any }>) => {
-    if (!data || !pkCols.length) { setErr('该表无主键, 无法行内编辑'); return }
-    let done = 0, lastErr = ''
-    for (const ch of changes) {
-      const srcRow = data.rows[ch.row]
-      if (!srcRow) continue
-      const visibleName = visibleColumns[ch.col]
-      const setColIdx = data.columns.indexOf(visibleName)
-      if (setColIdx < 0) continue
-      const setCol = data.columns[setColIdx]
-      const rowMap: Record<string, any> = {}
-      data.columns.forEach((c, i) => { rowMap[c] = srcRow[i] })
-      try {
-        const r = await applyCellEdit(conn.id, database, table, pkCols, rowMap, setCol, ch.newValue, true)
-        if (r.error) { lastErr = r.error; continue }
-        done++
-      } catch (e: any) {
-        lastErr = `${setCol} 更新失败: ` + (e.message || '')
-      }
-    }
-    if (done > 0) {
-      await load()
-      setErr(`已更新 ${done} 处`)
-      setTimeout(() => setErr(''), 2500)
-    } else if (lastErr) {
-      setErr(lastErr)
-    }
-  }, [conn.id, database, table, pkCols, data, visibleColumns, load])
 
   return (
     <div className="db-data-panel">
@@ -161,6 +148,9 @@ export default function DataPanel({
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowColFilter(!showColFilter)} title="字段筛选">
           {showColFilter ? '隐藏字段' : '筛选字段'}
         </button>
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowFilterRow(!showFilterRow)} title="按条件过滤行">
+          {showFilterRow ? '隐藏过滤' : '过滤行'}
+        </button>
 
         <select
           className="input"
@@ -173,6 +163,30 @@ export default function DataPanel({
         </select>
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={load} disabled={busy} title="刷新">⟳</button>
       </div>
+
+      {/* 行过滤栏 */}
+      {showFilterRow && data && (
+        <div className="db-row-filter">
+          {filters.map((f, fi) => (
+            <div key={fi} className="db-row-filter-row">
+              <select className="input" value={f.col} onChange={e => setFilters(fs => fs.map((x, i) => i === fi ? { ...x, col: e.target.value } : x))}>
+                {data.columns.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select className="input" value={f.op} onChange={e => setFilters(fs => fs.map((x, i) => i === fi ? { ...x, op: e.target.value } : x))}>
+                {['=', '!=', 'LIKE', '>', '<', '>=', '<=', 'IS NULL', 'IS NOT NULL'].map(op => <option key={op} value={op}>{op}</option>)}
+              </select>
+              <input className="input" placeholder="值" value={f.value} disabled={f.op.startsWith('IS')}
+                onChange={e => setFilters(fs => fs.map((x, i) => i === fi ? { ...x, value: e.target.value } : x))} />
+              <button className="btn-glass-soft btn-glass-soft-sm" title="移除" onClick={() => setFilters(fs => fs.filter((_, i) => i !== fi))}>✕</button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setFilters(fs => [...fs, { col: data.columns[0] || '', op: '=', value: '' }])}>+ 条件</button>
+            {filters.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setFilters([])}>清除全部</button>}
+            <span className="dim" style={{ fontSize: '0.625rem' }}>多条件 AND 组合 · 筛选后翻页统计随之变化</span>
+          </div>
+        </div>
+      )}
 
       {/* 字段筛选栏 */}
       {showColFilter && data && (
@@ -194,7 +208,6 @@ export default function DataPanel({
       {viewMode === 'table' && data && visibleCols.size > 0 ? (
         <>
           <DataGrid
-            onEdit={handleEdit}
             result={{
               columns: visibleColumns,
               rows: data.rows.map(row => visibleColumns.map((_, i) => {
@@ -205,7 +218,6 @@ export default function DataPanel({
               affected: 0,
               durationMs: data.durationMs || 0,
               truncated: false,
-              isEditable: pkCols.length > 0 && !isView,
             }}
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
