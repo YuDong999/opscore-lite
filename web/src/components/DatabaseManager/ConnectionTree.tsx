@@ -120,6 +120,40 @@ export default function ConnectionTree({
     }
   }
 
+  // dbx TreeItem 原版行类: group flex items-center gap-2 min-h-7 py-1 px-2 relative
+  const renderRow = (node: TreeNode, depth: number, children: React.ReactNode) => {
+    const selected = activeKey === node.key
+    const canExpand = !node.leaf
+    const isOpen = expanded.has(node.key)
+    return (
+      <div
+        className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-black/[0.06]${selected ? ' bg-black/[0.08]' : ''}`}
+        style={{ paddingLeft: `${8 + depth * 16}px`, contain: 'layout style' }}
+        onClick={() => onNodeClick(node)}
+        onContextMenu={e => {
+          e.preventDefault()
+          const menuItems = buildMenuItems(node)
+          if (menuItems.length > 0) setMenu({ x: e.clientX, y: e.clientY, node })
+        }}
+        title={node.label}
+      >
+        {canExpand ? (
+          <button
+            className="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[var(--text-dim)] hover:bg-black/10 hover:text-[var(--text)]"
+            onClick={e => { e.stopPropagation(); onNodeClick(node) }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+          </button>
+        ) : (
+          <span className="w-3.5 h-3.5 shrink-0" />
+        )}
+        {children}
+      </div>
+    )
+  }
+
   const buildMenuItems = (node: TreeNode): ContextMenuItem[] => {
     if (node.level === 'conn' && node.conn) {
       return [
@@ -346,7 +380,7 @@ export default function ConnectionTree({
           const isGroup = node.level === 'group'
           const selected = activeKey === node.key
 
-          // 窗口式表卡片渲染 (group 展开后: 始终保留 group 节点, 展开时在下方追加卡片)
+          // group 节点(表/视图分组) + 展开后的表行(dbx: 表就是普通行)
           if (isGroup && node.conn && node.db) {
             const ck2 = `${node.conn.id}|${node.db}`
             const objs = tablesCache[ck2]
@@ -354,7 +388,6 @@ export default function ConnectionTree({
             const views = objs ? objs.views.filter(t => !f || t.toLowerCase().includes(f)) : []
             const isTableGroup = node.label.startsWith('表')
             const allItems = isTableGroup ? tables : views
-            // 置顶表排前
             const items = [...allItems].sort((a, b) => {
               const pa = isPinned(node.conn!.id, node.db!, a) ? 0 : 1
               const pb = isPinned(node.conn!.id, node.db!, b) ? 0 : 1
@@ -364,86 +397,38 @@ export default function ConnectionTree({
 
             return (
               <React.Fragment key={node.key}>
-                <div
-                  className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
-                  style={{ paddingLeft: `${8 + depth * 16}px` }}
-                  onClick={() => onNodeClick(node)}
-                  onContextMenu={e => {
-                    e.preventDefault()
-                    const menuItems = buildMenuItems(node)
-                    if (menuItems.length > 0) setMenu({ x: e.clientX, y: e.clientY, node })
-                  }}
-                  title={node.label}
-                >
-                  {node.leaf
-                    ? <span className="db-tree-caret-leaf" />
-                    : <button className="db-tree-caret" onClick={e => { e.stopPropagation(); onNodeClick(node) }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded.has(node.key) ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
-                          <path d="m9 18 6-6-6-6" />
-                        </svg>
-                      </button>}
-                  <NodeIcon level={node.level} />
-                  <span className="db-tree-label">{node.label}</span>
-                  {node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
-                </div>
-                {expanded.has(node.key) && items.length > 0 && (
-                  <div className="db-tree-cards">
-                    {items.map(t => {
-                      const tblKey = `${node.key}|${t}`
-                      return (
-                        <div
-                          key={tblKey}
-                          className={`db-tree-card${isPinned(node.conn!.id, node.db!, t) ? ' pinned' : ''}`}
-                          onClick={() => onOpenTable(node.conn!, node.db!, t, itemLevel === 'view')}
-                          onContextMenu={e => {
-                            e.preventDefault()
-                            setMenu({ x: e.clientX, y: e.clientY, node: { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true } })
-                          }}
-                          title={`${t} @ ${node.db} (右键更多操作)`}
-                        >
-                          <span className="db-tree-card-icon">{itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}</span>
-                          <span className="db-tree-card-label">{t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}</span>
-                          <span className="db-tree-card-db">@{node.db}</span>
-                          <button
-                            className="db-tree-card-close"
-                            onClick={e => { e.stopPropagation(); onOpenTable(node.conn!, node.db!, t, itemLevel === 'view') }}
-                            title="打开"
-                          >
-                            →
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                {renderRow(node, depth, (
+                  <>
+                    <NodeIcon level={node.level} />
+                    <span className="truncate text-[0.8125rem] leading-tight">{node.label}</span>
+                    {node.count !== undefined && (
+                      <span className="ml-0.5 rounded-full bg-black/[0.08] px-1.5 text-[0.6rem] leading-4 text-[var(--text-dim)]">{node.count}</span>
+                    )}
+                  </>
+                ))}
+                {expanded.has(node.key) && items.map(t => {
+                  const tblKey = `${node.key}|${t}`
+                  const tblNode: TreeNode = { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true }
+                  return renderRow(tblNode, depth + 1, (
+                    <>
+                      <span className="relative flex h-3.5 w-3.5 shrink-0">
+                        {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
+                      </span>
+                      <span className="truncate text-[0.8125rem] leading-tight">
+                        {t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[0.625rem] text-[var(--text-dim)] opacity-0 group-hover:opacity-100">@{node.db}</span>
+                    </>
+                  ))
+                })}
               </React.Fragment>
             )
           }
 
-          // 普通树节点 (连接 / 数据�?/ group 折叠�?
-          return (
-            <div
-              key={node.key}
-              className={`db-tree-node lv-${node.level}${selected ? ' selected' : ''}`}
-              style={{ paddingLeft: `${8 + depth * 16}px` }}
-              onClick={() => onNodeClick(node)}
-              onContextMenu={e => {
-                e.preventDefault()
-                const items = buildMenuItems(node)
-                if (items.length > 0) setMenu({ x: e.clientX, y: e.clientY, node })
-              }}
-              title={node.label}
-            >
-              {node.leaf
-                    ? <span className="db-tree-caret-leaf" />
-                    : <button className="db-tree-caret" onClick={e => { e.stopPropagation(); onNodeClick(node) }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded.has(node.key) ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
-                          <path d="m9 18 6-6-6-6" />
-                        </svg>
-                      </button>}
-              {isConn && node.conn ? <EngineIcon engine={node.conn.engine} /> : <NodeIcon level={node.level} />}
-              <span className="db-tree-label">{node.label}</span>
-              {isGroup && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
+          return renderRow(node, depth, (
+            <>
+              {isConn && node.conn ? <EngineIcon engine={node.conn.engine} size={14} /> : <NodeIcon level={node.level} />}
+              <span className="truncate text-[0.8125rem] leading-tight">{node.label}</span>
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>
@@ -457,8 +442,8 @@ export default function ConnectionTree({
                   </button>
                 </span>
               )}
-            </div>
-          )
+            </>
+          ))
         })}
       </div>
       {menu && menu.node.conn && (
