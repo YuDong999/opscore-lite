@@ -3001,3 +3001,16 @@ body {
 .db-tree-label { line-height: 1 !important; }
 /* 缩进步长 0.9rem/层; 表卡片随分组缩进 */
 .db-tree-body { gap: 0.02rem !important; }
+
+/* ═══ V10: 侧栏去大框套小框(对齐 dbx) — 侧栏是一个平面, 不再有容器套容器 ═══ */
+/* 层级: .db-side(唯一平面, 以右侧分隔线与主区划界) > 搜索条 + 树(无框) */
+.db-side { border-right: 1px solid var(--border); padding-right: 0.625rem; }
+.db-tree { border: none !important; box-shadow: none !important; background: transparent !important; border-radius: 0 !important; padding: 0.25rem 0.1rem !important; }
+/* 搜索条: 填充式(无边框浅底), 与树同宽融入面板 */
+.db-tree-search { background: var(--surface-tint) !important; border: none !important; box-shadow: none !important; }
+.db-tree-search:focus { background: var(--surface-solid) !important; }
+.db-tree-add { border: none !important; background: transparent !important; font-size: 1.15rem; }
+.db-tree-add:hover { background: var(--row-hover) !important; color: var(--accent) !important; }
+/* 树 body 无内衬, 滚动只此一处 */
+.db-tree-body { padding: 0 !important; }
+.db-side { background: transparent !important; border: none !important; border-right: 1px solid var(--border) !important; border-radius: 0 !important; box-shadow: none !important; }
