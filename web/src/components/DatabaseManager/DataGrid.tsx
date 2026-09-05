@@ -23,7 +23,7 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onFilter, onClearFilters }: {
+export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onFilter, onClearFilters, onSortDatabase }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
@@ -31,6 +31,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
   columnTypes?: (string | undefined)[]  // 列类型(数据浏览模式展示在列头第二行)
   onFilter?: (col: string, op: string, value: string) => void
   onClearFilters?: () => void
+  onSortDatabase?: (col: string, dir: 'asc' | 'desc') => void
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
@@ -124,7 +125,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
     const cellValue = result.rows[row]?.[col]
     const rowData = result.rows[row] || []
     const fv = String(cellValue ?? '').slice(0, 40)
-    const filterItems: ContextMenuItem[] = onFilter ? [
+    const filterItems: (ContextMenuItem & { divider?: boolean | 'light' | 'heavy' })[] = onFilter ? [
       { label: `筛选 = '${fv}'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, '=', String(cellValue ?? '')) },
       { label: `筛选 != '${fv}'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, '!=', String(cellValue ?? '')) },
       { label: `筛选 LIKE '%${fv}%'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, 'LIKE', String(cellValue ?? '')) },
@@ -134,7 +135,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
       { divider: 'light' },
       { label: '清除全部筛选', disabled: !onClearFilters, icon: <ActionIcon kind="refresh" />, onClick: () => onClearFilters?.() },
     ] : []
-    return [
+    const items: ContextMenuItem[] = [
       // ── 复制 ──
       { label: '复制值', icon: <ActionIcon kind="copy" />, onClick: () => copyCell(cellValue) },
       { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
@@ -143,13 +144,18 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
       // ── 详情 ──
       { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ v: cellValue, col: colName }) },
       { divider: 'heavy' },
+      // ── 排序(dbx 双模式: 数据库排序=后端 ORDER BY, 当前页排序=本地) ──
+      ...(onSortDatabase ? [
+        { label: '数据库升序排序', icon: <ActionIcon kind="refresh" />, onClick: () => onSortDatabase(colName, 'asc') },
+        { label: '数据库降序排序', icon: <ActionIcon kind="refresh" />, onClick: () => onSortDatabase(colName, 'desc') },
+        { divider: 'light' as const },
+      ] : []),
+      { label: '当前页升序排序', icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(true) } },
+      { label: '当前页降序排序', icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(false) } },
+      ...(sortCol !== null ? [{ label: '清除排序', icon: <ActionIcon kind="close" />, onClick: () => setSortCol(null) }] : []),
+      ...(filterItems.length ? [{ divider: 'heavy' as const }] : []),
       // ── 筛选 ──
       ...filterItems,
-      { divider: 'heavy' },
-      // ── 排序 ──
-      { label: `按 ${colName} 升序`, icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(true) } },
-      { label: `按 ${colName} 降序`, icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(false) } },
-      ...(sortCol !== null ? [{ label: '清除排序', icon: <ActionIcon kind="close" />, onClick: () => setSortCol(null) }] : []),
     ]
   }, [result, copyCell, onFilter, onClearFilters, sortCol])
 

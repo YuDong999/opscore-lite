@@ -25,6 +25,8 @@ export default function DataPanel({
   const [visibleCols, setVisibleCols] = useState<Set<number>>(new Set())
   const [showColFilter, setShowColFilter] = useState(false)
   const [showFilterRow, setShowFilterRow] = useState(false)
+  const [orderBy, setOrderBy] = useState('')
+  const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('asc')
   const [filters, setFilters] = useState<Array<{ col: string; op: string; value: string }>>([])
   const where = useMemo(() => filters.map(f => {
     const col = f.col
@@ -46,7 +48,7 @@ export default function DataPanel({
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const d = await fetchData(conn.id, database, table, page, pageSize, '', 'ASC', where)
+      const d = await fetchData(conn.id, database, table, page, pageSize, orderBy, orderDir, where)
       setData(d)
       if (d.columns.length > 0 && visibleCols.size === 0) {
         setVisibleCols(new Set(d.columns.map((_, i) => i)))
@@ -57,7 +59,7 @@ export default function DataPanel({
     } finally {
       setBusy(false)
     }
-  }, [conn.id, database, table, page, pageSize, where])
+  }, [conn.id, database, table, page, pageSize, where, orderBy, orderDir])
 
   useEffect(() => {
     setColTypes(undefined)
@@ -69,7 +71,7 @@ export default function DataPanel({
   }, [conn.id, database, table])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [database, table, where])
+  useEffect(() => { setPage(1) }, [database, table, where, orderBy, orderDir])
 
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -224,7 +226,8 @@ export default function DataPanel({
             sql={`SELECT * FROM ${database}.${table}`}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
-            onClearFilters={() => setFilters([])}
+            onClearFilters={() => { setFilters([]); setOrderBy('') }}
+            onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir); setPage(1) }}
           />
           <div className="db-data-pager">
             <span className="dim">共 {total} 行</span>
