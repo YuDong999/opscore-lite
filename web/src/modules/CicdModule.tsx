@@ -2138,7 +2138,7 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
         <button
           onClick={() => { if (waitingRun) onOpenRun(waitingRun.id); else onMore?.() }}
           className="w-full rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn flex items-center justify-between hover:bg-warn/15 transition-colors">
-          <span>⏸ {waiting} 个运行待审批{waitingRun ? ', 点击直接处理' : ''}</span>
+          <span className="flex items-center gap-2"><Pause className="size-4 shrink-0" />{waiting} 个运行待审批{waitingRun ? ', 点击直接处理' : ''}</span>
           <ChevronRight className="size-4" />
         </button>
       )}
@@ -2156,8 +2156,8 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
 function StatChip({ label, value, warn, tone }: { label: string; value: string; warn?: boolean; tone?: string }) {
   return (
     <div className="rounded-lg border bg-card/60 px-3 py-1.5 flex items-baseline gap-2">
-      <span className="text-xs text-muted-foreground whitespace-nowrap">{label}</span>
-      <span className={cn('text-lg font-bold tabular-nums', warn && 'text-warn', tone)}>{value}</span>
+      <span className="text-sm text-muted-foreground whitespace-nowrap">{label}</span>
+      <span className={cn('text-sm font-bold tabular-nums', warn && 'text-warn', tone)}>{value}</span>
     </div>
   )
 }
