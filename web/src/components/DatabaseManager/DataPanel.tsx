@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, type TableData } from './api'
+import { type ConnectionInfo, fetchData, describeTable, applyCellEdit, type TableData } from './api'
 import DataGrid from './DataGrid'
 
 type ViewMode = 'table' | 'json' | 'text'
@@ -17,6 +17,7 @@ export default function DataPanel({
 }) {
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
+  const [pkCols, setPkCols] = useState<string[]>([])
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -44,7 +45,10 @@ export default function DataPanel({
   useEffect(() => {
     setColTypes(undefined)
     describeTable(conn.id, database, table)
-      .then(d => setColTypes(d.columns.map(c => c.type)))
+      .then(d => {
+        setColTypes(d.columns.map(c => c.type))
+        setPkCols(d.columns.filter(c => c.key === 'PRI').map(c => c.name))
+      })
       .catch(() => setColTypes(undefined))
   }, [conn.id, database, table])
 
@@ -95,6 +99,36 @@ export default function DataPanel({
       return parts.join(' | ')
     })
   }, [data, viewMode, visibleCols])
+
+  // 行内编辑保存: 主键定位生成 UPDATE(后端转义+拦截链+审计), 完成后刷新
+  const handleEdit = useCallback(async (changes: Array<{ row: number; col: number; newValue: any; oldValue: any }>) => {
+    if (!data || !pkCols.length) { setErr('该表无主键, 无法行内编辑'); return }
+    let done = 0, lastErr = ''
+    for (const ch of changes) {
+      const srcRow = data.rows[ch.row]
+      if (!srcRow) continue
+      const visibleName = visibleColumns[ch.col]
+      const setColIdx = data.columns.indexOf(visibleName)
+      if (setColIdx < 0) continue
+      const setCol = data.columns[setColIdx]
+      const rowMap: Record<string, any> = {}
+      data.columns.forEach((c, i) => { rowMap[c] = srcRow[i] })
+      try {
+        const r = await applyCellEdit(conn.id, database, table, pkCols, rowMap, setCol, ch.newValue, true)
+        if (r.error) { lastErr = r.error; continue }
+        done++
+      } catch (e: any) {
+        lastErr = `${setCol} 更新失败: ` + (e.message || '')
+      }
+    }
+    if (done > 0) {
+      await load()
+      setErr(`已更新 ${done} 处`)
+      setTimeout(() => setErr(''), 2500)
+    } else if (lastErr) {
+      setErr(lastErr)
+    }
+  }, [conn.id, database, table, pkCols, data, visibleColumns, load])
 
   return (
     <div className="db-data-panel">
@@ -160,6 +194,7 @@ export default function DataPanel({
       {viewMode === 'table' && data && visibleCols.size > 0 ? (
         <>
           <DataGrid
+            onEdit={handleEdit}
             result={{
               columns: visibleColumns,
               rows: data.rows.map(row => visibleColumns.map((_, i) => {
@@ -170,6 +205,7 @@ export default function DataPanel({
               affected: 0,
               durationMs: data.durationMs || 0,
               truncated: false,
+              isEditable: pkCols.length > 0 && !isView,
             }}
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}

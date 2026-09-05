@@ -60,6 +60,7 @@ Routes: []registry.Route{
 				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
 			{Path: "/api/dbmanager/data", Handler: h.handleData},
 			{Path: "/api/dbmanager/table-inserts", Handler: h.handleTableInserts},
+			{Path: "/api/dbmanager/apply-edit", Handler: h.handleApplyEdit},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},

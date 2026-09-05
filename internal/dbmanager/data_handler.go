@@ -4,6 +4,7 @@ package dbmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -262,4 +263,141 @@ func (h *Handlers) handleTableInserts(w http.ResponseWriter, r *http.Request) {
 		"rows":     len(rows),
 		"truncated": len(rows) >= maxRows,
 	})
+}
+
+// ===== /api/dbmanager/apply-edit =====
+// POST {id, database, table, pkCols, row, setCol, setValue, confirm}
+// 行内编辑: 按主键定位生成 UPDATE, 值经方言转义, 走 ADR-003 拦截链+审计。
+
+func (h *Handlers) handleApplyEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		ID       string         `json:"id"`
+		Database string         `json:"database"`
+		Table    string         `json:"table"`
+		PkCols   []string       `json:"pkCols"`
+		Row      map[string]any `json:"row"`
+		SetCol   string         `json:"setCol"`
+		SetValue any            `json:"setValue"`
+		Confirm  bool           `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !reConnID.MatchString(body.ID) || !validIdentifier(body.Database) {
+		writeErr(w, "id/database 非法", http.StatusBadRequest)
+		return
+	}
+	tableSchema := ""
+	table := body.Table
+	if i := strings.Index(table, "."); i >= 0 {
+		tableSchema, table = table[:i], table[i+1:]
+	}
+	if !validIdentifier(table) || (tableSchema != "" && !validIdentifier(tableSchema)) {
+		writeErr(w, "table 名非法", http.StatusBadRequest)
+		return
+	}
+	if !validIdentifier(body.SetCol) || body.Row == nil {
+		writeErr(w, "setCol/row 非法", http.StatusBadRequest)
+		return
+	}
+	for _, pk := range body.PkCols {
+		if !validIdentifier(pk) {
+			writeErr(w, "主键列名非法", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(body.PkCols) == 0 {
+		writeErr(w, "该表无主键, 无法行内编辑", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	db, engine, err := h.pool.AcquireForSync(body.ID)
+	if err != nil {
+		writeErr(w, "连接不可用: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	dialect := sync.EngineDialect(engine)
+	if dialect == "" {
+		writeErr(w, "该引擎暂不支持", http.StatusBadRequest)
+		return
+	}
+	_ = db
+
+	// 列校验: setCol 与 pkCols 必须是真实列
+	cols, err := db.GetColumns(body.Database, body.Table)
+	if err != nil {
+		writeErr(w, "读取表结构失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	valid := map[string]bool{}
+	for _, c := range cols {
+		valid[strings.ToLower(c.Name)] = true
+	}
+	if !valid[strings.ToLower(body.SetCol)] {
+		writeErr(w, "setCol 不是真实列", http.StatusBadRequest)
+		return
+	}
+	for _, pk := range body.PkCols {
+		if !valid[strings.ToLower(pk)] {
+			writeErr(w, "主键列不存在", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// 拼 UPDATE(方言转义)
+	qi := func(n string) string { return sync.QuoteIdent(n, dialect) }
+	tn := qi(body.Database) + "." + qi(table)
+	if tableSchema != "" {
+		tn = qi(tableSchema) + "." + qi(table)
+	}
+	setClause := qi(body.SetCol) + " = " + sync.QuoteValue(body.SetValue, dialect, "")
+	whereParts := make([]string, 0, len(body.PkCols))
+	for _, pk := range body.PkCols {
+		pv, ok := body.Row[pk]
+		if !ok || pv == nil {
+			writeErr(w, "主键 "+pk+" 的行值缺失", http.StatusBadRequest)
+			return
+		}
+		whereParts = append(whereParts, qi(pk)+" = "+sync.QuoteValue(pv, dialect, ""))
+	}
+	updateSQL := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tn, setClause, strings.Join(whereParts, " AND "))
+
+	conn, err := h.store.Get(body.ID)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// ── ADR-003 拦截链 + 执行 + 审计(与 handleQuery 同管道) ──
+	risk, reason := classifySQLRisk(string(conn.Info.Engine), updateSQL)
+	if risk.AtLeast(RiskMedium) {
+		if blocked := h.interceptWrite(w, conn, body.ID, updateSQL, risk, reason, body.Confirm); blocked {
+			return
+		}
+	}
+	res, err := h.svc.ExecQuery(ctx, body.ID, updateSQL, 10)
+	if risk.AtLeast(RiskMedium) {
+		decision, detail := "executed", reason
+		if err != nil {
+			decision, detail = "failed", resErrText(res, err)
+		}
+		h.audit.Append(AuditEntry{
+			ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
+			SQL: updateSQL, Risk: string(risk), Decision: decision, Detail: detail,
+		})
+	}
+	if err != nil {
+		if res == nil {
+			res = &QueryResult{Error: err.Error()}
+		}
+		writeJSON(w, res)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "affected": res.Affected, "sql": updateSQL})
 }

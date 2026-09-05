@@ -537,3 +537,12 @@ export async function fetchTableDDL(id: string, database: string, table: string)
 export async function fetchTableInserts(id: string, database: string, table: string, maxRows = 1000): Promise<{ text: string; rows: number; truncated: boolean }> {
   return getJSON(`/api/dbmanager/table-inserts?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&maxRows=${maxRows}`)
 }
+
+// ── 行内编辑: 按主键生成 UPDATE 并执行(后端走拦截链+审计) ──
+export async function applyCellEdit(
+  id: string, database: string, table: string,
+  pkCols: string[], row: Record<string, any>,
+  setCol: string, setValue: any, confirm = false,
+): Promise<{ ok: boolean; affected: number; error?: string }> {
+  return postJSON('/api/dbmanager/apply-edit', { id, database, table, pkCols, row, setCol, setValue, confirm })
+}
