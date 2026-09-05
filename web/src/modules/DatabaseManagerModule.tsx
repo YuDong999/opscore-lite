@@ -16,6 +16,7 @@ import QueryEditor from '../components/DatabaseManager/QueryEditor'
 import DataGrid from '../components/DatabaseManager/DataGrid'
 import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
+import QuickOpen from '../components/DatabaseManager/QuickOpen'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 import DriverManagement from '../components/DatabaseManager/DriverManagement'
@@ -51,10 +52,23 @@ export default function DatabaseManagerModule() {
   const [result, setResult] = useState<QueryResult | null>(null)
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
+  const [showQuickOpen, setShowQuickOpen] = useState(false)
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
   }, [conn?.id])
+
+  // Ctrl+K 快速打开
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setShowQuickOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // 解锁状态轮询
   useEffect(() => {
@@ -234,6 +248,13 @@ export default function DatabaseManagerModule() {
         </div>
       )}
 
+      <QuickOpen
+        conns={conns}
+        open={showQuickOpen}
+        onClose={() => setShowQuickOpen(false)}
+        onOpenTable={handleOpenTable}
+        onNewQuery={handleNewQuery}
+      />
       <div className="db-layout">
         <aside className="db-side">
           <ConnectionTree

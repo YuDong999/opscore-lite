@@ -3114,3 +3114,15 @@ body {
 /* 主侧栏: 不显示滚动条(用户明确要求; 滚轮仍可滚动) */
 .sidebar { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
 .sidebar::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* ═══ Ctrl+K 快速打开(dbx quick-open 同构) ═══ */
+.qo-overlay { position: fixed; inset: 0; z-index: 1500; background: rgba(15, 18, 34, 0.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.qo-panel { width: min(34rem, 92vw); background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow); overflow: hidden; }
+.qo-input { width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent; color: var(--text); font-size: 0.9rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border); }
+.qo-input::placeholder { color: var(--text-dim); }
+.qo-list { max-height: 22rem; overflow-y: auto; padding: 0.3rem; }
+.qo-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border-radius: 0.35rem; cursor: pointer; font-size: 0.8125rem; }
+.qo-item.active, .qo-item:hover { background: var(--row-hover); }
+.qo-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qo-hint { margin-left: auto; font-size: 0.6875rem; color: var(--text-dim); }
+.qo-empty { padding: 1rem 0.75rem; text-align: center; color: var(--text-dim); font-size: 0.78rem; }
