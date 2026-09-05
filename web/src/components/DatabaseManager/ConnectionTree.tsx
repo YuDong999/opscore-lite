@@ -375,7 +375,13 @@ export default function ConnectionTree({
                   }}
                   title={node.label}
                 >
-                  <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+                  {node.leaf
+                    ? <span className="db-tree-caret-leaf" />
+                    : <button className="db-tree-caret" onClick={e => { e.stopPropagation(); onNodeClick(node) }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded.has(node.key) ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
+                      </button>}
                   <NodeIcon level={node.level} />
                   <span className="db-tree-label">{node.label}</span>
                   {node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
@@ -428,7 +434,13 @@ export default function ConnectionTree({
               }}
               title={node.label}
             >
-              <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+              {node.leaf
+                    ? <span className="db-tree-caret-leaf" />
+                    : <button className="db-tree-caret" onClick={e => { e.stopPropagation(); onNodeClick(node) }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded.has(node.key) ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
+                      </button>}
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} /> : <NodeIcon level={node.level} />}
               <span className="db-tree-label">{node.label}</span>
               {isGroup && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}

@@ -3048,3 +3048,20 @@ body {
 .db-conn-panel .db-form > label:first-child, .db-conn-panel .db-form > label[style] { grid-column: auto; }
 .db-conn-panel .db-form > label:has(> textarea), .db-conn-panel .db-form > label:has(.db-advanced) { grid-column: 1 / -1; }
 .db-conn-panel .db-advanced { grid-column: 1 / -1; }
+
+/* ═══ V13: 树行 1:1 对齐 dbx TreeItem ─══
+   行: min-h 28px / py-1(4px) / px-2(8px) / gap-2(8px) / contain layout style
+   caret: 16px 按钮内 14px lucide chevron; 不可展开行 14px 占位
+   图标: 14×14; 选中: 浅灰底(dbx tree-item-active) */
+.db-tree-node, .db-tree-card { min-height: 1.75rem !important; height: auto !important; padding: 0.25rem 0.5rem !important; gap: 0.5rem !important; contain: layout style; }
+.db-tree-caret, .db-tree-caret-leaf { width: 0.875rem !important; height: 0.875rem !important; flex-shrink: 0; display: inline-flex !important; align-items: center; justify-content: center; border: none !important; background: transparent !important; }
+.db-tree-caret { border-radius: 0.125rem !important; color: var(--text-dim) !important; cursor: pointer; }
+.db-tree-caret:hover { background: var(--row-hover) !important; color: var(--text) !important; }
+.db-tree-caret::before { content: none !important; }
+.db-tree-caret-leaf { visibility: hidden; }
+.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.875rem !important; height: 0.875rem !important; }
+.db-tree-label { font-size: 0.8125rem !important; line-height: 1.25 !important; }
+/* 选中: dbx tree-item-active = 浅灰底, 无竖条 */
+.db-tree-node.selected, .db-tree-card.selected { background: rgb(235 235 235) !important; box-shadow: none !important; }
+[data-theme='obsidian'] .db-tree-node.selected, [data-theme='obsidian'] .db-tree-card.selected,
+[data-theme='黑曜石'] .db-tree-node.selected { background: rgb(36 36 36) !important; }
