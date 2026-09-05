@@ -46,6 +46,7 @@ export default function ConnectionTree({
   const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({})
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
+  const [activeKey, setActiveKey] = useState<string | null>(null)
 
   // 置顶表(localStorage)
   const [pins, setPins] = useState<string[]>(() => {
@@ -104,6 +105,7 @@ export default function ConnectionTree({
   }
 
   const onNodeClick = (node: TreeNode) => {
+    setActiveKey(node.key)
     if (node.level === 'conn' && node.conn) {
       onSelectConn(node.conn)
       toggle(node.key)
@@ -289,7 +291,7 @@ export default function ConnectionTree({
           const isConn = node.level === 'conn'
           const isDb = node.level === 'db'
           const isGroup = node.level === 'group'
-          const selected = selectedConnId === node.conn?.id && (isConn || isDb)
+          const selected = activeKey === node.key
 
           // 窗口式表卡片渲染 (group 展开后: 始终保留 group 节点, 展开时在下方追加卡片)
           if (isGroup && node.conn && node.db) {

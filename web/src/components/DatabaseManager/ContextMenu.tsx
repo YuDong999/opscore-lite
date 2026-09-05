@@ -1,6 +1,6 @@
 // 通用右键菜单: 定位式浮层, 点击外部自动关闭。
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
@@ -25,6 +25,20 @@ export default function ContextMenu({
   onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  // 标准定位: 光标点=菜单左上角; 渲染后实测尺寸, 视口边缘翻转(下→上, 右→左), 保证完整可见
+  const [pos, setPos] = useState({ x, y })
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const margin = 8
+    let nx = x
+    let ny = y
+    if (x + r.width > window.innerWidth - margin) nx = Math.max(margin, x - r.width)
+    if (y + r.height > window.innerHeight - margin) ny = Math.max(margin, y - r.height)
+    setPos((prev) => (prev.x === nx && prev.y === ny ? prev : { x: nx, y: ny }))
+  }, [x, y, items.length])
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -41,12 +55,7 @@ export default function ContextMenu({
     }
   }, [onClose])
 
-  // 将菜单限制在视口内
-  const style: React.CSSProperties = { left: x, top: y }
-  const estW = 220
-  const estH = items.length * 32 + 12
-  if (x + estW > window.innerWidth) style.left = Math.max(4, x - estW)
-  if (y + estH > window.innerHeight) style.top = Math.max(4, y - estH)
+  const style: React.CSSProperties = { left: pos.x, top: pos.y }
 
   // portal 到 body: 脱离 .db-side 层叠上下文, 否则被兄弟 .db-main 盖住
   return createPortal(

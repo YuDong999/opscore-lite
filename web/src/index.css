@@ -2982,3 +2982,22 @@ body {
 /* V8: 右键菜单两级分隔线 — 类别重线 / 同类浅线(参考 dbx) */
 .db-ctx-menu-divider { height: 1px; background: var(--border); margin: 0.25rem 0.4rem; }
 .db-ctx-menu-divider-heavy { height: 1px; margin: 0.35rem 0.15rem; background: color-mix(in srgb, var(--text-dim) 45%, transparent); }
+
+/* ═══ V9: 树最终样式 — dbx 式干净列表, 单一选中行, 28px 统一行高 ═══ */
+.db-tree-node, .db-tree-card { height: 1.75rem !important; min-height: 1.75rem; padding: 0 0.5rem !important; border: none !important; background: transparent !important; border-radius: 0.3rem !important; box-shadow: none !important; transform: none !important; display: flex; align-items: center; gap: 0.35rem; font-size: 0.8125rem; transition: background-color .08s; }
+.db-tree-node:hover, .db-tree-card:hover { background: var(--row-hover) !important; }
+/* 选中=仅当前点击行: 浅底+左侧 accent 竖条 */
+.db-tree-node.selected, .db-tree-card.selected { background: var(--surface-tint) !important; box-shadow: inset 2px 0 0 var(--accent) !important; }
+/* 连接行微强调: 仅字重, 无底色 */
+.lv-conn > .db-tree-label { font-weight: 650; font-size: 0.84375rem; }
+/* caret: 无框小箭头, leaf 占位对齐 */
+.db-tree-caret { width: 0.8rem !important; height: 0.8rem !important; border: none !important; background: transparent !important; border-radius: 0 !important; display: inline-flex !important; align-items: center; justify-content: center; flex-shrink: 0; }
+.db-tree-caret::before { content: '▸' !important; font-size: 0.6rem !important; color: var(--text-dim) !important; line-height: 1; }
+.db-tree-caret.open::before { transform: rotate(90deg) !important; color: var(--accent) !important; }
+.db-tree-caret.leaf { visibility: hidden !important; }
+/* 图标尺寸统一 15px, 与文字垂直居中 */
+.db-tree-node .dbx-engine-icon { width: 1rem !important; height: 1rem !important; }
+.db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.95rem !important; height: 0.95rem !important; }
+.db-tree-label { line-height: 1 !important; }
+/* 缩进步长 0.9rem/层; 表卡片随分组缩进 */
+.db-tree-body { gap: 0.02rem !important; }
