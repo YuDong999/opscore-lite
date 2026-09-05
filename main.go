@@ -485,6 +485,8 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/run/log", Handler: handlers.CicdRunLog},
 			{Path: "/api/cicd/run/stream", Handler: handlers.CicdRunStream},
 			{Path: "/api/cicd/webhook/", Handler: handlers.CicdWebhook},
+			{Path: "/api/cicd/badge/", Handler: handlers.CicdBadge},
+			{Path: "/api/cicd/audit", Handler: handlers.CicdAudit},
 			{Path: "/api/cicd/overview", Handler: handlers.CicdOverview},
 			{Path: "/api/cicd/credentials", Handler: handlers.CicdCredentials},
 			{Path: "/api/cicd/credential/save", Handler: handlers.CicdCredentialSave},

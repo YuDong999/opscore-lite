@@ -689,9 +689,21 @@ function PipelineRunsList({ pipelineId, tick, onOpenRun, onChanged }: { pipeline
     const t = localStorage.getItem('opscore-token')
     window.open(`${API.runLogDownload}?id=${r.id}${t ? `&token=${encodeURIComponent(t)}` : ''}`)
   }
+  // 回滚: 钉住该次运行的 commit 重新触发完整流水线
+  const rollbackRun = async (r: Run) => {
+    const c = r.commit?.split(/\s/)[0] || ''
+    if (!c) return
+    if (!(await confirm(`回滚到 ${c}？`, { desc: '将重新拉取该提交并执行完整流水线(部署随之回退)。', okText: '回滚' }))) return
+    setBusy(r.id)
+    try {
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: r.pipelineId, branch: r.branch || '', commit: c })
+      toast.success('已触发回滚'); onOpenRun(d.run.id); onChanged()
+    } catch (e: any) { toast.error('回滚失败: ' + e.message) } finally { setBusy('') }
+  }
   const runMenu = (r: Run): CtxMenuItem[] => [
     { label: '查看详情', icon: <FileCode2 />, onSelect: () => onOpenRun(r.id) },
     { label: '重新执行', icon: <RefreshCw />, disabled: !!busy, onSelect: () => rerun(r) },
+    ...(r.commit ? [{ label: '回滚此版本', icon: <GitCommitHorizontal />, disabled: !!busy, onSelect: () => rollbackRun(r) }] : []),
     { label: '导出日志 txt', icon: <Download />, onSelect: () => downloadLog(r) },
     { sep: true, label: '' },
     ...(r.status !== 'running' && r.status !== 'queued' ? [
@@ -1211,6 +1223,7 @@ function EditPipelineDialog({ pipelineId, onClose }: { pipelineId: string; onClo
 function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () => void }) {
   const [copied, setCopied] = useState('')
   const url = `${location.origin}${API.webhook(pipeline.id)}`
+  const badgeUrl = `${location.origin}${API.badge(pipeline.id)}`
   const copy = async (text: string, tag: string) => {
     try {
       await navigator.clipboard.writeText(text)
@@ -1241,6 +1254,14 @@ function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
           <div>
             <Label>curl 示例</Label>
             <Textarea className="font-mono" rows={2} readOnly value={curl} onClick={e => (e.target as HTMLTextAreaElement).select()} />
+          </div>
+          <div>
+            <Label>状态徽章(公开只读, README 可贴)</Label>
+            <div className="flex gap-2 items-center">
+              <img src={badgeUrl} alt="badge" className="h-5 shrink-0" />
+              <Input className="font-mono text-xs" readOnly value={badgeUrl} onFocus={e => e.target.select()} />
+              <Button variant="outline" size="sm" onClick={() => copy(badgeUrl, 'badge')}>{copied === 'badge' ? '已复制' : '复制'}</Button>
+            </div>
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>关闭</Button></DialogFooter>
@@ -1430,6 +1451,19 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
       onChanged?.()
     } catch (e: any) { setErr('重新执行失败: ' + e.message) } finally { setBusy('') }
   }
+  // 回滚到此版本: 以该次运行的 commit 重新触发完整流水线(引擎钉住提交拉取)
+  const rollback = async () => {
+    const c = run!.commit?.split(/\s/)[0] || ''
+    if (!c) return
+    if (!(await confirm('回滚到此版本？', { desc: `将重新拉取 ${c} 并执行完整流水线(部署随之回退)。`, okText: '回滚' }))) return
+    setBusy('rollback')
+    try {
+      const d = await postJSON<{ run: Run }>(API.pipelineRun, { id: run!.pipelineId, branch: run!.branch || '', commit: c })
+      setErr('')
+      if (onRerun) onRerun(d.run.id)
+      onChanged?.()
+    } catch (e: any) { setErr('回滚失败: ' + e.message) } finally { setBusy('') }
+  }
   const removeRun = async () => {
     if (!(await confirm('删除这条运行记录？', { desc: '日志与制品将一并删除。', danger: true, okText: '删除' }))) return
     setBusy('del')
@@ -1478,6 +1512,10 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
             <div className="flex gap-1.5 shrink-0">
               <Button variant="outline" size="sm" disabled={busy !== ''} title="以本次运行相同分支重新执行"
                 onClick={rerun}><RefreshCw />重新执行</Button>
+              {run.commit && run.trigger !== 'rollback' && (
+                <Button variant="outline" size="sm" disabled={busy !== ''} title={`钉住 ${run.commit.split(/\s/)[0]} 重新拉取并执行(部署回退)`}
+                  onClick={rollback}><GitCommitHorizontal />回滚此版本</Button>
+              )}
               <Button variant="outline" size="sm" title="编辑流水线定义, 保存后可重新执行"
                 onClick={() => setEditOpen(true)}><Pencil />编辑</Button>
               {run.status !== 'running' && run.status !== 'queued' && (
@@ -2149,9 +2187,46 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
         <div className="lg:col-span-2 min-w-0">
           <StageViewCard onOpenRun={onOpenRun} />
         </div>
-        <RecentActivity runs={data.recentRuns} onOpenRun={onOpenRun} onMore={onMore} />
+        <div className="flex flex-col gap-3 min-w-0">
+          <RecentActivity runs={data.recentRuns} onOpenRun={onOpenRun} onMore={onMore} />
+          <AuditCard />
+        </div>
       </div>
     </div>
+  )
+}
+
+const AUDIT_TEXT: Record<string, string> = {
+  'trigger(manual)': '手动触发', 'trigger(webhook)': 'Webhook 触发', 'trigger(cron)': '定时触发',
+  'trigger(rollback)': '回滚触发', approve: '批准', reject: '拒绝', cancel: '取消运行',
+  delete_run: '删除记录', delete_pipeline: '删除流水线', maintenance: '维护模式',
+}
+const AUDIT_DANGER = new Set(['reject', 'delete_run', 'delete_pipeline'])
+
+// 操作审计卡: 引擎级动作链(触发/审批/取消/删除/回滚/维护), 环形保留最近 200 条
+function AuditCard() {
+  const { data } = useResource<{ ts: string; actor: string; action: string; target: string; detail: string }[]>(API.audit)
+  const list = (data || []).slice(0, 8)
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">操作审计</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="flex flex-col">
+          {list.length === 0 && <div className="text-sm text-muted-foreground py-3">暂无记录</div>}
+          {list.map((a, i) => (
+            <div key={i} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/60 text-xs">
+              <span className={cn('shrink-0 font-medium', AUDIT_DANGER.has(a.action) && 'text-destructive', a.action === 'approve' && 'text-ok', a.action.startsWith('trigger') && 'text-accent')}>
+                {AUDIT_TEXT[a.action] || a.action}
+              </span>
+              <span className="truncate flex-1 min-w-0 text-muted-foreground" title={`${a.target} ${a.detail}`}>{a.target}{a.detail ? ` · ${a.detail}` : ''}</span>
+              <span className="shrink-0 text-muted-foreground tabular-nums">{a.ts}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

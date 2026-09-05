@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"fmt"
 	"net/http"
 	"os"
@@ -239,9 +240,14 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 			onLine(l)
 		}
 	}
-	if res.err != nil {
-		onLine("[error] " + res.err.Error())
-		return -1, res.err
+	if res.err != nil || (res.rc != 0 && res.out == "") {
+		if res.err != nil {
+			onLine("[error] " + res.err.Error())
+		}
+		onLine("[error] 下发命令(掩码后): " + line) // 传输/语法故障时回显实发命令, 便于定位
+		if res.err != nil {
+			return -1, res.err
+		}
 	}
 	return res.rc, nil
 }
@@ -375,6 +381,7 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID     string            `json:"id"`
 		Branch string            `json:"branch"`
+		Commit string            `json:"commit"` // 非空=回滚到该提交
 		Params map[string]string `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -394,7 +401,7 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "该流水线未启用手动触发", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.TriggerBranch(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch), body.Params)
+	run, err := cicdEngine.TriggerCommit(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch), strings.TrimSpace(body.Commit), body.Params)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
@@ -621,6 +628,7 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "流水线未启用 Webhook", http.StatusForbidden)
 		return
 	}
+	raw, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	token := r.Header.Get("X-Opscore-Token")
 	if token == "" {
 		token = r.URL.Query().Get("token")
@@ -629,7 +637,7 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Secret string `json:"secret"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err == nil {
+		if err := json.Unmarshal(raw, &body); err == nil {
 			token = body.Secret
 		}
 	}
@@ -641,12 +649,114 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "Webhook 凭证错误", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.Trigger(id, cicd.TriggerWebhook)
+	// 解析 Git 平台 push 事件(GitHub/Gitea/GitLab 同构): 分支与 commit 关联到本次运行
+	branch, commit := parsePushEvent(raw)
+	run, err := cicdEngine.TriggerCommit(id, cicd.TriggerWebhook, branch, commit, nil)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
 	}
-	WriteJSON(w, map[string]any{"ok": true, "runId": run.ID})
+	WriteJSON(w, map[string]any{"ok": true, "runId": run.ID, "branch": branch, "commit": commit})
+}
+
+// parsePushEvent 从 webhook payload 提取 push 分支与 commit。
+// GitHub/Gitea/GitLab 的 push 事件同构: {ref:"refs/heads/x", after:"<40位sha>"}。
+// 规则: 非 refs/heads/*(tag/release 等)不覆盖; after 非 40 位十六进制或全零(删分支)不钉 commit。
+func parsePushEvent(raw []byte) (branch, commit string) {
+	var ev struct {
+		Ref   string `json:"ref"`
+		After string `json:"after"`
+	}
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		return "", ""
+	}
+	const heads = "refs/heads/"
+	if !strings.HasPrefix(ev.Ref, heads) {
+		return "", ""
+	}
+	branch = strings.TrimPrefix(ev.Ref, heads)
+	c := strings.ToLower(strings.TrimSpace(ev.After))
+	if len(c) != 40 {
+		return branch, ""
+	}
+	for _, ch := range c {
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+			return branch, ""
+		}
+	}
+	if c == strings.Repeat("0", 40) {
+		return branch, ""
+	}
+	return branch, c
+}
+
+// ── 状态徽章(公开只读端点, 无鉴权: 仅暴露流水线名与最近运行状态) ──
+
+// CicdBadge GET /api/cicd/badge/{pipelineId}.svg
+func CicdBadge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/cicd/badge/"), ".svg")
+	if !reCicdID.MatchString(id) {
+		writeErr(w, "无效的流水线 ID", http.StatusNotFound)
+		return
+	}
+	name, status, ok := cicdEngine.Badge(id)
+	if !ok {
+		writeErr(w, "流水线不存在", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(badgeSVG(name, status))
+}
+
+// badgeBadgeText 状态中文与配色(扁平风格, 与前端主题状态色对齐)
+var badgeStatus = map[string]struct {
+	text  string
+	color string
+}{
+	"success":  {"成功", "#2da44e"},
+	"failed":   {"失败", "#cf222e"},
+	"running":  {"运行中", "#bf8700"},
+	"queued":   {"排队中", "#8250df"},
+	"waiting":  {"待审批", "#bf8700"},
+	"canceled": {"已取消", "#6e7781"},
+	"unknown":  {"从未运行", "#6e7781"},
+}
+
+func badgeSVG(name, status string) []byte {
+	st, ok := badgeStatus[status]
+	if !ok {
+		st = badgeStatus["unknown"]
+	}
+	text := fmt.Sprintf("%s | %s", name, st.text)
+	w := 8*len([]rune(name)) + 8*len([]rune(st.text)) + 58
+	// 文本居中偏移(近似)
+	nameW := 8*len([]rune(name)) + 16
+	return []byte(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="20" role="img" aria-label="%s">`+
+			`<linearGradient id="s" x2="0" y2="100%%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient>`+
+			`<clipPath id="r"><rect width="%d" height="20" rx="3" fill="#fff"/></clipPath>`+
+			`<g clip-path="url(#r)"><rect width="%d" height="20" fill="#555"/><rect x="%d" width="%d" height="20" fill="%s"/><rect width="%d" height="20" fill="url(#s)"/></g>`+
+			`<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">`+
+			`<text x="%d" y="14">%s</text><text x="%d" y="14">%s</text></g></svg>`,
+		w, text, w, nameW, nameW, w-nameW, st.color, w,
+		nameW/2+1, name, nameW+(w-nameW)/2, st.text,
+	))
+}
+
+// ── 操作审计 ──────────────────────────────────────────────
+
+// CicdAudit GET /api/cicd/audit —— CI/CD 操作审计链(新→旧)
+func CicdAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	WriteJSON(w, cicdEngine.ListAudit())
 }
 
 // ── 概览 ──────────────────────────────────────────────────
