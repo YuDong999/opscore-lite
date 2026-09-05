@@ -3060,7 +3060,12 @@ body {
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 .k8s-action-buttons {
-  display: flex; flex-wrap: wrap; gap: 0.375rem;
+  display: flex; flex-wrap: nowrap; gap: 0.375rem; overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+.k8s-action-buttons > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .k8s-action-panel[data-variant="toolbar"] {
   flex-direction: row; flex-wrap: wrap; gap: 0.75rem;
