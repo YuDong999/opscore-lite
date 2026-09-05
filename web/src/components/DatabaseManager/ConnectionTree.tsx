@@ -188,9 +188,13 @@ export default function ConnectionTree({
       // ── SQL 与结构 ──
       const sqlItems: ContextMenuItem[] = [
         { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
-        ...(isTable ? [{ label: '生成 SELECT 模板', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) }] : []),
+        ...(isTable ? [
+          { label: '生成 SELECT 模板', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) },
+          { label: '在新标签打开数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!) },
+          { label: '执行计划 (EXPLAIN)', icon: <ActionIcon kind="search" />, onClick: () => onOpenExplain(node.conn!, node.db!, node.table!) },
+        ] : []),
         { label: '查看结构 / DDL', icon: <ActionIcon kind="doc" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
-        ...(isTable ? [{ label: '执行计划 (EXPLAIN)', icon: <ActionIcon kind="search" />, onClick: () => onOpenExplain(node.conn!, node.db!, node.table!) }] : []),
+        { label: '表统计 / 状态', icon: <ActionIcon kind="gear" />, onClick: () => onOpenStatus(node.conn!, node.db!, node.table!) },
       ]
       // ── 复制与导出 ──
       const copyItems: ContextMenuItem[] = [
@@ -357,17 +361,17 @@ export default function ConnectionTree({
           onChange={e => setFilter(e.target.value)}
         />
         <div className="db-tree-header-actions">
-          <button className="db-tree-tool" onClick={() => { refreshAll(); onRefresh() }} title="刷新全部缓存">⟳</button>
-          <button className="db-tree-tool" onClick={onExportConns} title="导出连接配置 (JSON)">↑</button>
+          <button className="db-tree-tool" onClick={() => { refreshAll(); onRefresh() }} title="刷新全部缓存"><ActionIcon kind="refresh" /></button>
+          <button className="db-tree-tool" onClick={onExportConns} title="导出连接配置 (JSON)"><ActionIcon kind="upload" /></button>
           <label className="db-tree-tool" title="导入连接配置 (JSON)">
-            ↓
+            <ActionIcon kind="download" />
             <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
               const f = e.target.files?.[0]
               if (f) onImportConns(f)
               e.target.value = ''
             }} />
           </label>
-          <button className="db-tree-add" onClick={onNewConn} title="新建连接">+</button>
+          <button className="db-tree-add" onClick={onNewConn} title="新建连接"><ActionIcon kind="plus" /></button>
         </div>
       </div>
       <div className="db-tree-body">

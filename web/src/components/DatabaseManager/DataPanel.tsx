@@ -121,9 +121,10 @@ export default function DataPanel({
     <div className="db-data-panel">
       <div className="db-data-toolbar">
         <span className={`db-engine-badge db-engine-${conn.engine}`}>{isView ? 'VIEW' : 'TABLE'}</span>
-        <span className="db-data-title">{database}.{table}</span>
+        <span className="db-data-title"><span className="db-crumb-db">{database}</span>.{table}</span>
+        {total > 0 && <span className="db-toolbar-stat">{total} 行</span>}
         {busy && <span className="dim">加载中...</span>}
-        {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }}>{err}</span>}
+        {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }} title={err}>⚠ {err.slice(0, 40)}</span>}
         <span className="db-data-spacer" />
 
         {/* 视图切换 */}

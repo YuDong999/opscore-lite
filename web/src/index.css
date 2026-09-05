@@ -3153,3 +3153,10 @@ body {
 .db-query-cm .cm-placeholder { color: var(--text-dim); }
 .db-query-cm .cm-content { caret-color: var(--accent); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8125rem; }
 .db-query-cm .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--accent); color: #fff; }
+
+/* DataPanel 网格工具栏细节(make-interfaces-feel-better: tabular-nums/悬停态完备) */
+.db-toolbar-stat { font-size: 0.6875rem; color: var(--text-dim); font-variant-numeric: tabular-nums; padding: 0.1rem 0.45rem; background: var(--surface-tint); border-radius: 0.6rem; }
+.db-data-toolbar .btn-glass-soft { transition: background-color 120ms ease; }
+.db-view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.db-view-toggle button { border: none; border-radius: 0 !important; }
+.db-view-toggle button + button { border-left: 1px solid var(--border); }
