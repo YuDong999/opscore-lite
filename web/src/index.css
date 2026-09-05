@@ -3014,3 +3014,23 @@ body {
 /* 树 body 无内衬, 滚动只此一处 */
 .db-tree-body { padding: 0 !important; }
 .db-side { background: transparent !important; border: none !important; border-right: 1px solid var(--border) !important; border-radius: 0 !important; box-shadow: none !important; }
+
+/* ═══ V11: 月牙真因 = '▸'字符字体缺字形 fallback 渲染成弧形 → 改纯 CSS 三角形(零字体依赖) ═══ */
+.db-tree-node, .db-tree-card { height: 2rem !important; min-height: 2rem; }
+.db-tree-caret::before {
+  content: '' !important;
+  width: 0 !important; height: 0 !important;
+  border-left: 0.3rem solid var(--text-dim) !important;
+  border-top: 0.26rem solid transparent !important;
+  border-bottom: 0.26rem solid transparent !important;
+  transform: none !important;
+  transition: border-color .14s;
+  font-size: 0 !important;
+}
+.db-tree-caret.open::before {
+  border-left-color: var(--accent) !important;
+  transform: rotate(90deg) !important;
+  -webkit-transform: rotate(90deg) !important;
+}
+/* 空分组(无子级)不显示箭头 */
+.db-tree-caret.leaf::before { border-left-color: transparent !important; }
