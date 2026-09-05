@@ -7,7 +7,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -217,7 +220,69 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 	}
 	rm := resolveRemoteHost(*h)
 	script := cicdRemoteScript(workspace, command, env)
-	line := ArgsToLine([]string{"sh", "-c", script})
+	// 流式回传(参照 Jenkins progressiveText): 输出重定向到远端临时文件, 主会话只等退出码;
+	// 轮询会话按字节偏移增量 tail 回传 —— 长任务期间页面不再是黑盒。
+	logFile := "/tmp/.opscore-cicd-" + stepLogTag(workspace, command) + ".log"
+	line := ArgsToLine([]string{"sh", "-c", "{ " + script + "; } > " + Shq(logFile) + " 2>&1"})
+
+	var mu sync.Mutex
+	off := 0       // 已回传字节数
+	rest := ""     // 未收尾的行尾段(避免切断掩码边界)
+	emit := func(chunk string) {
+		mu.Lock()
+		defer mu.Unlock()
+		rest += chunk
+		for {
+			idx := strings.Index(rest, "\n")
+			if idx < 0 {
+				break
+			}
+			if onLine != nil {
+				onLine(strings.TrimRight(rest[:idx], "\r"))
+			}
+			rest = rest[idx+1:]
+		}
+		off += len(chunk)
+	}
+	drain := func() { // 末次清底: 连尾部未收尾行一起回传
+		mu.Lock()
+		o := off
+		mu.Unlock()
+		out, _, err := remotePool.ExecLine(rm, "tail -c +"+strconv.Itoa(o+1)+" "+Shq(logFile)+" 2>/dev/null; rm -f "+Shq(logFile))
+		if err == nil && out != "" {
+			emit(out)
+		}
+		mu.Lock()
+		r := rest
+		rest = ""
+		mu.Unlock()
+		if onLine != nil && r != "" {
+			onLine(strings.TrimRight(r, "\r"))
+		}
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				o := off
+				mu.Unlock()
+				out, _, err := remotePool.ExecLine(rm, "tail -c +"+strconv.Itoa(o+1)+" "+Shq(logFile)+" 2>/dev/null")
+				if err == nil && out != "" {
+					emit(out)
+				}
+			}
+		}
+	}()
+
 	type execResult struct {
 		out string
 		rc  int
@@ -232,24 +297,26 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 	select {
 	case res = <-ch:
 	case <-ctx.Done():
-		// SSH 会话无法安全终止, 放弃等待; 远端命令自行结束后会话释放
+		// SSH 会话无法安全终止, 放弃等待; 停轮询并尽力清底(临时文件留给远端自生自灭)
+		close(stop)
+		<-done
 		return -1, ctx.Err()
 	}
-	if res.out != "" {
-		for _, l := range strings.Split(strings.TrimRight(res.out, "\n"), "\n") {
-			onLine(l)
-		}
-	}
-	if res.err != nil || (res.rc != 0 && res.out == "") {
-		if res.err != nil {
-			onLine("[error] " + res.err.Error())
-		}
+	close(stop)
+	<-done
+	drain()
+	if res.err != nil {
+		onLine("[error] " + res.err.Error())
 		onLine("[error] 下发命令(掩码后): " + line) // 传输/语法故障时回显实发命令, 便于定位
-		if res.err != nil {
-			return -1, res.err
-		}
+		return -1, res.err
 	}
 	return res.rc, nil
+}
+
+// stepLogTag 远程步骤临时日志文件名(同主机并发步骤互不覆盖; 内容哈希定路径, 轮询会话无需握手)
+func stepLogTag(workspace, command string) string {
+	sum := sha1.Sum([]byte(workspace + "\x00" + command))
+	return hex.EncodeToString(sum[:6])
 }
 
 // cicdRemoteScript 拼装远程脚本: env export(转义) + cd 工作目录 + 命令本体
