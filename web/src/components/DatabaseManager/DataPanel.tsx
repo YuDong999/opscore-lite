@@ -223,6 +223,8 @@ export default function DataPanel({
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
+            onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
+            onClearFilters={() => setFilters([])}
           />
           <div className="db-data-pager">
             <span className="dim">共 {total} 行</span>

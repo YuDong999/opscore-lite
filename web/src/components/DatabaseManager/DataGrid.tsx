@@ -23,12 +23,14 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
+export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onFilter, onClearFilters }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
   sql?: string
   columnTypes?: (string | undefined)[]  // 列类型(数据浏览模式展示在列头第二行)
+  onFilter?: (col: string, op: string, value: string) => void
+  onClearFilters?: () => void
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
@@ -115,38 +117,55 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes }: {
     }).catch(() => {})
   }, [])
 
+  // dbx 式: 筛选子菜单真实现(走 DataPanel filters → 后端 where)
   const buildCtxMenu = useCallback((row: number, col: number, x: number, y: number): ContextMenuItem[] => {
     if (!result || !result.columns) return []
     const colName = result.columns[col]
     const cellValue = result.rows[row]?.[col]
     const rowData = result.rows[row] || []
-    const items: ContextMenuItem[] = [
+    const fv = String(cellValue ?? '').slice(0, 40)
+    const filterItems: ContextMenuItem[] = onFilter ? [
+      { label: `筛选 = '${fv}'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, '=', String(cellValue ?? '')) },
+      { label: `筛选 != '${fv}'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, '!=', String(cellValue ?? '')) },
+      { label: `筛选 LIKE '%${fv}%'`, icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, 'LIKE', String(cellValue ?? '')) },
+      { divider: 'light' },
+      { label: '筛选 IS NULL', icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, 'IS NULL', '') },
+      { label: '筛选 IS NOT NULL', icon: <ActionIcon kind="search" />, onClick: () => onFilter(colName, 'IS NOT NULL', '') },
+      { divider: 'light' },
+      { label: '清除全部筛选', disabled: !onClearFilters, icon: <ActionIcon kind="refresh" />, onClick: () => onClearFilters?.() },
+    ] : []
+    return [
+      // ── 复制 ──
       { label: '复制值', icon: <ActionIcon kind="copy" />, onClick: () => copyCell(cellValue) },
       { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
       { label: '复制列名', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(colName) },
+      { divider: 'heavy' },
+      // ── 详情 ──
+      { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ v: cellValue, col: colName }) },
+      { divider: 'heavy' },
+      // ── 筛选 ──
+      ...filterItems,
+      { divider: 'heavy' },
+      // ── 排序 ──
+      { label: `按 ${colName} 升序`, icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(true) } },
+      { label: `按 ${colName} 降序`, icon: <ActionIcon kind="refresh" />, onClick: () => { setSortCol(col); setSortAsc(false) } },
+      ...(sortCol !== null ? [{ label: '清除排序', icon: <ActionIcon kind="close" />, onClick: () => setSortCol(null) }] : []),
     ]
-    return items
-  }, [result, copyCell])
+  }, [result, copyCell, onFilter, onClearFilters, sortCol])
 
   const buildRowCtxMenu = useCallback((row: number, x: number, y: number): ContextMenuItem[] => {
     if (!result || !result.columns) return []
     const rowData = result.rows[row] || []
+    const rowObj: Record<string, any> = {}
+    result.columns.forEach((c, i) => { rowObj[c] = rowData[i] })
     const items: ContextMenuItem[] = [
-      { label: '复制整行', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { label: '复制整行 (TAB)', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(rowData.map(v => renderCell(v)).join('\t')) },
+      { label: '复制整行 (JSON)', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(JSON.stringify(rowObj, null, 2)) },
       { divider: true },
     ]
-    result.columns.forEach((col, j) => {
-      const val = rowData[j]
-      items.push({
-        label: `筛选 ${col} = ${renderCell(val).slice(0, 30)}`,
-        icon: <ActionIcon kind="search" />,
-        onClick: () => { /* 筛选逻辑 */ }
-      })
-    })
-    items.push({ divider: true })
-    items.push({ label: '导出当前页', icon: <ActionIcon kind="upload" />, onClick: () => { /* 触发 export */ } })
+    items.push({ label: '导出当前页 (CSV)', icon: <ActionIcon kind="upload" />, disabled: !connId || !sql, onClick: () => { if (connId && sql) exportQuery(connId, sql, 'csv').catch(() => {}) } })
     return items
-  }, [result])
+  }, [result, connId, sql])
 
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [exportErr, setExportErr] = useState('')
