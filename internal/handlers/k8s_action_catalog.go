@@ -185,13 +185,21 @@ func K8sNodeJoinCommandHandler(w http.ResponseWriter, r *http.Request) {
 			ttl = n
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	role := q.Get("role")
+	if role == "" {
+		role = "worker"
+	}
+	if role != "worker" && role != "control-plane" {
+		WriteJSON(w, map[string]any{"ok": false, "error": "role 仅支持 worker / control-plane"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
 	defer cancel()
-	cmd, err := k8sMgr.NodeJoinCommand(ctx, cluster, ttl)
+	cmd, err := k8sMgr.NodeJoinCommand(ctx, cluster, ttl, role)
 	if err != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	log.Printf("[K8S-AUDIT] action=node-join-command cluster=%s ttl=%dh done", cluster, ttl)
-	WriteJSON(w, map[string]any{"ok": true, "command": cmd, "ttlHours": ttl})
+	log.Printf("[K8S-AUDIT] action=node-join-command cluster=%s role=%s ttl=%dh done", cluster, role, ttl)
+	WriteJSON(w, map[string]any{"ok": true, "command": cmd, "ttlHours": ttl, "role": role})
 }

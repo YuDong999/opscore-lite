@@ -308,8 +308,10 @@ func (m *Manager) NodeDelete(ctx context.Context, clusterID, name string, drainO
 
 // NodeJoinCommand 生成一条可交给目标机执行的 kubeadm join 命令
 // (在 control-plane 上执行 kubeadm token create --print-join-command)。
+// role: "worker" | "control-plane"。control-plane 需要额外证书密钥
+// (kubeadm init phase upload-certs --upload-certs 生成/更新 kubeadm-certs secret)。
 // 依赖: 平台运行在 control-plane 节点上, 且 kubeadm 在 PATH 中。
-func (m *Manager) NodeJoinCommand(ctx context.Context, clusterID string, ttlHours int64) (string, error) {
+func (m *Manager) NodeJoinCommand(ctx context.Context, clusterID string, ttlHours int64, role string) (string, error) {
 	if ttlHours <= 0 {
 		ttlHours = 1
 	}
@@ -319,7 +321,58 @@ func (m *Manager) NodeJoinCommand(ctx context.Context, clusterID string, ttlHour
 	ttl := fmt.Sprintf("%dh", ttlHours)
 	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(pctx, "kubeadm", "token", "create", "--print-join-command", "--ttl", ttl)
+
+	// control-plane 角色先准备证书密钥(会更新 kube-system/kubeadm-certs secret)
+	var certKey string
+	if role != "" && role != "worker" {
+		upCmd := exec.CommandContext(pctx, "kubeadm", "init", "phase", "upload-certs", "--upload-certs")
+		upOut, upErr := upCmd.Output()
+		if upErr != nil {
+			if ee, ok := upErr.(*exec.ExitError); ok {
+				return "", fmt.Errorf("kubeadm upload-certs 失败: %s", strings.TrimSpace(string(ee.Stderr)))
+			}
+			return "", fmt.Errorf("执行 kubeadm upload-certs 失败: %w", upErr)
+		}
+		lines := strings.Split(string(upOut), "\n")
+		foundMargin := false
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			// 单行形式: "[upload-certs] Using certificate key: 01854a..."
+			if !foundMargin && strings.Contains(line, "Using certificate key:") {
+				foundMargin = true
+				for _, f := range fields {
+					if len(f) == 64 && isHex(f) {
+						certKey = f
+						break
+					}
+				}
+				continue
+			}
+			// 多行形式: key 在 "Using certificate key:" 的下一行
+			if foundMargin && certKey == "" && len(fields) > 0 {
+				k := fields[len(fields)-1]
+				if len(k) == 64 && isHex(k) {
+					certKey = k
+				}
+			}
+			if certKey != "" {
+				break
+			}
+		}
+		if certKey == "" {
+			return "", fmt.Errorf("解析 upload-certs 输出失败: %s", strings.TrimSpace(string(upOut)))
+		}
+	}
+
+	var joinCmd []string
+	if role != "" && role != "worker" {
+		// control-plane 加入: 标准 join 命令本身不支持 --control-plane flag,
+		// 只能先取 worker 基础命令再手动拼装 --control-plane --certificate-key。
+		joinCmd = []string{"token", "create", "--print-join-command", "--ttl", ttl}
+	} else {
+		joinCmd = []string{"token", "create", "--print-join-command", "--ttl", ttl}
+	}
+	cmd := exec.CommandContext(pctx, "kubeadm", joinCmd...)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -330,6 +383,16 @@ func (m *Manager) NodeJoinCommand(ctx context.Context, clusterID string, ttlHour
 	s := strings.TrimSpace(string(out))
 	if s == "" {
 		return "", fmt.Errorf("kubeadm 未返回 join 命令")
+	}
+	if role != "" && role != "worker" {
+		// 转成控制面加入: 在 "kubeadm join <apiserver>" 后插入
+		// --control-plane --certificate-key <key> (官方 kubeadm join 支持该组合)
+		marker := "--token"
+		if !strings.Contains(s, marker) {
+			return "", fmt.Errorf("无法在 join 命令中找到 --token 位置")
+		}
+		idx := strings.Index(s, marker)
+		s = s[:idx] + "--control-plane --certificate-key " + certKey + " " + s[idx:]
 	}
 	return s, nil
 }
@@ -371,6 +434,16 @@ func hasEmptyDir(p *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// isHex 判断 s 是否全为 0-9a-f 字符。
+func isHex(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // ===== PVC 扩容 =====

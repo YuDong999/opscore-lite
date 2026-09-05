@@ -675,7 +675,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                         <div className="k8s-row-actions" style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                             title="基于资源类型动态展示可用操作 (kubectl 等价)"
-                            onClick={(e) => { e.stopPropagation(); setActionPanel({ res, name: r.name, ns: r.namespace || ns }) }}>操作…</button>
+                            onClick={(e) => { e.stopPropagation(); setActionPanel({ res, name: r.name, ns: r.namespace || ns }) }}>操作</button>
                           {res === 'pods' && (
                             <>
                             <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
@@ -1855,13 +1855,14 @@ function NodePanel({ cluster, name }: { cluster: string; name: string }) {
 // ── 加入节点 (kubeadm join 命令) ──
 function NodeJoinModal({ cluster, onClose, onMsg }: { cluster: string; onClose: () => void; onMsg: (m: string) => void }) {
   const [ttl, setTtl] = useState(1)
+  const [role, setRole] = useState<'worker' | 'control-plane'>('worker')
   const [busy, setBusy] = useState(false)
   const [cmd, setCmd] = useState('')
   const [copied, setCopied] = useState(false)
   const load = () => {
     setBusy(true)
     setCmd('')
-    getJSON<{ ok: boolean; command: string; error?: string }>(`/api/plugins/containers/k8s/node-join-command?cluster=${cluster}&ttl=${ttl}`)
+    getJSON<{ ok: boolean; command: string; error?: string }>(`/api/plugins/containers/k8s/node-join-command?cluster=${cluster}&ttl=${ttl}&role=${role}`)
       .then((d) => { if (d.ok) setCmd(d.command); else onMsg('✗ ' + (d.error || '生成失败')) })
       .catch((e) => onMsg('✗ ' + String(e)))
       .finally(() => setBusy(false))
@@ -1881,13 +1882,29 @@ function NodeJoinModal({ cluster, onClose, onMsg }: { cluster: string; onClose: 
           在 control-plane 上生成 join 命令。前往目标新节点执行该命令即可入群。
           注意: 新节点需已安装 kubeadm/kubelet/容器运行时, 且控制面端口可达。
         </p>
+        <div className="toolbar-strip" style={{ margin: '0.75rem 0', flexWrap: 'wrap', gap: '0.5rem 0.75rem' }}>
+          <span className="pill pill-sub" style={{ marginRight: 4 }}>节点角色</span>
+          <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+            <input type="radio" name="join-role" checked={role === 'worker'}
+              onChange={() => { setRole('worker'); setCmd('') }} /> Worker 工作节点
+          </label>
+          <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+            <input type="radio" name="join-role" checked={role === 'control-plane'}
+              onChange={() => { setRole('control-plane'); setCmd('') }} /> Control-plane 控制面(Master)
+          </label>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="dim">Token 有效期(小时)</span>
+            <input className="input" type="number" style={{ width: 90 }} min={1} max={720} value={ttl}
+              onChange={(e) => setTtl(Math.max(1, Number(e.target.value) || 1))} />
+          </span>
+        </div>
         <div className="toolbar-strip" style={{ margin: '0.75rem 0' }}>
-          <span className="dim">Token 有效期(小时)</span>
-          <input className="input" type="number" style={{ width: 90 }} min={1} max={720} value={ttl}
-            onChange={(e) => setTtl(Math.max(1, Number(e.target.value) || 1))} />
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy} onClick={load}>
             {busy ? '生成中…' : (cmd ? '重新生成' : '生成 join 命令')}
           </button>
+          {role === 'control-plane' && (
+            <span className="dim" style={{ fontSize: '0.75rem' }}>会更新 kube-system/kubeadm-certs Secret(含证书密钥), 用于控制面节点证书分发</span>
+          )}
         </div>
         {cmd && (
           <pre className="code-block" style={{ fontSize: '0.75rem', overflow: 'auto', wordBreak: 'break-all', userSelect: 'text' }}>{cmd}</pre>
