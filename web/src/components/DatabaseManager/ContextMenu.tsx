@@ -16,7 +16,7 @@ export interface ContextMenuItem {
 export default function ContextMenu({
   x,
   y,
-  items,
+  items: rawItems,
   onClose,
 }: {
   x: number
@@ -25,6 +25,8 @@ export default function ContextMenu({
   onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  // 组件自防御: 调用方可能传 undefined(并发渲染/状态未就绪), 保证不崩
+  const items = rawItems || []
   // 标准定位: 光标点=菜单左上角; 渲染后实测尺寸, 视口边缘翻转(下→上, 右→左), 保证完整可见
   const [pos, setPos] = useState({ x, y })
 
