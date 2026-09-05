@@ -4,6 +4,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { postJSON } from '../api/client'
+import { useToast } from '../components/Toast'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -434,10 +435,11 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     <div>
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-3 items-start">
+      {/* 主从两栏撑满视口剩余高度, 各自框内滑动(滚动条悬停才显示) */}
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-3 items-start lg:items-stretch lg:h-[calc(100vh-14rem)]">
         {/* 左: 流水线清单(主) */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="flex flex-col overflow-hidden lg:h-full">
+          <CardHeader className="pb-2 shrink-0">
             <div className="flex items-center justify-between gap-1">
               <CardTitle className="text-sm tabular-nums">流水线 ({pipes.length})</CardTitle>
               <div className="flex gap-1">
@@ -465,7 +467,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="px-2 pb-2 pt-0">
+          <CardContent className="px-2 pb-2 pt-0 flex-1 min-h-0 hover-scroll">
             {pipes.length === 0 && (
               <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">暂无流水线, 点「新建」开始编排</div>
             )}
@@ -565,8 +567,8 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
   }, [live, p.lastRun?.id])
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card className="flex flex-col overflow-hidden lg:h-full min-h-0">
+      <CardHeader className="pb-3 shrink-0">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 flex-wrap">
@@ -591,7 +593,7 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1 min-h-0 overflow-y-auto hover-scroll">
         <Tabs defaultValue="runs">
           <TabsList className="mb-3">
             <TabsTrigger value="runs">运行记录</TabsTrigger>
@@ -1722,23 +1724,29 @@ function ReposTab() {
   const [editingRepo, setEditingRepo] = useState<Repo | null>(null)
   const [editingReg, setEditingReg] = useState<Registry | null>(null)
   const [err, setErr] = useState('')
-  const [testMsg, setTestMsg] = useState('')
   const [busy, setBusy] = useState('')
   const { confirm, confirmEl } = useConfirm()
+  const toast = useToast()
 
   const reloadAll = () => { repos.reload(); registries.reload(); creds.reload() }
 
+  // 测试连接: 结果用顶部居中 Toast 弹出(不再原地铺原始 ls-remote 文本)
   const testRepo = (r: Repo) => {
-    setTestMsg('测试中...')
+    toast.info('正在测试连接...')
     postJSON<{ ok: boolean; output?: string; error?: string }>(API.repoTest, { id: r.id })
-      .then(d => setTestMsg(d.ok ? `✓ 连接成功\n${d.output || ''}` : `✗ ${d.error}\n${d.output || ''}`))
-      .catch(e => setTestMsg(`✗ ${e.message}`))
+      .then(d => {
+        if (!d.ok) { toast.error(`连接失败: ${(d.error || '未知错误').slice(0, 100)}`); return }
+        const branch = (d.output || '').split('\n')
+          .map(l => l.match(/refs\/heads\/(\S+)/)).find(m => m)?.[1]
+        toast.success(`连接成功${branch ? ` · 分支 ${branch}` : ''}`)
+      })
+      .catch(e => toast.error('连接失败: ' + e.message))
   }
   const testReg = (r: Registry) => {
-    setTestMsg('测试中...')
+    toast.info('正在测试连接...')
     postJSON<{ ok: boolean; output?: string; error?: string }>(API.registryTest, { id: r.id })
-      .then(d => setTestMsg(d.ok ? `✓ ${d.output || '服务存活'}` : `✗ ${d.error}`))
-      .catch(e => setTestMsg(`✗ ${e.message}`))
+      .then(d => d.ok ? toast.success(d.output || '服务存活') : toast.error(`连接失败: ${d.error || '未知错误'}`))
+      .catch(e => toast.error('连接失败: ' + e.message))
   }
   const removeRepo = async (r: Repo) => {
     if (!(await confirm(`删除仓库「${r.name}」？`, { danger: true, okText: '删除' }))) return
@@ -1757,12 +1765,6 @@ function ReposTab() {
     <div>
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      {testMsg && (
-        <div className={`rounded-lg border px-3 py-2 mb-3 text-xs font-mono whitespace-pre-wrap ${testMsg.startsWith('✓') ? 'border-ok/40 text-ok' : 'border-border'}`}>
-          {testMsg}
-          <Button variant="ghost" size="sm" className="ml-2 h-6" onClick={() => setTestMsg('')}>关闭</Button>
-        </div>
-      )}
 
       <Card className="mb-4">
         <CardHeader className="pb-3">

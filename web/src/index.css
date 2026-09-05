@@ -2948,3 +2948,11 @@ body {
   word-break: break-all;
   background: rgba(0,0,0,0.25);
 }
+
+/* 悬停才显示滚动条: 平时完全隐藏, 鼠标移入浮现细滚动条 */
+.hover-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.hover-scroll::-webkit-scrollbar { width: 8px; }
+.hover-scroll::-webkit-scrollbar-track { background: transparent; }
+.hover-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.hover-scroll:hover { scrollbar-color: var(--border) transparent; }
+.hover-scroll:hover::-webkit-scrollbar-thumb { background: var(--border); }
