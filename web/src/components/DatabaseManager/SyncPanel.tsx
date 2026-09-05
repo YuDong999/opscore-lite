@@ -52,7 +52,7 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   return data
 }
 
-export default function SyncPanel({ conns, activeConnId }: { conns: ConnectionInfo[]; activeConnId?: string }) {
+export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: ConnectionInfo[]; activeConnId?: string; presetDb?: string }) {
   const toast = useToast()
   const [sourceId, setSourceId] = useState('')
   const [sourceDb, setSourceDb] = useState('')
@@ -73,6 +73,9 @@ export default function SyncPanel({ conns, activeConnId }: { conns: ConnectionIn
   useEffect(() => {
     if (!sourceId && activeConnId) setSourceId(activeConnId)
   }, [activeConnId])
+  useEffect(() => {
+    if (presetDb) setSourceDb(presetDb)
+  }, [presetDb])
 
   // 源/目标库列表
   useEffect(() => {

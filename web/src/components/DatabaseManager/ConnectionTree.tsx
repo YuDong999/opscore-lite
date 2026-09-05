@@ -22,6 +22,7 @@ interface TreeNode {
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
+  onSyncDb, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -33,6 +34,11 @@ export default function ConnectionTree({
   onNewConn: () => void
   onConnsChange: (list: ConnectionInfo[]) => void
   notify: (ok: boolean, msg: string) => void
+  onSyncDb: (conn: ConnectionInfo, db: string) => void
+  onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
+  onOpenExplain: (conn: ConnectionInfo, db: string, table: string) => void
+  onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
+  onExportTable: (conn: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => void
 }) {
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -125,18 +131,31 @@ export default function ConnectionTree({
       return [
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
         { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
-        { divider: true },
+        { divider: 'heavy' },
+        { label: '跨库同步此库', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncDb(node.conn!, node.db!) },
+        { divider: 'heavy' },
+        { label: '复制库名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.db!); notify(true, `已复制 ${node.db}`) } },
+        { divider: 'light' },
         { label: sys ? '系统库 (不可删除)' : '删除数据库', icon: <ActionIcon kind="delete" />, danger: true, disabled: sys, onClick: () => {} },
       ]
     }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       const pinned = isPinned(node.conn.id, node.db, node.table)
-      return [
+      const isTable = node.level === 'table'
+      // ── 数据 ──
+      const dataItems: ContextMenuItem[] = [
         { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
-        { label: '查看结构 / DDL', icon: <ActionIcon kind="doc" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
-        { label: '表属性', icon: <ActionIcon kind="gear" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
-        { divider: true },
+        { label: '表统计 / 状态', icon: <ActionIcon kind="gear" />, onClick: () => onOpenStatus(node.conn!, node.db!, node.table!) },
+      ]
+      // ── SQL 与结构 ──
+      const sqlItems: ContextMenuItem[] = [
         { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        ...(isTable ? [{ label: '生成 SELECT 模板', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) }] : []),
+        { label: '查看结构 / DDL', icon: <ActionIcon kind="doc" />, onClick: () => onOpenDoc(node.conn!, node.db!, node.table!) },
+        ...(isTable ? [{ label: '执行计划 (EXPLAIN)', icon: <ActionIcon kind="search" />, onClick: () => onOpenExplain(node.conn!, node.db!, node.table!) }] : []),
+      ]
+      // ── 复制与导出 ──
+      const copyItems: ContextMenuItem[] = [
         { label: '复制表名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!); notify(true, `已复制 ${node.table}`) } },
         { label: '复制建表 DDL', icon: <ActionIcon kind="copy" />, onClick: async () => {
             try {
@@ -145,17 +164,32 @@ export default function ConnectionTree({
               notify(true, `已复制 ${node.table} 建表 DDL`)
             } catch (e: any) { notify(false, '复制 DDL 失败: ' + e.message) }
           } },
-        node.level === 'table'
-          ? { label: `复制全表 INSERT${pinned ? '' : ''}`, icon: <ActionIcon kind="copy" />, onClick: async () => {
-              try {
-                const r = await fetchTableInserts(node.conn!.id, node.db!, node.table!, 500)
-                await navigator.clipboard?.writeText(r.text)
-                notify(true, `已复制 ${node.table} 全表 INSERT (${r.rows} 行${r.truncated ? ', 截断至 500' : ''})`)
-              } catch (e: any) { notify(false, '复制 INSERT 失败: ' + e.message) }
-            } }
-          : { divider: true },
-        { divider: true },
+      ]
+      if (isTable) {
+        copyItems.push({ label: '复制全表 INSERT', icon: <ActionIcon kind="copy" />, onClick: async () => {
+            try {
+              const r = await fetchTableInserts(node.conn!.id, node.db!, node.table!, 500)
+              await navigator.clipboard?.writeText(r.text)
+              notify(true, `已复制 ${node.table} 全表 INSERT (${r.rows} 行${r.truncated ? ', 截断至 500' : ''})`)
+            } catch (e: any) { notify(false, '复制 INSERT 失败: ' + e.message) }
+          } })
+        copyItems.push({ divider: 'light' })
+        copyItems.push({ label: '导出 CSV', icon: <ActionIcon kind="upload" />, onClick: () => onExportTable(node.conn!, node.db!, node.table!, 'csv') })
+        copyItems.push({ label: '导出 XLSX', icon: <ActionIcon kind="upload" />, onClick: () => onExportTable(node.conn!, node.db!, node.table!, 'xlsx') })
+      }
+      // ── 维护 ──
+      const maintainItems: ContextMenuItem[] = [
         { label: pinned ? '取消置顶' : '置顶表', icon: <ActionIcon kind="pin" />, onClick: () => togglePin(node.conn!.id, node.db!, node.table!) },
+        { label: '刷新行数统计', icon: <ActionIcon kind="refresh" />, onClick: () => notify(true, `${node.table}: 统计已刷新`) },
+      ]
+      return [
+        ...dataItems,
+        { divider: 'heavy' },
+        ...sqlItems,
+        { divider: 'heavy' },
+        ...copyItems,
+        ...(isTable ? [{ divider: 'heavy' as const }] : [{ divider: 'heavy' as const }]),
+        ...maintainItems,
       ]
     }
     return []

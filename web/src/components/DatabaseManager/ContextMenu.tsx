@@ -6,7 +6,8 @@ import { createPortal } from 'react-dom'
 export interface ContextMenuItem {
   label?: string
   icon?: React.ReactNode
-  divider?: boolean
+  /** 'light' = 同类功能间细分隔线; 'heavy' = 不同类别间粗分隔线(参考 dbx) */
+  divider?: boolean | 'light' | 'heavy'
   danger?: boolean
   disabled?: boolean
   onClick?: () => void
@@ -52,7 +53,7 @@ export default function ContextMenu({
     <div className="db-ctx-menu" ref={ref} style={style}>
       {items.map((it, i) =>
         it.divider ? (
-          <div key={i} className="db-ctx-menu-divider" />
+          <div key={i} className={`db-ctx-menu-divider ${it.divider === 'heavy' ? 'db-ctx-menu-divider-heavy' : ''}`} />
         ) : (
           <button
             key={i}

@@ -3,11 +3,11 @@
 //   标签类型: data(表数据浏览) / query(查询) / doc(表结构) / sync(跨库同步) / audit(审计)
 // 右上角不再放重复的「新建连接」(入口在连接面板与概览页)。
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useToast } from '../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
-  listConnections, getUnlockState, lockWrite, unlockWrite,
+  listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
 import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
@@ -92,6 +92,11 @@ export default function DatabaseManagerModule() {
   const tabLabel = (c: ConnectionInfo, db: string, table?: string) =>
     table ? `${table}@${db}` : db ? `查询@${db}` : c.name
 
+  // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填)
+  const querySeedRef = useRef<string>('')
+  const explainSqlRef = useRef<string>('')
+  const syncSeedRef = useRef<{ connId: string; db: string } | null>(null)
+
   // ── 树交互 ──
   const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
     setConn(c)
@@ -104,6 +109,30 @@ export default function DatabaseManagerModule() {
   const handleOpenDoc = (c: ConnectionInfo, db: string, table: string) => {
     setConn(c)
     openTab({ key: `doc:${c.id}.${db}.${table}`, kind: 'doc', connId: c.id, db, table, label: `${table} 结构` })
+  }
+  const handleOpenStatus = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    openTab({ key: `status:${c.id}.${db}.${table}`, kind: 'status', connId: c.id, db, table, label: `${table} 状态` })
+  }
+  const handleOpenExplain = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    explainSqlRef.current = `SELECT * FROM ${db}.${table} LIMIT 100`
+    openTab({ key: `explain:${c.id}.${db}.${table}`, kind: 'explain', connId: c.id, db, table, label: `${table} 执行计划` })
+  }
+  const handleNewQueryWithSQL = (c: ConnectionInfo, db: string, sql: string) => {
+    setConn(c)
+    querySeedRef.current = sql
+    openTab({ key: `query:${c.id}.${db}.${Date.now()}`, kind: 'query', connId: c.id, db, label: `${db} 查询` })
+  }
+  const handleExportTable = (c: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => {
+    exportQuery(c.id, `SELECT * FROM ${db}.${table}`, format)
+      .then(({ fileName }) => toast.success(`已导出 ${fileName}`))
+      .catch(e => toast.error('导出失败: ' + e.message))
+  }
+  const handleSyncDb = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    syncSeedRef.current = { connId: c.id, db }
+    openTab({ key: `sync:${c.id}`, kind: 'sync', connId: c.id, label: '跨库同步' })
   }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
@@ -218,6 +247,11 @@ export default function DatabaseManagerModule() {
             onNewConn={handleNewConn}
             onConnsChange={setConns}
             notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
+            onSyncDb={handleSyncDb}
+            onOpenStatus={handleOpenStatus}
+            onOpenExplain={handleOpenExplain}
+            onNewQueryWithSQL={handleNewQueryWithSQL}
+            onExportTable={handleExportTable}
           />
           <ConnectionPanel
             selected={null}
@@ -259,12 +293,15 @@ export default function DatabaseManagerModule() {
                 switch (t.kind) {
                   case 'data':
                     return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView} />
-                  case 'query':
+                  case 'query': {
+                    const seed = querySeedRef.current
+                    const isSeedTab = !!seed && t.key.endsWith(String(seed.length)) === false || !!seed
                     return (
                       <div className="db-query-section" key={t.key}>
                         <QueryEditor
                           connId={c!.id}
                           engine={c!.engine}
+                          defaultSQL={isSeedTab ? seed : undefined}
                           onResult={handleResult}
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={setLastSQL}
@@ -272,10 +309,13 @@ export default function DatabaseManagerModule() {
                         {result && <DataGrid result={result} connId={c!.id} sql={lastSQL} />}
                       </div>
                     )
+                  }
                   case 'doc':
                     return <DocPanel key={t.key} connId={c!.id} database={t.db!} table={t.table!} />
-                  case 'sync':
-                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} /></div>
+                  case 'sync': {
+                    const seed = syncSeedRef.current && syncSeedRef.current.connId === t.connId ? syncSeedRef.current : null
+                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={seed?.db} /></div>
+                  }
                   case 'audit':
                     return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
                   case 'drivers':
@@ -285,7 +325,7 @@ export default function DatabaseManagerModule() {
                   case 'status':
                     return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
                   case 'explain':
-                    return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={lastSQL} /></div>
+                    return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={explainSqlRef.current || lastSQL} /></div>
                   case 'queries':
                     return <div className="db-queries-section" key={t.key}><SavedQueriesPanel conns={conns} activeConn={activeConn} /></div>
                   default:

@@ -2945,3 +2945,40 @@ body {
   word-break: break-all;
   background: rgba(0,0,0,0.25);
 }
+
+/* V6: 通用右键菜单(opencode 类名)样式补齐 —— 之前只有 DOM 无样式导致不可见 */
+.db-ctx-menu { position: fixed; z-index: 1200; background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 0.3rem; display: flex; flex-direction: column; min-width: 11rem; }
+.db-ctx-menu-item { display: flex; align-items: center; gap: 0.45rem; background: transparent; border: none; text-align: left; padding: 0.38rem 0.65rem; border-radius: 0.35rem; font-size: 0.78rem; cursor: pointer; color: var(--text); white-space: nowrap; }
+.db-ctx-menu-item:hover { background: var(--row-hover); }
+.db-ctx-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.db-ctx-menu-danger { color: var(--danger); }
+.db-ctx-menu-danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.db-ctx-menu-icon { display: inline-flex; width: 0.9rem; justify-content: center; color: var(--text-dim); }
+.db-ctx-menu-divider { height: 1px; background: var(--border); margin: 0.25rem 0.4rem; }
+
+/* ═══ V7: 树风格对齐 GoNavi/dbx — 干净列表(无边框胶囊), 统一行高 ═══ */
+/* 月牙根因: 每行 border+圆角胶囊的左边缘连成弧线链; 树行应无边框透明, 仅 hover 高亮 */
+.db-tree-node { border: none !important; background: transparent !important; border-radius: 0.35rem !important; height: 1.9rem; padding: 0 0.45rem !important; box-shadow: none !important; transform: none !important; transition: background-color .1s; }
+.db-tree-node:hover { background: var(--row-hover) !important; border-color: transparent !important; }
+.db-tree-node.selected { background: var(--surface-tint) !important; box-shadow: inset 2px 0 0 var(--accent) !important; }
+.lv-conn.db-tree-node { background: transparent !important; }
+.lv-conn.db-tree-node:hover { background: var(--row-hover) !important; }
+/* caret: 无边框小箭头 */
+.db-tree-caret { width: 0.85rem !important; height: 0.85rem !important; border: none !important; background: transparent !important; border-radius: 0 !important; display: inline-flex !important; align-items: center; justify-content: center; }
+.db-tree-caret::before { content: '▸' !important; font-size: 0.65rem !important; color: var(--text-dim) !important; }
+.db-tree-caret.open::before { transform: rotate(90deg) !important; color: var(--accent) !important; }
+.db-tree-caret.leaf { visibility: hidden !important; }
+/* 行内元素垂直居中统一 */
+.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon { flex-shrink: 0; }
+.db-tree-label { line-height: 1.4 !important; }
+/* 表卡片(分组展开)与行高一致 */
+.db-tree-cards { display: flex; flex-direction: column; gap: 0.05rem; }
+.db-tree-card { height: 1.9rem; border: none !important; background: transparent !important; border-radius: 0.35rem !important; box-shadow: none !important; display: flex; align-items: center; gap: 0.32rem; padding: 0 0.45rem !important; cursor: pointer; }
+.db-tree-card:hover { background: var(--row-hover) !important; }
+.db-tree-card-label { font-size: 0.78rem; }
+/* 行间无重叠弧线 */
+.db-tree-body { gap: 0 !important; }
+
+/* V8: 右键菜单两级分隔线 — 类别重线 / 同类浅线(参考 dbx) */
+.db-ctx-menu-divider { height: 1px; background: var(--border); margin: 0.25rem 0.4rem; }
+.db-ctx-menu-divider-heavy { height: 1px; margin: 0.35rem 0.15rem; background: color-mix(in srgb, var(--text-dim) 45%, transparent); }
