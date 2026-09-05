@@ -140,7 +140,8 @@ export default function K8sActionPanel({
                 disabled={!!running}
                 onClick={() => setOpenAction(a)}
                 title={a.description || a.label}>
-                {running === a.name ? '…' : a.label}
+                <span className="k8s-action-label">{a.label}</span>
+                {running === a.name && <span className="k8s-action-running">执行中</span>}
               </button>
             ))}
           </div>
