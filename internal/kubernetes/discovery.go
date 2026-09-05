@@ -239,40 +239,6 @@ func (m *Manager) DiscoverCRDs(_ context.Context, id string, refresh bool) ([]CR
 	return infos, nil
 }
 
-// parseAPIResourceList 把 ServerResourcesForGroupVersion 返回的列表展平为 CRDInfo.
-// 注意: discovery 给的 APIResource 不含多版本列表, 只含当前 served version.
-func parseAPIResourceList(lists []*metav1.APIResourceList) []CRDInfo {
-	out := []CRDInfo{}
-	for _, lst := range lists {
-		if lst == nil {
-			continue
-		}
-		// GroupVersion "apiextensions.k8s.io/v1" 提取 group
-		gv, _ := schema.ParseGroupVersion(lst.GroupVersion)
-		for _, r := range lst.APIResources {
-			plural := r.Name
-			singular := r.SingularName
-			if singular == "" {
-				singular = strings.TrimSuffix(plural, "s")
-			}
-			scope := "Namespaced"
-			if !r.Namespaced {
-				scope = "Cluster"
-			}
-			out = append(out, CRDInfo{
-				ShortName: plural + "." + gv.Group,
-				Group:     gv.Group,
-				Version:   gv.Version,
-				Versions:  []string{gv.Version},
-				Kind:      r.Kind,
-				Plural:    plural,
-				Singular:  singular,
-				Scope:     scope,
-			})
-		}
-	}
-	return out
-}
 
 // LookupCRD 按 shortName 在缓存里查.
 func (m *Manager) LookupCRD(id, shortName string) (CRDInfo, bool) {
@@ -306,19 +272,18 @@ func (m *Manager) ResolveGVR(id, res string) (schema.GroupVersionResource, Scope
 	if !IsCRDName(res) {
 		return schema.GroupVersionResource{}, ScopeUnknown, ErrNoSuchResource
 	}
-	// 优先查缓存 (避免 mapper 冷启动首次阻塞)
-	if info, ok := m.LookupCRD(id, res); ok {
-		return schema.GroupVersionResource{Group: info.Group, Version: info.Version, Resource: info.Plural},
-			scopeFromString(info.Scope), nil
-	}
-	// cache miss 时尝试主动发现一次 (lazy 下 cold cache 命中)
-	if _, err := m.DiscoverCRDs(context.Background(), id, false); err == nil {
-		if info, ok := m.LookupCRD(id, res); ok {
-			return schema.GroupVersionResource{Group: info.Group, Version: info.Version, Resource: info.Plural},
-				scopeFromString(info.Scope), nil
+	// 优先查缓存; miss 时主动发现一次, 避免冷启 mapper 阻塞
+	info, ok := m.LookupCRD(id, res)
+	if !ok {
+		if _, err := m.DiscoverCRDs(context.Background(), id, false); err == nil {
+			info, ok = m.LookupCRD(id, res)
 		}
 	}
-	return schema.GroupVersionResource{}, ScopeUnknown, ErrNoSuchResource
+	if !ok {
+		return schema.GroupVersionResource{}, ScopeUnknown, ErrNoSuchResource
+	}
+	return schema.GroupVersionResource{Group: info.Group, Version: info.Version, Resource: info.Plural},
+		scopeFromString(info.Scope), nil
 }
 
 func scopeFromString(s string) ScopeKind {

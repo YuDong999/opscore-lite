@@ -132,20 +132,28 @@ func nsFor(ns, res string) string {
 	}
 }
 
+// resolveGVRAndNs 统一解析 res → (gvr, effectiveNs). 内置走 fast path, CRD 走 ResolveGVR.
+// 失败: unknown res / cluster scope 但给了 ns 等情况. 删除/列表/Get/Describe 共用.
+func (m *Manager) resolveGVRAndNs(clusterID, res, ns string) (schema.GroupVersionResource, string, error) {
+	if gvr := gvrOf(res); !gvr.Empty() {
+		return gvr, nsFor(ns, res), nil
+	}
+	crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+	if err != nil {
+		return schema.GroupVersionResource{}, "", fmt.Errorf("unsupported resource %q", res)
+	}
+	effectiveNs := ns
+	if scope == ScopeCluster {
+		effectiveNs = ""
+	}
+	return crdGVR, effectiveNs, nil
+}
+
 // ListResources 列出集群指定资源(精简行)。ns 为空表示全部命名空间。
 func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) ([]map[string]any, error) {
-	// 优先: 内置 switch fast path; 失败回落 ResolveGVR (覆盖 CRD 短名)
-	gvr := gvrOf(res)
-	effectiveNs := nsFor(ns, res)
-	if gvr.Empty() {
-		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
-		if err != nil {
-			return nil, fmt.Errorf("unsupported resource %q", res)
-		}
-		gvr = crdGVR
-		if scope == ScopeCluster {
-			effectiveNs = ""
-		}
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return nil, err
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
@@ -930,17 +938,9 @@ func affinitySummary(a *corev1.Affinity) string {
 
 // GetResourceYAML 返回资源对象 YAML(敏感字段脱敏: Secret 的 data)。
 func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name string) (string, error) {
-	gvr := gvrOf(res)
-	effectiveNs := nsFor(ns, res)
-	if gvr.Empty() {
-		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
-		if err != nil {
-			return "", fmt.Errorf("unsupported resource %q", res)
-		}
-		gvr = crdGVR
-		if scope == ScopeCluster {
-			effectiveNs = ""
-		}
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return "", err
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
@@ -1059,33 +1059,11 @@ func nsForMeta(meta map[string]any) string {
 	return "default"
 }
 
-// DeleteResource 删除指定资源(内置白名单 + 集群已发现 CRD).
-// deletableResources 是内置安全白名单, CRD 走兜底 (gvrOf 空即尝试 ResolveGVR).
-var deletableResources = map[string]bool{
-	"pods": true, "deployments": true, "statefulsets": true, "jobs": true, "cronjobs": true,
-	"services": true, "configmaps": true, "ingresses": true, "namespaces": true,
-	"serviceaccounts": true, "roles": true, "rolebindings": true,
-	"clusterroles": true, "clusterrolebindings": true,
-}
-
+// DeleteResource 删除指定资源(内置 fast-path + 集群已发现 CRD 短名都允许).
 func (m *Manager) DeleteResource(ctx context.Context, clusterID, res, ns, name string, force bool) error {
-	// 内置白名单 OR CRD 短名 (ResolveGVR 命中即允许)
-	if !deletableResources[res] {
-		if _, _, err := m.ResolveGVR(clusterID, res); err != nil {
-			return fmt.Errorf("资源类型 %q 不允许删除", res)
-		}
-	}
-	gvr := gvrOf(res)
-	effectiveNs := nsFor(ns, res)
-	if gvr.Empty() {
-		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
-		if err != nil {
-			return fmt.Errorf("资源类型 %q 不允许删除 (未发现 CRD)", res)
-		}
-		gvr = crdGVR
-		if scope == ScopeCluster {
-			effectiveNs = ""
-		}
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return fmt.Errorf("资源类型 %q 不允许删除: %w", res, err)
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
@@ -1171,17 +1149,9 @@ func (m *Manager) DescribeResource(ctx context.Context, clusterID, res, ns, name
 	if res == "overview" || res == "events" || res == "namespaces" {
 		return "", fmt.Errorf("unsupported resource %q", res)
 	}
-	gvr := gvrOf(res)
-	effNs := nsFor(ns, res)
-	if gvr.Empty() {
-		crdGVR, scope, err := m.ResolveGVR(clusterID, res)
-		if err != nil {
-			return "", fmt.Errorf("unsupported resource %q", res)
-		}
-		gvr = crdGVR
-		if scope == ScopeCluster {
-			effNs = ""
-		}
+	gvr, effNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return "", err
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
