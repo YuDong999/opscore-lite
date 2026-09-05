@@ -666,7 +666,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                           ) : String(r[k] ?? '—')}
                         </td>
                       ))}
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+<td className="row-ops" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div className="k8s-row-actions" style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                             title="基于资源类型动态展示可用操作 (kubectl 等价)"

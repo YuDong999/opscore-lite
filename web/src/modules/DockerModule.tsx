@@ -214,7 +214,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="mono dim">{c.image}</td>
                   <td><span className={`badge ${c.state === 'running' || c.state === 'CONTAINER_RUNNING' ? 'badge-ok' : c.state === 'exited' || c.state === 'CONTAINER_EXITED' ? 'badge-off' : 'badge-warn'}`}>{c.state}</span></td>
                   <td className="mono dim">{(c.ports || []).join(', ') || '—'}</td>
-                  <td onClick={(e) => e.stopPropagation()}>
+                  <td className="row-ops" onClick={(e) => e.stopPropagation()}>
                     <div className="btn-row k8s-row-actions">
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !canWrite || c.state !== 'exited'} onClick={() => runAction(c.name, 'start')}>启动</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => runAction(c.name, 'stop')}>停止</button>
