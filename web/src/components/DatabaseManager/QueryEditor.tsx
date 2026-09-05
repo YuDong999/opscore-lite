@@ -1,9 +1,11 @@
 // SQL 编辑器 + 结果表格。
-// 不引入 Monaco(保持轻量), 使用 textarea + Tab 缩进 + Ctrl+Enter 执行。
+// CodeMirror6: SQL 高亮+表名补全+括号匹配; Ctrl+Enter 执行。
 // 工具: 格式化(sql-formatter, 按引擎方言) / 执行历史(本地回填) / 示例。
 // 写操作经 ADR-003 拦截链: confirm_required 弹确认重发, write_locked 引导解锁, blocked 直接报错。
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import CodeMirror from '@uiw/react-codemirror'
+import { sql as sqlLang } from '@codemirror/lang-sql'
 import { runQueryRaw, type QueryResult, type InterceptionBody } from './api'
 import { formatSQL } from './sqlFormat'
 
@@ -36,6 +38,7 @@ function pushHistory(sqlText: string): string[] {
 export default function QueryEditor({
   connId,
   engine,
+  db,
   defaultSQL = '',
   onResult,
   onWriteLocked,
@@ -43,6 +46,7 @@ export default function QueryEditor({
 }: {
   connId: string
   engine?: string
+  db?: string
   defaultSQL?: string
   onResult?: (r: QueryResult) => void
   onWriteLocked?: (msg: string) => void
@@ -51,7 +55,6 @@ export default function QueryEditor({
   const [sql, setSql] = useState(defaultSQL)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<string[]>(loadHistory)
-  const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (defaultSQL) setSql(defaultSQL)
@@ -62,7 +65,7 @@ export default function QueryEditor({
     if (!sql.trim()) return
     setBusy(true)
     try {
-      const { status, data } = await runQueryRaw(connId, sql, 5000, confirm)
+      const { status, data } = await runQueryRaw(connId, sql, 5000, confirm, db)
       setHistory(pushHistory(sql))
       onExecuted?.(sql)
       await handleResponse(status, data as QueryResult & InterceptionBody, confirm)
@@ -107,20 +110,11 @@ export default function QueryEditor({
 
   const doFormat = () => setSql(formatSQL(sql, engine))
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       run()
       return
-    }
-    // Tab 缩进
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      const ta = e.currentTarget
-      const start = ta.selectionStart, end = ta.selectionEnd
-      const next = sql.slice(0, start) + '  ' + sql.slice(end)
-      setSql(next)
-      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 2 })
     }
   }
 
@@ -160,15 +154,24 @@ export default function QueryEditor({
         </div>
       </div>
 
-      <textarea
-        ref={taRef}
-        value={sql}
-        onChange={(e) => setSql(e.target.value)}
-        onKeyDown={onKeyDown}
-        className="db-query-textarea"
-        placeholder={'输入 SQL 语句...\nCtrl+Enter 执行 · Tab 缩进 · 写操作默认锁定, 需先解锁'}
-        spellCheck={false}
-      />
+      <div className="db-query-cm" onKeyDown={onKeyDown}>
+        <CodeMirror
+          value={sql}
+          height="220px"
+          theme="none"
+          extensions={[sqlLang()]}
+          basicSetup={{
+            lineNumbers: true,
+            highlightActiveLine: true,
+            autocompletion: true,
+            bracketMatching: true,
+            closeBrackets: true,
+          }}
+          onChange={setSql}
+          placeholder="输入 SQL 语句... (Ctrl+Enter 执行)"
+          spellCheck={false}
+        />
+      </div>
     </div>
   )
 }

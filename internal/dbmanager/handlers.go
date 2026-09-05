@@ -5,6 +5,7 @@ package dbmanager
 
 import (
 	"bytes"
+	"os"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -330,10 +331,11 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID      string `json:"id"`
-		SQL     string `json:"sql"`
-		MaxRows int    `json:"maxRows"`
-		Confirm bool   `json:"confirm"`
+		ID       string `json:"id"`
+		SQL      string `json:"sql"`
+		MaxRows  int    `json:"maxRows"`
+		Confirm  bool   `json:"confirm"`
+		Database string `json:"database"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "invalid body", http.StatusBadRequest)
@@ -343,6 +345,7 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "id 格式非法", http.StatusBadRequest)
 		return
 	}
+	fmt.Fprintln(os.Stderr, "[dbg-q] database=", body.Database)
 	if strings.TrimSpace(body.SQL) == "" {
 		writeErr(w, "SQL 不能为空", http.StatusBadRequest)
 		return
@@ -365,7 +368,7 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows)
+	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows, body.Database)
 	// 写操作记入审计(只读不记, 避免噪声)
 	if risk.AtLeast(RiskMedium) {
 		decision := "executed"
@@ -794,7 +797,7 @@ func (h *Handlers) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows)
+	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows, "")
 	if err != nil && res == nil {
 		res = &QueryResult{Error: err.Error()}
 	}

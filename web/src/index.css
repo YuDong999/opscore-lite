@@ -3142,3 +3142,14 @@ body {
 .db-cell-detail-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); }
 .db-cell-detail-col { font-weight: 650; font-size: 0.8125rem; margin-right: auto; }
 .db-cell-detail-body { margin: 0; padding: 0.6rem; overflow: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; color: var(--text); flex: 1; }
+
+/* CodeMirror 融合主题(跟随 data-theme 变量, 不用自带底色) */
+.db-query-cm { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-solid); }
+.db-query-cm .cm-editor { background: transparent; }
+.db-query-cm .cm-editor.cm-focused { outline: none; }
+.db-query-cm .cm-gutters { background: var(--surface-tint); border-right: 1px solid var(--border); color: var(--text-dim); }
+.db-query-cm .cm-activeLine { background: var(--row-hover); }
+.db-query-cm .cm-activeLineGutter { background: var(--row-hover); }
+.db-query-cm .cm-placeholder { color: var(--text-dim); }
+.db-query-cm .cm-content { caret-color: var(--accent); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8125rem; }
+.db-query-cm .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--accent); color: #fff; }

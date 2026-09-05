@@ -390,6 +390,7 @@ export async function runQueryRaw(
   sql: string,
   maxRows = 5000,
   confirm = false,
+  database?: string,
 ): Promise<{ status: number; data: QueryResult & InterceptionBody }> {
   const t = localStorage.getItem('opscore-token')
   const r = await fetch('/api/dbmanager/query', {
@@ -398,7 +399,7 @@ export async function runQueryRaw(
       'Content-Type': 'application/json',
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
     },
-    body: JSON.stringify({ id, sql, maxRows, confirm }),
+    body: JSON.stringify({ id, sql, maxRows, confirm, database }),
   })
   const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   return { status: r.status, data }

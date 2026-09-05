@@ -6,6 +6,7 @@ package dbmanager
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ type DBService interface {
 	// DescribeTable 返回列/索引/DDL。
 	DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error)
 	// ExecQuery 执行 SQL：SELECT 返回结果集(截断到 maxRows)，其他返回受影响行数。
-	ExecQuery(ctx context.Context, connID, sqlText string, maxRows int) (*QueryResult, error)
+	ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error)
 }
 
 // GonaviService DBService 的 GoNavi 底座实现。
@@ -174,7 +175,7 @@ func aggregateIndexes(defs []gonaviConnection.IndexDefinition) []IndexInfo {
 	return out
 }
 
-func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int) (*QueryResult, error) {
+func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
 	db, _, err := s.pool.Acquire(connID)
 	if err != nil {
 		return nil, err
@@ -185,6 +186,55 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 
 	start := time.Now()
 	res := &QueryResult{}
+
+	// 标签绑定的库上下文: USE 是会话级的, 池化连接会漂移 ——
+	// 优先钉住一个物理连接(SessionExecerProvider), 在同一会话内 USE+Query
+	if strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
+		dbgType := fmt.Sprintf("%T", db)
+		fmt.Fprintln(os.Stderr, "[dbg] USE branch db=", defaultDatabase, "type=", dbgType)
+		if sp, ok := db.(gonavibase.SessionExecerProvider); ok {
+			fmt.Fprintln(os.Stderr, "[dbg] SessionExecerProvider OK")
+			sess, serr := sp.OpenSessionExecer(ctx)
+			if serr != nil {
+				res.Error = serr.Error()
+				return res, serr
+			}
+			defer func() { _ = sess.Close() }()
+			if _, uerr := sess.Exec("USE " + defaultDatabase); uerr != nil {
+				res.Error = uerr.Error()
+				return res, uerr
+			}
+			qsess, qok := sess.(gonavibase.StatementQueryExecer)
+			fmt.Fprintln(os.Stderr, "[dbg] StatementQueryExecer=", qok)
+			if !qok {
+				res.Error = "驱动会话不支持查询"
+				return res, fmt.Errorf("驱动会话不支持查询")
+			}
+			rows, colNames, qerr := qsess.Query(sqlText)
+			if qerr != nil {
+				res.Error = qerr.Error()
+				return res, qerr
+			}
+			res.Columns = colNames
+			truncated := false
+			for _, row := range rows {
+				if len(res.Rows) >= maxRows {
+					truncated = true
+					break
+				}
+				vals := make([]any, len(colNames))
+				for i, c := range colNames {
+					vals[i] = row[c]
+				}
+				res.Rows = append(res.Rows, vals)
+			}
+			res.Truncated = truncated
+			res.RowCount = len(res.Rows)
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res, nil
+		}
+		// 驱动不支持固定会话: 无库上下文执行, SQL 需自带限定
+	}
 
 	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
 	if isReadOnlySQL(sqlText) {

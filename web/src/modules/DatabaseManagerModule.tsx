@@ -333,6 +333,7 @@ export default function DatabaseManagerModule() {
                         <QueryEditor
                           connId={c!.id}
                           engine={c!.engine}
+                          db={t.db}
                           defaultSQL={isSeedTab ? seed : undefined}
                           onResult={handleResult}
                           onWriteLocked={() => setShowUnlock(true)}
