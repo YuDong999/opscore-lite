@@ -632,7 +632,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                           {sortKey === k ? (sortDir === 'desc' ? '▼' : '▲') : '↕'}
                         </span>
                       </th>
-                     ))}<th style={{ width: 130, minWidth: 110, textAlign: 'right' }}>操作</th>
+                     ))}<th style={{ width: 180, minWidth: 160, textAlign: 'right' }}>操作</th>
                    </tr>
                  </thead>
                 <tbody>
