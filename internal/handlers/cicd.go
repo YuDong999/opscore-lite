@@ -712,6 +712,28 @@ func CicdArtifactDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+// ── 维护模式 ───────────────────────────────────────────────
+
+// CicdMaintenance 查询/切换维护模式(GET 查询, POST {enabled} 切换)
+func CicdMaintenance(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		WriteJSON(w, map[string]any{"enabled": cicdEngine.Maintenance()})
+	case http.MethodPost:
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, "请求格式错误", http.StatusBadRequest)
+			return
+		}
+		cicdEngine.SetMaintenance(body.Enabled)
+		WriteJSON(w, map[string]any{"ok": true, "enabled": body.Enabled})
+	default:
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // ── 动作注册表 ─────────────────────────────────────────────
 
 // CicdActions 动作定义列表(前端 ActionPicker 与动态表单的 schema 来源)

@@ -280,9 +280,14 @@ export default function CicdModule() {
     <div className="module">
       <div className="module-head">
         <div className="module-head-row"><h2>CI/CD 流水线</h2></div>
-        <Badge variant="secondary" className="tabular-nums">
-          运行中 {overview?.running ?? '-'} · 排队 {overview?.queued ?? '-'}{waiting > 0 ? ` · 待审批 ${waiting}` : ''}
-        </Badge>
+        <div className="flex items-center gap-2 flex-wrap">
+          {overview?.maintenance && (
+            <Badge variant="destructive">维护模式：暂停接受新运行（设置中关闭）</Badge>
+          )}
+          <Badge variant="secondary" className="tabular-nums">
+            运行中 {overview?.running ?? '-'} · 排队 {overview?.queued ?? '-'}{waiting > 0 ? ` · 待审批 ${waiting}` : ''}
+          </Badge>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>

@@ -355,6 +355,8 @@ type Engine struct {
 	crons    map[string]*CronSpec // pipelineID → 预解析的 cron
 	lastFire map[string]int64     // pipelineID → 上次 cron 触发的 unix 分钟
 	stopOnce sync.Once
+
+	maintenance bool // 维护模式: 暂停接受新运行(在跑的不受影响), cron/webhook/手动全部拦截
 }
 
 // NewEngine 初始化引擎并恢复持久化状态
@@ -439,6 +441,22 @@ func NewEngine(dataDir string) (*Engine, error) {
 // Stop 停止 cron 循环(不中断在跑任务, 交由优雅退出)
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stop) })
+}
+
+// SetMaintenance 切换维护模式: 开启后 cron/webhook/手动触发全部拒绝,
+// 在跑的运行不受影响; 用于服务重启前排水(避免产生中断孤儿)
+func (e *Engine) SetMaintenance(on bool) {
+	e.mu.Lock()
+	e.maintenance = on
+	e.mu.Unlock()
+	log.Printf("[cicd] 维护模式: %v", on)
+}
+
+// Maintenance 查询维护模式状态
+func (e *Engine) Maintenance() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.maintenance
 }
 
 func maxParallelFromEnv() int {
@@ -647,6 +665,9 @@ func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
 
 // TriggerBranch 同 Trigger, 但允许运行时覆盖代码源分支(空=用流水线定义的分支)
 func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string) (*Run, error) {
+	if e.Maintenance() {
+		return nil, errors.New("维护模式已开启, 暂停接受新的运行(可在设置中关闭)")
+	}
 	e.mu.RLock()
 	var pipe *Pipeline
 	for _, p := range e.pipes {
@@ -1422,6 +1443,7 @@ func (e *Engine) Overview() map[string]any {
 	}
 	return map[string]any{
 		"pipelines":       len(e.pipes),
+		"maintenance":     e.maintenance,
 		"running":         running,
 		"queued":          queued,
 		"waitingApproval": waitingApproval,

@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"runtime"
+	"time"
+
 	"opscore/internal/agent"
 	"opscore/internal/ansible"
 	"opscore/internal/auth"
@@ -28,6 +31,10 @@ import (
 	"opscore/internal/registry"
 	"opscore/internal/remote"
 )
+
+const appVersion = "2.6.0"
+
+var startTime = time.Now()
 
 func main() {
 	metrics.Start()
@@ -243,6 +250,16 @@ func main() {
 		json.NewEncoder(w).Encode(result)
 	})
 
+	mux.HandleFunc("/api/system/info", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"version":   appVersion,
+			"goVersion": runtime.Version(),
+			"startedAt": startTime.Format(time.RFC3339),
+			"uptimeMs":  time.Since(startTime).Milliseconds(),
+		})
+	})
+
 	// 前端静态资源(SPA)
 	fileServer := http.FileServer(http.Dir(distDir))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -455,6 +472,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/run/cancel", Handler: handlers.CicdRunCancel},
 			{Path: "/api/cicd/run/approve", Handler: handlers.CicdRunApprove},
 			{Path: "/api/cicd/run/delete", Handler: handlers.CicdRunDelete},
+			{Path: "/api/cicd/maintenance", Handler: handlers.CicdMaintenance},
 			{Path: "/api/cicd/artifact/download", Handler: handlers.CicdArtifactDownload},
 			{Path: "/api/cicd/actions", Handler: handlers.CicdActions},
 			{Path: "/api/cicd/actions/preview", Handler: handlers.CicdActionPreview},
