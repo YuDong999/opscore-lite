@@ -29,6 +29,8 @@ export const API = {
   runDelete: '/api/cicd/run/delete',
   runs: '/api/cicd/runs',
   overview: '/api/cicd/overview',
+  audit: '/api/cicd/audit',
+  badge: (id: string) => `/api/cicd/badge/${id}.svg`,
   webhook: (id: string) => `/api/cicd/webhook/${id}`,
   artifactDownload: '/api/cicd/artifact/download',
   credentials: '/api/cicd/credentials',
@@ -190,4 +192,4 @@ export function fmtSize(n: number): string {
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)}KB`
   return `${n}B`
 }
-export const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时' }
+export const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时', rollback: '回滚' }
