@@ -1341,8 +1341,8 @@ body {
 .k8s-dot-bad { background: #ef4444; }
 
 /* 表格行内操作: 允许换行防重叠 */
-.k8s-row-actions { flex-wrap: wrap; gap: 0.25rem !important; row-gap: 0.25rem; }
-.k8s-row-actions .btn-sm { padding: 2px 8px; font-size: 0.6875rem; white-space: nowrap; }
+.k8s-row-actions { flex-wrap: nowrap; gap: 0.25rem !important; row-gap: 0.25rem; }
+.k8s-row-actions .btn-sm { padding: 2px 8px; font-size: 0.6875rem; white-space: nowrap; flex: 0 0 auto; }
 
 /* K8S 概览仪表盘卡片 */
 .k8s-ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.75rem; }
