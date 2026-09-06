@@ -17,7 +17,6 @@ import DataGrid from '../components/DatabaseManager/DataGrid'
 import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
 import QuickOpen from '../components/DatabaseManager/QuickOpen'
-import SyncDialog from '../components/DatabaseManager/SyncDialog'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 import DriverManagement from '../components/DatabaseManager/DriverManagement'
@@ -32,6 +31,7 @@ interface WorkTab {
   connId: string
   db?: string
   table?: string
+  schema?: string
   isView?: boolean
   label: string
 }
@@ -54,7 +54,6 @@ export default function DatabaseManagerModule() {
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
   const [showQuickOpen, setShowQuickOpen] = useState(false)
-  const [showSync, setShowSync] = useState(false)
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
@@ -88,7 +87,9 @@ export default function DatabaseManagerModule() {
   const activeConn = conn ? connById.get(conn.id) ?? conn : null
 
   const openTab = (t: WorkTab) => {
-    setTabs(prev => prev.some(x => x.key === t.key) ? prev : [...prev, t])
+    setTabs(prev => prev.some(x => x.key === t.key)
+      ? prev.map(x => x.key === t.key ? { ...x, db: t.db, table: t.table, schema: t.schema } : x)
+      : [...prev, t])
     setActiveTab(t.key)
   }
 
@@ -111,7 +112,6 @@ export default function DatabaseManagerModule() {
   // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填)
   const querySeedRef = useRef<string>('')
   const explainSqlRef = useRef<string>('')
-  const syncSeedRef = useRef<{ connId: string; db: string; table?: string; schema?: string } | null>(null)
 
   // ── 树交互 ──
   const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
@@ -145,21 +145,14 @@ export default function DatabaseManagerModule() {
       .then(({ fileName }) => toast.success(`已导出 ${fileName}`))
       .catch(e => toast.error('导出失败: ' + e.message))
   }
-  const handleSyncDb = (c: ConnectionInfo, db: string) => {
-    setConn(c)
-    syncSeedRef.current = { connId: c.id, db }
-    setShowSync(true)
+  const openSyncTab = (seed: { connId: string; db: string; table?: string; schema?: string }) => {
+    const c = conns.find(x => x.id === seed.connId)
+    if (c) setConn(c)
+    openTab({ key: `sync:${seed.connId}`, kind: 'sync', connId: seed.connId, db: seed.db, table: seed.table, schema: seed.schema, label: '跨库同步' })
   }
-  const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => {
-    setConn(c)
-    syncSeedRef.current = { connId: c.id, db, table }
-    setShowSync(true)
-  }
-  const handleSyncSchema = (c: ConnectionInfo, db: string, schema: string) => {
-    setConn(c)
-    syncSeedRef.current = { connId: c.id, db, schema }
-    setShowSync(true)
-  }
+  const handleSyncDb = (c: ConnectionInfo, db: string) => openSyncTab({ connId: c.id, db })
+  const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => openSyncTab({ connId: c.id, db, table })
+  const handleSyncSchema = (c: ConnectionInfo, db: string, schema: string) => openSyncTab({ connId: c.id, db, schema })
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
   // 新建/编辑连接通过自定义事件交给 ConnectionPanel (其内部用 portal 渲染向导浮层)
@@ -267,16 +260,6 @@ export default function DatabaseManagerModule() {
         onOpenTable={handleOpenTable}
         onNewQuery={handleNewQuery}
       />
-      {showSync && (
-        <SyncDialog
-          conns={conns}
-          activeConnId={conn?.id}
-          presetDb={syncSeedRef.current?.db}
-          presetTable={syncSeedRef.current?.table}
-          presetSchema={syncSeedRef.current?.schema}
-          onClose={() => { setShowSync(false); syncSeedRef.current = null }}
-        />
-      )}
       <div className="db-layout">
         <aside className="db-side">
           <ConnectionTree
@@ -359,10 +342,8 @@ export default function DatabaseManagerModule() {
                   }
                   case 'doc':
                     return <DocPanel key={t.key} connId={c!.id} database={t.db!} table={t.table!} />
-                  case 'sync': {
-                    const seed = syncSeedRef.current && syncSeedRef.current.connId === t.connId ? syncSeedRef.current : null
-                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={seed?.db} /></div>
-                  }
+                  case 'sync':
+                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={t.db} presetSchema={t.schema} presetTable={t.table} /></div>
                   case 'audit':
                     return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
                   case 'drivers':

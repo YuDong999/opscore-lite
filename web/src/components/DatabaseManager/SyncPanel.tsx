@@ -1,6 +1,8 @@
-// 跨库同步面板: MySQL 族 ↔ PostgreSQL 族。
-// 级联: 连接 → 库 → 模式(能力探测, 有模式层级的引擎才出现) → 表(下拉卡片多选)。
-// 流程: 选源/目标 → 选表+模式 → plan 预览(类型映射/DDL/增量策略) → run 后台执行 → 进度轮询。
+// 跨库同步视图: MySQL 族 ↔ PostgreSQL 族。
+// 两栏对象选择(组合表设计): 范围(两级引擎=库 / 三级引擎=模式) + 表; 库在三级引擎下为连接库(dim 上下文, 不可选)。
+// 入口层级(库/模式/表右键)决定预置与固定: 表级=该表锁定可追加; 模式级=锁定模式; 库级=整库全部模式。
+// 更换源连接即清除入口预设, 所有选择恢复可选 —— 不存在"选完就永久固定"。
+// 流程: 选源/目标 → 选表 → plan 预览 → run 后台执行 → 进度轮询。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -75,19 +77,36 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [targetId, setTargetId] = useState('')
   const [targetDb, setTargetDb] = useState('')
   const [srcDbs, setSrcDbs] = useState<string[]>([])
-  const [dstDbs, setDstDbs] = useState<string[]>([])
   const [srcTables, setSrcTables] = useState<string[]>([])
-  const [srcSchemas, setSrcSchemas] = useState<string[]>([])   // 能力探测: 空数组=该引擎无模式层级
+  const [srcSchemas, setSrcSchemas] = useState<string[]>([])   // 能力探测: 空=两级引擎(库→表); 非空=三级(库→模式→表)
   const [dstSchemas, setDstSchemas] = useState<string[]>([])
-  const [srcSchema, setSrcSchema] = useState('')
+  const [dstDbs, setDstDbs] = useState<string[]>([])
+  const [srcSchema, setSrcSchema] = useState('')               // 三级引擎的范围选择(''=全部模式)
   const [targetSchema, setTargetSchema] = useState('')
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [syncEngines, setSyncEngines] = useState<string[] | null>(null)
+  const [entryCleared, setEntryCleared] = useState(false)      // 更换源连接 → 入口预设失效, 恢复自由选择
   const [tblOpen, setTblOpen] = useState(false)
   const [tblFilter, setTblFilter] = useState('')
   const [tblPos, setTblPos] = useState<{ left: number; top: number; bottom: number; up: boolean; maxH: number; width: number }>({ left: 0, top: 0, bottom: 0, up: false, maxH: 380, width: 0 })
   const tblAnchorRef = useRef<HTMLDivElement>(null)
+  const [mode, setMode] = useState<SyncMode>('schema_full')
+  const [plan, setPlan] = useState<SyncPlan | null>(null)
+  const [job, setJob] = useState<Job | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const presetApplied = useRef(false)
+
+  // 生效的入口预设(换源连接后清除)
+  const eff = entryCleared ? { db: '', schema: '', table: '' } : { db: presetDb || '', schema: presetSchema || '', table: presetTable || '' }
+  const srcThree = srcSchemas.length > 0
+  const dstThree = dstSchemas.length > 0
+  // 源范围栏固定条件: 表级/模式级入口(两级/三级都固定); 两级引擎的库级入口也固定库
+  const srcScopeFixed = !!eff.table || !!eff.schema || (!!eff.db && !srcThree)
+  const shortName = (t: string) => { const i = t.indexOf('.'); return i > 0 ? t.slice(i + 1) : t }
+
+  const resetDownstream = () => { setPickedTables(new Set()); setTargetNames({}); setPlan(null); setTblOpen(false) }
 
   // 打开时按触发器定位(portal 到 body): 下方空间足则向下, 否则向上翻转
   const openPicker = () => {
@@ -98,7 +117,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
     const below = window.innerHeight - r.bottom - 8
     const up = below < 260 && r.top > below
     setTblPos({
-      left: r.left, width: r.width,
+      left: r.left, width: Math.max(r.width, 480),
       top: r.bottom + 2, bottom: window.innerHeight - r.top + 2, up,
       maxH: Math.max(180, up ? r.top - 16 : below),
     })
@@ -106,7 +125,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
     setTblOpen(true)
   }
 
-  // 锚点随弹窗滚动/窗口变化时关闭(面板为 fixed, 锚点会移位)
+  // 锚点随视图滚动/窗口变化时关闭(面板为 fixed, 锚点会移位)
   useEffect(() => {
     if (!tblOpen) return
     const close = () => setTblOpen(false)
@@ -114,15 +133,6 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
     window.addEventListener('resize', close)
     return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close) }
   }, [tblOpen])
-  const [mode, setMode] = useState<SyncMode>('schema_full')
-  const [plan, setPlan] = useState<SyncPlan | null>(null)
-  const [job, setJob] = useState<Job | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const presetApplied = useRef(false)
-
-  // 入口预设(库级/表级右键进入): 源侧固定, 不可改
-  const locked = !!presetDb
 
   const dbOptions = useMemo(() => conns.map(c => ({ id: c.id, name: c.name, engine: c.engine })), [conns])
 
@@ -145,25 +155,29 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   useEffect(() => {
     if (!sourceId && activeConnId) setSourceId(activeConnId)
   }, [activeConnId])
+  // 入口预设变化(重新从树进入) → 允许重新应用
+  useEffect(() => { presetApplied.current = false }, [presetDb, presetSchema, presetTable])
   useEffect(() => {
-    if (presetDb) setSourceDb(presetDb)
-  }, [presetDb])
+    if (eff.db && !entryCleared) setSourceDb(eff.db)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eff.db])
 
-  // 源/目标库列表 + 模式能力探测
+  // 源侧探测: 库列表 + 模式能力; 三级引擎库=连接库(自动带出, 栏位上只作 dim 上下文)
   useEffect(() => {
     if (!sourceId) { setSrcDbs([]); setSrcSchemas([]); setSrcTables([]); return }
     listDatabases(sourceId).then(dbs => setSrcDbs(dbs || [])).catch(() => setSrcDbs([]))
     listSchemas(sourceId).then(ss => {
       setSrcSchemas(ss || [])
-      // 三级命名引擎(PG 族): GetTables 只查连接库, "库"选择是假层级 —— 固定为连接库, 层级交给模式
-      if (ss?.length && !presetDb) {
+      if (ss?.length) {
         const db = conns.find(c => c.id === sourceId)?.config.database
         if (db) setSourceDb(db)
       }
     }).catch(() => setSrcSchemas([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId])
+  // 目标侧探测
   useEffect(() => {
-    if (!targetId) { setDstDbs([]); setDstSchemas([]); setTargetSchema(''); return }
+    if (!targetId) { setDstSchemas([]); setTargetSchema(''); setTargetDb(''); setDstDbs([]); return }
     listDatabases(targetId).then(dbs => setDstDbs(dbs || [])).catch(() => setDstDbs([]))
     listSchemas(targetId).then(ss => {
       setDstSchemas(ss || [])
@@ -173,11 +187,12 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
         if (db) setTargetDb(db)
       }
     }).catch(() => { setDstSchemas([]); setTargetSchema('') })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId])
 
-  // 源表列表: 级联下游重置, 然后应用入口预设(表级进入: 预选该表并固定其模式)
+  // 源表列表: 级联下游重置, 然后按入口层级应用预设
   useEffect(() => {
-    setSrcTables([]); setPickedTables(new Set()); setTargetNames({}); setPlan(null); setSrcSchema(''); setTblOpen(false); presetApplied.current = false
+    setSrcTables([]); resetDownstream(); setSrcSchema(''); presetApplied.current = false
     if (!sourceId || !sourceDb) return
     listTables(sourceId, sourceDb).then(ts => {
       const names = ts.map(t => t.name)
@@ -186,24 +201,26 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       presetApplied.current = true
       const schemas = [...new Set(names.map(n => { const i = n.indexOf('.'); return i > 0 ? n.slice(0, i) : '' }).filter(Boolean))].sort()
       const pool = srcSchemas.length ? srcSchemas : schemas
-      if (presetTable) {
-        // 表级入口: 该表预选, 模式锁定为其所属模式
-        if (names.includes(presetTable)) setPickedTables(new Set([presetTable]))
-        const i = presetTable.indexOf('.')
-        const pfx = i > 0 ? presetTable.slice(0, i) : ''
+      if (eff.table) {
+        // 表级入口: 该表锁定预选, 范围固定为其所属层级
+        if (names.includes(eff.table)) setPickedTables(new Set([eff.table]))
+        const i = eff.table.indexOf('.')
+        const pfx = i > 0 ? eff.table.slice(0, i) : ''
         if (pfx && pool.includes(pfx)) setSrcSchema(pfx)
-      } else if (presetSchema) {
+      } else if (eff.schema) {
         // 模式级入口: 锁定该模式
-        setSrcSchema(pool.includes(presetSchema) ? presetSchema : '')
+        setSrcSchema(pool.includes(eff.schema) ? eff.schema : '')
       } else {
-        // 库级入口(及面板进入): 全部模式 —— 整库同步不做擅自收窄
+        // 库级入口(及无预设进入): 全部模式/整库 —— 不做擅自收窄
         setSrcSchema('')
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }).catch(() => setSrcTables([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId, sourceDb])
 
   const toggleTable = (t: string) => {
+    if (eff.table && t === eff.table) return // 表级入口的该表锁定
     setPickedTables(prev => {
       const next = new Set(prev)
       if (next.has(t)) next.delete(t); else next.add(t)
@@ -213,12 +230,14 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   }
 
   const buildRequest = (): SyncRequest | null => {
-    if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return null }
-    if (dstSchemas.length > 0 && !targetSchema) { toast.error('请选择目标模式'); return null }
+    if (!sourceId || !targetId) { toast.error('请选择源/目标连接'); return null }
+    if (!sourceDb) { toast.error('请选择源范围'); return null }
+    if (dstThree && !targetSchema) { toast.error('请选择目标模式'); return null }
+    if (!dstThree && !targetDb) { toast.error('请选择目标库'); return null }
     if (pickedTables.size === 0) { toast.error('请至少选择一张表'); return null }
     return {
       sourceId, sourceDb, targetId, targetDb,
-      targetSchema: dstSchemas.length > 0 ? targetSchema : undefined,
+      targetSchema: dstThree ? targetSchema : undefined,
       mode,
       tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })),
     }
@@ -269,32 +288,35 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
 
   const visiblePlan = plan?.tables?.filter(t => !t.skipped) || []
   const skipped = plan?.tables?.filter(t => t.skipped) || []
-  const shortName = (t: string) => { const i = t.indexOf('.'); return i > 0 ? t.slice(i + 1) : t }
   const pickedSummary = [...pickedTables].slice(0, 3).map(shortName).join(', ') + (pickedTables.size > 3 ? ` 等 ${pickedTables.size} 张` : '')
+  const srcConn = conns.find(c => c.id === sourceId)
+  const dstConn = conns.find(c => c.id === targetId)
+  const clearEntry = () => setEntryCleared(true)
 
   return (
     <div className="db-doc">
       <div className="db-conn-list-head">
         <span>跨库同步 <span className="dim" style={{ fontWeight: 400, fontSize: '0.6875rem' }}>
-          MySQL 族 ↔ PostgreSQL 族 · 库→模式→表级联 · 结构/全量/增量{locked ? ' · 源已由入口固定' : ''}
+          MySQL 族 ↔ PostgreSQL 族 · 范围+表两栏级联 · 结构/全量/增量
         </span></span>
       </div>
 
-      {presetDb && (
+      {/* 入口上下文横幅: 三种入口可见区分; 更换源连接后消失(预设失效) */}
+      {eff.db && (
         <div style={{ padding: '0.35rem 0.6rem', background: 'var(--surface-tint)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="db-engine-badge">同步范围</span>
-          <b>{presetTable ? `表 ${shortName(presetTable)}` : presetSchema ? `模式 ${presetSchema}` : `库 ${presetDb}`}</b>
-          <span className="dim">源侧已固定{presetTable ? ', 可在范围内追加其他表' : ''}</span>
+          <b>{eff.table ? `表 ${shortName(eff.table)}` : eff.schema ? `模式 ${eff.schema}` : `库 ${eff.db}`}</b>
+          <span className="dim">{eff.table ? '该表已锁定, 可追加其他表' : '固定项不可改'} · 更换源连接可解除</span>
         </div>
       )}
 
       <div className="db-form">
+        {/* 第一行: 源连接 → 源范围(库|模式) → 表 */}
         <div className="db-form-row">
           <label className="db-form-grow">
-            源连接{locked ? ' (固定)' : ''}
-            <select className="input" value={sourceId} disabled={locked} title={locked ? '已由入口固定' : undefined}
-              onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema('') }}
-              style={locked ? { opacity: 0.65 } : undefined}>
+            源连接
+            <select className="input" value={sourceId} title={eff.db ? '更换连接将解除入口预设' : undefined}
+              onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema(''); resetDownstream(); clearEntry() }}>
               <option value="">(选择连接)</option>
               {dbOptions.map(c => {
                 const ok = !syncEngines || syncEngines.includes(c.engine)
@@ -303,131 +325,81 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             </select>
           </label>
           <label className="db-form-grow">
-            源库{locked ? ' (固定)' : ''}
-            <select className="input" value={sourceDb} disabled={locked || srcSchemas.length > 0}
-              title={locked ? '已由入口固定' : srcSchemas.length > 0 ? '该引擎为三级命名(库→模式→表), 库即连接库, 层级在模式选择' : undefined}
-              onChange={e => setSourceDb(e.target.value)}
-              style={locked || srcSchemas.length > 0 ? { opacity: 0.65 } : undefined}>
-              <option value="">(选择库)</option>
-              {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </label>
-          <label className="db-form-grow">
-            目标连接
-            <select className="input" value={targetId} onChange={e => { setTargetId(e.target.value); setTargetDb(''); setPlan(null) }}>
-              <option value="">(选择连接)</option>
-              {dbOptions.filter(c => c.id !== sourceId).map(c => <option key={c.id} value={c.id}>{c.name} ({c.engine})</option>)}
-            </select>
-          </label>
-          <label className="db-form-grow">
-            目标库
-            <select className="input" value={targetDb} disabled={dstSchemas.length > 0}
-              title={dstSchemas.length > 0 ? '该引擎为三级命名, 实际写入位置由目标模式决定' : undefined}
-              onChange={e => setTargetDb(e.target.value)}
-              style={dstSchemas.length > 0 ? { opacity: 0.65 } : undefined}>
-              <option value="">(选择库)</option>
-              {dstDbs.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </label>
-        </div>
-
-        {/* 模式行: 仅对有模式层级的引擎出现(能力探测), MySQL 族不渲染 */}
-        {(srcSchemaOptions.length > 0 || dstSchemas.length > 0) && (
-          <div className="db-form-row">
-            {srcSchemaOptions.length > 0 && (
-              <label className="db-form-grow">
-                源模式 (Schema){locked && srcSchema ? ' (固定)' : ''}
-                <select className="input" value={srcSchema} disabled={locked && !!srcSchema}
-                  title={locked && srcSchema ? '已由入口固定' : srcSchema ? undefined : '(全部模式)'}
-                  onChange={e => { setSrcSchema(e.target.value); setPickedTables(new Set()); setTargetNames({}); setPlan(null) }}
-                  style={locked && srcSchema ? { opacity: 0.65 } : undefined}>
+            源范围{srcThree ? ' (模式)' : ' (库)'}{srcScopeFixed ? ' · 固定' : ''}
+            {srcThree ? (
+              <>
+                <select className="input" value={srcSchema} disabled={srcScopeFixed}
+                  title={srcScopeFixed ? '已由入口固定' : srcSchema ? undefined : '全部模式 = 整库范围'}
+                  onChange={e => { setSrcSchema(e.target.value); resetDownstream() }}
+                  style={srcScopeFixed ? { opacity: 0.65 } : undefined}>
                   <option value="">全部模式</option>
                   {srcSchemaOptions.map(sc => <option key={sc} value={sc}>{sc}</option>)}
                 </select>
-              </label>
+                <span className="dim" style={{ fontSize: '0.6875rem' }}>库: {srcConn?.config.database || '(连接默认库)'} · 三级命名, 库即连接库</span>
+              </>
+            ) : (
+              <select className="input" value={sourceDb} disabled={srcScopeFixed}
+                title={srcScopeFixed ? '已由入口固定' : undefined}
+                onChange={e => { setSourceDb(e.target.value); setSrcSchema('') }}
+                style={srcScopeFixed ? { opacity: 0.65 } : undefined}>
+                <option value="">(选择库)</option>
+                {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
             )}
-            {dstSchemas.length > 0 && (
-              <label className="db-form-grow">
-                目标模式 (Schema)
+          </label>
+          {/* 表选择: 下拉选择框(多选/反选/搜索); portal 到 body 上下翻转 */}
+          <div className="db-form-grow" style={{ position: 'relative' }} ref={tblAnchorRef}>
+            表 (可多选)
+            <button type="button" className="input" disabled={visibleTables.length === 0}
+              style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+              onClick={openPicker}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {pickedTables.size === 0
+                  ? (visibleTables.length ? '选择表' : '请先选择源连接与范围')
+                  : `已选 ${pickedTables.size} 张: ${pickedSummary}`}
+              </span>
+              <Chevron open={tblOpen} />
+            </button>
+          </div>
+        </div>
+
+        {/* 第二行: 目标连接 → 目标范围(库|模式) → 同步模式 */}
+        <div className="db-form-row">
+          <label className="db-form-grow">
+            目标连接
+            <select className="input" value={targetId} onChange={e => { setTargetId(e.target.value); setTargetDb(''); setTargetSchema(''); setPlan(null) }}>
+              <option value="">(选择连接)</option>
+              {dbOptions.filter(c => c.id !== sourceId).map(c => {
+                const ok = !syncEngines || syncEngines.includes(c.engine)
+                return <option key={c.id} value={c.id} disabled={!ok}>{c.name} ({c.engine}){ok ? '' : ' · 不支持同步'}</option>
+              })}
+            </select>
+          </label>
+          <label className="db-form-grow">
+            目标范围{dstThree ? ' (模式)' : ' (库)'}
+            {dstThree ? (
+              <>
                 <select className="input" value={targetSchema} onChange={e => { setTargetSchema(e.target.value); setPlan(null) }}>
                   {dstSchemas.map(sc => <option key={sc} value={sc}>{sc}</option>)}
                 </select>
-                <span className="dim" style={{ fontSize: '0.6875rem' }}>表将建在该模式下; 不选则回落目标库</span>
-              </label>
+                <span className="dim" style={{ fontSize: '0.6875rem' }}>库: {dstConn?.config.database || '(连接默认库)'} · 表将建在所选模式下</span>
+              </>
+            ) : (
+              <select className="input" value={targetDb} onChange={e => { setTargetDb(e.target.value); setPlan(null) }}>
+                <option value="">(选择库)</option>
+                {dstDbs.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
             )}
-          </div>
-        )}
-
-        <label>
-          同步模式
-          <select className="input" value={mode} onChange={e => { setMode(e.target.value as SyncMode); setPlan(null) }}>
-            {(Object.keys(MODE_LABELS) as SyncMode[]).map(m => (
-              <option key={m} value={m}>{MODE_LABELS[m].text}</option>
-            ))}
-          </select>
-          <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
-        </label>
-
-        {/* 表选择: 下拉选择框(多选/反选/搜索); 面板 portal 到 body, 上下翻转, 不被弹窗裁剪 */}
-        <div style={{ position: 'relative' }} ref={tblAnchorRef}>
-          <button type="button" className="input" disabled={visibleTables.length === 0}
-            style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-            onClick={openPicker}>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {pickedTables.size === 0
-                ? (visibleTables.length ? '选择表 (可多选, 支持自定义目标表名)' : '请先选择源连接与库')
-                : `已选 ${pickedTables.size} 张表: ${pickedSummary}`}
-            </span>
-            <Chevron open={tblOpen} />
-          </button>
-          {tblOpen && createPortal(
-            <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 2999 }} onClick={() => setTblOpen(false)} />
-              <div style={{ position: 'fixed', zIndex: 3000, left: tblPos.left, width: tblPos.width,
-                top: tblPos.up ? undefined : tblPos.top, bottom: tblPos.up ? tblPos.bottom : undefined,
-                background: 'var(--surface-solid)', border: '1px solid var(--border)', borderRadius: 6,
-                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: tblPos.maxH, overflowY: 'auto', padding: '0.3rem' }}>
-                <div style={{ position: 'sticky', top: 0, background: 'var(--surface-solid)', zIndex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.4rem' }}>
-                    <span className="dim" style={{ fontSize: '0.6875rem', flexShrink: 0 }}>
-                      {srcSchema ? `模式 ${srcSchema} · ` : ''}{visibleTables.length} 张表
-                    </span>
-                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(new Set(visibleTables))}>全选</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(prev => new Set(visibleTables.filter(t => !prev.has(t))))}>反选</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setPickedTables(new Set()); setTargetNames({}) }}>清空</button>
-                    </span>
-                  </div>
-                  <div style={{ padding: '0.15rem 0.4rem 0.25rem' }}>
-                    <input className="input input-sm" style={{ width: '100%' }} placeholder="搜索表名..." value={tblFilter} onChange={e => setTblFilter(e.target.value)} />
-                  </div>
-                </div>
-                {visibleTables.filter(t => !tblFilter.trim() || shortName(t).toLowerCase().includes(tblFilter.trim().toLowerCase()) || t.toLowerCase().includes(tblFilter.trim().toLowerCase())).map(t => (
-                  <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0.4rem' }}>
-                    <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '9rem', maxWidth: '14rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
-                      <span title={t}>{shortName(t)}</span>
-                    </label>
-                    {pickedTables.has(t) ? (
-                      <>
-                        <span className="dim">→</span>
-                        <input
-                          className="input input-sm"
-                          style={{ flex: 1, minWidth: 0 }}
-                          value={targetNames[t] ?? ''}
-                          onChange={e => setTargetNames(prev => ({ ...prev, [t]: e.target.value }))}
-                          placeholder="目标表名(留空=同名, 自定义则自动建表)"
-                        />
-                      </>
-                    ) : (
-                      <span className="dim" style={{ fontSize: '0.6875rem' }}>勾选后可自定义目标表名</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </>,
-            document.body,
-          )}
+          </label>
+          <label className="db-form-grow">
+            同步模式
+            <select className="input" value={mode} onChange={e => { setMode(e.target.value as SyncMode); setPlan(null) }}>
+              {(Object.keys(MODE_LABELS) as SyncMode[]).map(m => (
+                <option key={m} value={m}>{MODE_LABELS[m].text}</option>
+              ))}
+            </select>
+            <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
+          </label>
         </div>
 
         <div className="db-form-actions" style={{ justifyContent: 'flex-start' }}>
@@ -435,6 +407,59 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={doRun} disabled={busy}>启动同步</button>
         </div>
       </div>
+
+      {/* 表选择面板: portal 到 body, 不被任何容器裁剪 */}
+      {tblOpen && createPortal(
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 2999 }} onClick={() => setTblOpen(false)} />
+          <div style={{ position: 'fixed', zIndex: 3000, left: tblPos.left, width: tblPos.width,
+            top: tblPos.up ? undefined : tblPos.top, bottom: tblPos.up ? tblPos.bottom : undefined,
+            background: 'var(--surface-solid)', border: '1px solid var(--border)', borderRadius: 6,
+            boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: tblPos.maxH, overflowY: 'auto', padding: '0.3rem' }}>
+            <div style={{ position: 'sticky', top: 0, background: 'var(--surface-solid)', zIndex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.4rem' }}>
+                <span className="dim" style={{ fontSize: '0.6875rem', flexShrink: 0 }}>
+                  {srcSchema ? `模式 ${srcSchema} · ` : ''}{visibleTables.length} 张表
+                </span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(new Set(visibleTables))}>全选</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(prev => new Set(visibleTables.filter(t => prev.has(t) ? t === eff.table : true)))}>反选</button>
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setPickedTables(new Set(eff.table ? [eff.table] : [])); setTargetNames({}) }}>清空</button>
+                </span>
+              </div>
+              <div style={{ padding: '0.15rem 0.4rem 0.25rem' }}>
+                <input className="input input-sm" style={{ width: '100%' }} placeholder="搜索表名..." value={tblFilter} onChange={e => setTblFilter(e.target.value)} />
+              </div>
+            </div>
+            {visibleTables.filter(t => !tblFilter.trim() || shortName(t).toLowerCase().includes(tblFilter.trim().toLowerCase()) || t.toLowerCase().includes(tblFilter.trim().toLowerCase())).map(t => {
+              const lockedIn = !!eff.table && t === eff.table
+              return (
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0.4rem' }}>
+                  <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '9rem', maxWidth: '14rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <input type="checkbox" checked={pickedTables.has(t)} disabled={lockedIn} onChange={() => toggleTable(t)} />
+                    <span title={t}>{shortName(t)}{lockedIn ? ' (入口表)' : ''}</span>
+                  </label>
+                  {pickedTables.has(t) ? (
+                    <>
+                      <span className="dim">→</span>
+                      <input
+                        className="input input-sm"
+                        style={{ flex: 1, minWidth: 0 }}
+                        value={targetNames[t] ?? ''}
+                        onChange={e => setTargetNames(prev => ({ ...prev, [t]: e.target.value }))}
+                        placeholder="目标表名(留空=同名, 自定义则自动建表)"
+                      />
+                    </>
+                  ) : (
+                    <span className="dim" style={{ fontSize: '0.6875rem' }}>勾选后可自定义目标表名</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>,
+        document.body,
+      )}
 
       {/* 任务进度 */}
       {job && (
