@@ -93,6 +93,16 @@ func qualifiedName(schema, table string, d Dialect) string {
 	return quoteIdent(schema, d) + "." + quoteIdent(table, d)
 }
 
+// splitQualified 源表名可能带模式前缀(PG 族 GetTables 返回 schema.table), 拆开限定;
+// 无前缀时回落到默认 schema。
+func splitQualified(defaultSchema, name string) (string, string) {
+	if i := strings.Index(name, "."); i > 0 {
+		return name[:i], name[i+1:]
+	}
+	return defaultSchema, name
+
+}
+
 func isMySQLIntType(t string) bool {
 	base := strings.Fields(t)
 	if len(base) == 0 {

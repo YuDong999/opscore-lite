@@ -5,11 +5,12 @@ import SyncPanel from './SyncPanel'
 import { type ConnectionInfo } from './api'
 
 export default function SyncDialog({
-  conns, activeConnId, presetDb, onClose,
+  conns, activeConnId, presetDb, presetSchema, onClose,
 }: {
   conns: ConnectionInfo[]
   activeConnId?: string
   presetDb?: string
+  presetSchema?: string
   onClose: () => void
 }) {
   useEffect(() => {
@@ -25,7 +26,7 @@ export default function SyncDialog({
           <span>跨库同步 <span className="dim" style={{ fontWeight: 400, fontSize: '0.6875rem' }}>源/目标 → 选表(可自定义目标名) → 计划预览 → 执行</span></span>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>✕</button>
         </div>
-        <SyncPanel conns={conns} activeConnId={activeConnId} presetDb={presetDb} />
+        <SyncPanel conns={conns} activeConnId={activeConnId} presetDb={presetDb} presetSchema={presetSchema} />
       </div>
     </div>,
     document.body,

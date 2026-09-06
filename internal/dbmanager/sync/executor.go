@@ -178,7 +178,8 @@ func (r *Runner) copyFull(ctx context.Context, srcDB, dstDB gonavibase.Database,
 	} else if req.Options.WhereClause != "" {
 		where = " WHERE " + req.Options.WhereClause
 	}
-	sqlText := fmt.Sprintf("SELECT * FROM %s%s", qualifiedName(req.SourceDB, tp.Source, srcD), where)
+	srcSchema, srcTable := splitQualified(req.SourceDB, tp.Source)
+	sqlText := fmt.Sprintf("SELECT * FROM %s%s", qualifiedName(srcSchema, srcTable, srcD), where)
 
 	batchRows := req.Options.BatchRows
 	if batchRows <= 0 {
@@ -393,7 +394,8 @@ func (r *Runner) execVerify(ctx context.Context, srcDB, dstDB gonavibase.Databas
 			return strconv.ParseInt(fmt.Sprintf("%v", rows[0]["c"]), 10, 64)
 		}
 	}
-	srcN, err := countOf(srcDB, srcD, req.SourceDB, tp.Source)
+	srcSchema, srcTable := splitQualified(req.SourceDB, tp.Source)
+	srcN, err := countOf(srcDB, srcD, srcSchema, srcTable)
 	if err != nil {
 		return fmt.Errorf("统计源行数失败: %w", err)
 	}

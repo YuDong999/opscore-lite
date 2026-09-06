@@ -54,7 +54,7 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   return data
 }
 
-export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: ConnectionInfo[]; activeConnId?: string; presetDb?: string }) {
+export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema }: { conns: ConnectionInfo[]; activeConnId?: string; presetDb?: string; presetSchema?: string }) {
   const toast = useToast()
   const [sourceId, setSourceId] = useState('')
   const [sourceDb, setSourceDb] = useState('')
@@ -63,6 +63,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
   const [srcDbs, setSrcDbs] = useState<string[]>([])
   const [dstDbs, setDstDbs] = useState<string[]>([])
   const [srcTables, setSrcTables] = useState<string[]>([])
+  const [srcSchema, setSrcSchema] = useState('')
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [mode, setMode] = useState<SyncMode>('schema_full')
@@ -72,6 +73,17 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const dbOptions = useMemo(() => conns.map(c => ({ id: c.id, name: c.name, engine: c.engine })), [conns])
+
+  // 级联: 库 → 模式 → 表(PG 族 GetTables 返回 schema.table, 据此派生模式列表)
+  const srcSchemas = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of srcTables) { const i = t.indexOf('.'); if (i > 0) set.add(t.slice(0, i)) }
+    return [...set].sort()
+  }, [srcTables])
+  const visibleTables = useMemo(
+    () => srcSchema ? srcTables.filter(t => t.startsWith(srcSchema + '.')) : srcTables,
+    [srcTables, srcSchema],
+  )
 
   useEffect(() => {
     if (!sourceId && activeConnId) setSourceId(activeConnId)
@@ -94,7 +106,14 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
   useEffect(() => {
     setSrcTables([]); setPickedTables(new Set()); setPlan(null)
     if (!sourceId || !sourceDb) return
-    listTables(sourceId, sourceDb).then(ts => setSrcTables(ts.map(t => t.name))).catch(() => setSrcTables([]))
+    listTables(sourceId, sourceDb).then(ts => {
+      const names = ts.map(t => t.name)
+      setSrcTables(names)
+      const schemas = [...new Set(names.map(n => { const i = n.indexOf('.'); return i > 0 ? n.slice(0, i) : '' }).filter(Boolean))].sort()
+      const def = presetSchema && schemas.includes(presetSchema) ? presetSchema
+        : schemas.length ? (schemas.includes('public') ? 'public' : schemas[0]) : ''
+      setSrcSchema(def)
+    }).catch(() => setSrcTables([]))
   }, [sourceId, sourceDb])
 
   const toggleTable = (t: string) => {
@@ -201,17 +220,28 @@ export default function SyncPanel({ conns, activeConnId, presetDb }: { conns: Co
           <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
         </label>
 
-        {srcTables.length > 0 && (
+        {srcSchemas.length > 0 && (
+          <label>
+            源模式 (Schema)
+            <select className="input" value={srcSchema} onChange={e => { setSrcSchema(e.target.value); setPickedTables(new Set()); setTargetNames({}); setPlan(null) }}>
+              <option value="">全部模式</option>
+              {srcSchemas.map(sc => <option key={sc} value={sc}>{sc}</option>)}
+            </select>
+            <span className="dim" style={{ fontSize: '0.6875rem' }}>库 → 模式 → 表逐级联动, 切换模式清空已选表</span>
+          </label>
+        )}
+
+        {visibleTables.length > 0 && (
           <div>
             <div className="db-cascade-label">
-              选择表
+              选择表{srcSchema ? ` (${srcSchema})` : ''}
               <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 8 }}
-                onClick={() => setPickedTables(pickedTables.size === srcTables.length ? new Set() : new Set(srcTables))}>
-                {pickedTables.size === srcTables.length ? '全不选' : '全选'}
+                onClick={() => setPickedTables(pickedTables.size === visibleTables.length ? new Set() : new Set(visibleTables))}>
+                {pickedTables.size === visibleTables.length ? '全不选' : '全选'}
               </button>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', maxHeight: '8rem', overflowY: 'auto' }}>
-              {srcTables.map(t => (
+              {visibleTables.map(t => (
                 <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
                   <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '8rem' }}>
                     <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
