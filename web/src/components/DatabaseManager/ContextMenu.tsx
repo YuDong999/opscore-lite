@@ -59,6 +59,9 @@ export default function ContextMenu({
 
   const style: React.CSSProperties = { left: pos.x, top: pos.y }
 
+  // 空菜单不渲染壳(避免一条细线假菜单)
+  if (!items.length) return null
+
   // portal 到 body: 脱离 .db-side 层叠上下文, 否则被兄弟 .db-main 盖住
   return createPortal(
     <div className="db-ctx-menu" ref={ref} style={style}>

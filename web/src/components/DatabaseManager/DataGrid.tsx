@@ -333,7 +333,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
           <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
         </div>
       )}
-      {ctxMenu && result && result.columns && (
+      {ctxMenu && result && result.columns?.length && ctxMenu.col < result.columns.length && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
@@ -341,7 +341,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
           onClose={() => setCtxMenu(null)}
         />
       )}
-      {rowCtxMenu && result && result.columns && (
+      {rowCtxMenu && result && result.rows?.length && rowCtxMenu.row < result.rows.length && (
         <ContextMenu
           x={rowCtxMenu.x}
           y={rowCtxMenu.y}
