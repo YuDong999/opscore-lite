@@ -157,7 +157,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   // 入口预设变化(重新从树进入) → 允许重新应用
   useEffect(() => { presetApplied.current = false }, [presetDb, presetSchema, presetTable])
   useEffect(() => {
-    if (eff.db && !entryCleared) setSourceDb(eff.db)
+    if (eff.db) setSourceDb(eff.db)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eff.db])
 
