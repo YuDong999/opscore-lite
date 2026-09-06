@@ -467,12 +467,12 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
       {/* 主从两栏撑满视口剩余高度, 各自框内滑动(滚动条悬停才显示) */}
       <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-3 items-start lg:items-stretch lg:h-[calc(100vh-14rem)]">
         {/* 左: 流水线清单(主) */}
-        <Card className="gap-0 flex flex-col overflow-hidden lg:h-full">
-          <CardHeader className="pb-2 shrink-0">
+        <Card className="gap-0 flex flex-col py-3 overflow-hidden lg:h-full">
+          <CardHeader className="gap-0 grid-rows-[auto] pb-1.5 shrink-0">
             <div className="flex items-center justify-between gap-1">
               <CardTitle className="text-sm tabular-nums">流水线 ({pipes.length})</CardTitle>
               <div className="flex gap-1">
-                <Button asChild variant="ghost" size="icon" className="size-7" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
+                <Button asChild variant="ghost" size="icon" className="size-6" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
                   <label className="cursor-pointer">
                     <Upload className="size-4" />
                     <input type="file" accept=".json,application/json" className="hidden" onChange={async ev => {
@@ -488,11 +488,11 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                     }} />
                   </label>
                 </Button>
-                <Button variant="ghost" size="icon" className="size-7" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
+                <Button variant="ghost" size="icon" className="size-6" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
                   const t = localStorage.getItem('opscore-token')
                   window.open(`${API.pipelineExport}${t ? `?token=${encodeURIComponent(t)}` : ''}`)
                 }}><Download className="size-4" /></Button>
-                <Button size="sm" className="h-7" onClick={() => setTplOpen(true)}><Plus />新建</Button>
+                <Button size="sm" className="h-6 px-2 text-xs" onClick={() => setTplOpen(true)}><Plus />新建</Button>
               </div>
             </div>
           </CardHeader>
@@ -506,7 +506,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                 return (
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
-                    className={cn('text-left rounded-lg px-3 py-2 border transition-colors',
+                    className={cn('text-left rounded-lg px-2.5 py-1.5 border transition-colors',
                       active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted/60')}>
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
@@ -600,8 +600,8 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
   }, [live, p.lastRun?.id])
 
   return (
-    <Card className="gap-0 flex flex-col overflow-hidden lg:h-full min-h-0">
-      <CardHeader className="pb-3 shrink-0">
+    <Card className="gap-0 flex flex-col py-3 overflow-hidden lg:h-full min-h-0">
+      <CardHeader className="gap-0 grid-rows-[auto] pb-2 shrink-0">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 flex-wrap">
@@ -1294,8 +1294,8 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
-        <CardHeader className="pb-3 shrink-0">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col py-3 overflow-hidden">
+        <CardHeader className="gap-0 grid-rows-[auto] pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <CardTitle className="tabular-nums">运行历史 ({runs.length})</CardTitle>
             <OptSelect className="w-52" value={filter} onChange={setFilter} placeholder="全部流水线"
@@ -1660,8 +1660,8 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   }
 
   return (
-    <Card className="gap-0 h-full flex flex-col overflow-hidden min-h-0">
-      <CardHeader className="pb-2 shrink-0">
+    <Card className="gap-0 h-full flex flex-col py-3 overflow-hidden min-h-0">
+      <CardHeader className="gap-0 grid-rows-[auto] pb-2 shrink-0">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle>Stage View</CardTitle>
           <OptSelect className="w-52" value={pid} onChange={setPid} placeholder="全部流水线"
@@ -1781,8 +1781,8 @@ function ScriptsTab() {
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
-        <CardHeader className="pb-3 shrink-0">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col py-3 overflow-hidden">
+        <CardHeader className="gap-0 grid-rows-[auto] pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">脚本库 ({scripts.length})</CardTitle>
             <Button size="sm" onClick={() => setEditing({ id: '', name: '', description: '', content: '', updatedAt: '' })}>
@@ -1905,8 +1905,8 @@ function ReposTab() {
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
 
-      <Card className="gap-0 mb-4 lg:mb-0 lg:flex-[3] lg:min-h-0 flex flex-col overflow-hidden">
-        <CardHeader className="pb-3">
+      <Card className="gap-0 mb-4 lg:mb-0 lg:flex-[3] lg:min-h-0 flex flex-col py-3 overflow-hidden">
+        <CardHeader className="gap-0 grid-rows-[auto] pb-3">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">代码仓库 ({(repos.data || []).length})</CardTitle>
             <Button size="sm" onClick={() => setEditingRepo({ id: '', name: '', url: '', credId: '', defaultBranch: 'master' })}><Plus />新建代码仓库</Button>
@@ -1939,8 +1939,8 @@ function ReposTab() {
         </CardContent>
       </Card>
 
-      <Card className="gap-0 lg:flex-[2] lg:min-h-0 flex flex-col overflow-hidden">
-        <CardHeader className="pb-3 shrink-0">
+      <Card className="gap-0 lg:flex-[2] lg:min-h-0 flex flex-col py-3 overflow-hidden">
+        <CardHeader className="gap-0 grid-rows-[auto] pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">镜像仓库 ({(registries.data || []).length})</CardTitle>
             <Button size="sm" onClick={() => setEditingReg({ id: '', name: '', server: '', credId: '' })}><Plus />新建镜像仓库</Button>
@@ -2054,8 +2054,8 @@ function CredentialsTab() {
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
-        <CardHeader className="pb-3 shrink-0">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col py-3 overflow-hidden">
+        <CardHeader className="gap-0 grid-rows-[auto] pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">凭据中心 ({creds.length})</CardTitle>
             <Button size="sm" onClick={() => setEditing({ id: '', name: '', type: 'git', username: '', server: '', hasData: false, note: '', updatedAt: '', data: '' })}><Plus />新建凭据</Button>
@@ -2216,8 +2216,8 @@ function AuditCard() {
   const { data } = useResource<{ ts: string; actor: string; action: string; target: string; detail: string }[]>(API.audit)
   const list = (data || []).slice(0, 8)
   return (
-    <Card className="gap-0 h-full flex flex-col overflow-hidden min-h-0">
-      <CardHeader className="pb-2 shrink-0">
+    <Card className="gap-0 h-full flex flex-col py-3 overflow-hidden min-h-0">
+      <CardHeader className="gap-0 grid-rows-[auto] pb-2 shrink-0">
         <CardTitle className="text-sm">操作审计</CardTitle>
       </CardHeader>
       <CardContent className="pt-0 flex-1 min-h-0 hover-scroll">
@@ -2251,8 +2251,8 @@ function StatChip({ label, value, warn, tone }: { label: string; value: string; 
 function RecentActivity({ runs, onOpenRun, onMore }: { runs: Run[]; onOpenRun: (id: string) => void; onMore?: () => void }) {
   const list = (runs || []).slice(0, 9)
   return (
-    <Card className="gap-0 h-full flex flex-col overflow-hidden">
-      <CardHeader className="pb-2 shrink-0">
+    <Card className="gap-0 h-full flex flex-col py-3 overflow-hidden">
+      <CardHeader className="gap-0 grid-rows-[auto] pb-2 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm">最近运行</CardTitle>
           {onMore && <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={onMore}>全部 <ChevronRight className="size-3.5" /></Button>}
