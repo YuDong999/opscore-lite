@@ -1675,7 +1675,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
             <div className="text-sm text-muted-foreground py-4">暂无运行记录</div>
           ) : (
             <div className="flex-1 min-h-0 overflow-auto hover-scroll">
-              <Table className={STICKY_THEAD + " [&_td]:py-1 [&_th]:py-1.5"}>
+              <Table className={STICKY_THEAD + " [&_td]:py-1.5 [&_th]:py-1.5"}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>构建名</TableHead>
@@ -1707,7 +1707,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
           <div className="text-sm text-muted-foreground py-4">该流水线暂无运行记录</div>
         ) : (
           <div className="flex-1 min-h-0 overflow-auto hover-scroll">
-            <Table className={STICKY_THEAD + " [&_td]:py-1 [&_th]:py-1.5"}>
+            <Table className={STICKY_THEAD + " [&_td]:py-1.5 [&_th]:py-1.5"}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="sticky left-0 bg-card min-w-24 z-10">构建</TableHead>
