@@ -3,6 +3,7 @@
 // 流程: 选源/目标 → 选表+模式 → plan 预览(类型映射/DDL/增量策略) → run 后台执行 → 进度轮询。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useToast } from '../Toast'
 import {
   type ConnectionInfo,
@@ -84,6 +85,34 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [tblOpen, setTblOpen] = useState(false)
   const [tblFilter, setTblFilter] = useState('')
+  const [tblPos, setTblPos] = useState<{ left: number; top: number; bottom: number; up: boolean; maxH: number; width: number }>({ left: 0, top: 0, bottom: 0, up: false, maxH: 380, width: 0 })
+  const tblAnchorRef = useRef<HTMLDivElement>(null)
+
+  // 打开时按触发器定位(portal 到 body): 下方空间足则向下, 否则向上翻转
+  const openPicker = () => {
+    if (tblOpen) { setTblOpen(false); return }
+    const el = tblAnchorRef.current
+    if (!el) { setTblOpen(true); return }
+    const r = el.getBoundingClientRect()
+    const below = window.innerHeight - r.bottom - 8
+    const up = below < 260 && r.top > below
+    setTblPos({
+      left: r.left, width: r.width,
+      top: r.bottom + 2, bottom: window.innerHeight - r.top + 2, up,
+      maxH: Math.max(180, up ? r.top - 16 : below),
+    })
+    setTblFilter('')
+    setTblOpen(true)
+  }
+
+  // 锚点随弹窗滚动/窗口变化时关闭(面板为 fixed, 锚点会移位)
+  useEffect(() => {
+    if (!tblOpen) return
+    const close = () => setTblOpen(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close) }
+  }, [tblOpen])
   const [mode, setMode] = useState<SyncMode>('schema_full')
   const [plan, setPlan] = useState<SyncPlan | null>(null)
   const [job, setJob] = useState<Job | null>(null)
@@ -119,7 +148,14 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   useEffect(() => {
     if (!sourceId) { setSrcDbs([]); setSrcSchemas([]); setSrcTables([]); return }
     listDatabases(sourceId).then(dbs => setSrcDbs(dbs || [])).catch(() => setSrcDbs([]))
-    listSchemas(sourceId).then(ss => setSrcSchemas(ss || [])).catch(() => setSrcSchemas([]))
+    listSchemas(sourceId).then(ss => {
+      setSrcSchemas(ss || [])
+      // 三级命名引擎(PG 族): GetTables 只查连接库, "库"选择是假层级 —— 固定为连接库, 层级交给模式
+      if (ss?.length && !presetDb) {
+        const db = conns.find(c => c.id === sourceId)?.config.database
+        if (db) setSourceDb(db)
+      }
+    }).catch(() => setSrcSchemas([]))
   }, [sourceId])
   useEffect(() => {
     if (!targetId) { setDstDbs([]); setDstSchemas([]); setTargetSchema(''); return }
@@ -127,6 +163,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
     listSchemas(targetId).then(ss => {
       setDstSchemas(ss || [])
       setTargetSchema(ss?.includes('public') ? 'public' : (ss?.[0] || ''))
+      if (ss?.length) {
+        const db = conns.find(c => c.id === targetId)?.config.database
+        if (db) setTargetDb(db)
+      }
     }).catch(() => { setDstSchemas([]); setTargetSchema('') })
   }, [targetId])
 
@@ -246,9 +286,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           </label>
           <label className="db-form-grow">
             源库{locked ? ' (固定)' : ''}
-            <select className="input" value={sourceDb} disabled={locked} title={locked ? '已由入口固定' : undefined}
+            <select className="input" value={sourceDb} disabled={locked || srcSchemas.length > 0}
+              title={locked ? '已由入口固定' : srcSchemas.length > 0 ? '该引擎为三级命名(库→模式→表), 库即连接库, 层级在模式选择' : undefined}
               onChange={e => setSourceDb(e.target.value)}
-              style={locked ? { opacity: 0.65 } : undefined}>
+              style={locked || srcSchemas.length > 0 ? { opacity: 0.65 } : undefined}>
               <option value="">(选择库)</option>
               {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
@@ -262,7 +303,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           </label>
           <label className="db-form-grow">
             目标库
-            <select className="input" value={targetDb} onChange={e => setTargetDb(e.target.value)}>
+            <select className="input" value={targetDb} disabled={dstSchemas.length > 0}
+              title={dstSchemas.length > 0 ? '该引擎为三级命名, 实际写入位置由目标模式决定' : undefined}
+              onChange={e => setTargetDb(e.target.value)}
+              style={dstSchemas.length > 0 ? { opacity: 0.65 } : undefined}>
               <option value="">(选择库)</option>
               {dstDbs.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
@@ -306,11 +350,11 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
         </label>
 
-        {/* 表选择: 下拉卡片(多选 + 自定义目标名) */}
-        <div style={{ position: 'relative' }}>
+        {/* 表选择: 下拉选择框(多选/反选/搜索); 面板 portal 到 body, 上下翻转, 不被弹窗裁剪 */}
+        <div style={{ position: 'relative' }} ref={tblAnchorRef}>
           <button type="button" className="input" disabled={visibleTables.length === 0}
             style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-            onClick={() => { setTblOpen(o => !o); setTblFilter('') }}>
+            onClick={openPicker}>
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {pickedTables.size === 0
                 ? (visibleTables.length ? '选择表 (可多选, 支持自定义目标表名)' : '请先选择源连接与库')
@@ -318,12 +362,13 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             </span>
             <Chevron open={tblOpen} />
           </button>
-          {tblOpen && (
+          {tblOpen && createPortal(
             <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 29 }} onClick={() => setTblOpen(false)} />
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 2,
+              <div style={{ position: 'fixed', inset: 0, zIndex: 2999 }} onClick={() => setTblOpen(false)} />
+              <div style={{ position: 'fixed', zIndex: 3000, left: tblPos.left, width: tblPos.width,
+                top: tblPos.up ? undefined : tblPos.top, bottom: tblPos.up ? tblPos.bottom : undefined,
                 background: 'var(--surface-solid)', border: '1px solid var(--border)', borderRadius: 6,
-                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: '15rem', overflowY: 'auto', padding: '0.3rem' }}>
+                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: tblPos.maxH, overflowY: 'auto', padding: '0.3rem' }}>
                 <div style={{ position: 'sticky', top: 0, background: 'var(--surface-solid)', zIndex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.4rem' }}>
                     <span className="dim" style={{ fontSize: '0.6875rem', flexShrink: 0 }}>
@@ -362,7 +407,8 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
                   </div>
                 ))}
               </div>
-            </>
+            </>,
+            document.body,
           )}
         </div>
 
@@ -381,7 +427,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             </span>
           </div>
           {job.err && <div className="banner banner-err">{job.err}</div>}
-          {job.tables.map(t => (
+          {(job.tables || []).map(t => (
             <div key={t.table} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', alignItems: 'center' }}>
               <span className={`pill ${t.status === 'done' ? 'pill-ok' : t.status === 'failed' ? 'pill-err' : t.status === 'skipped' ? '' : 'pill-warn'}`}>
                 {t.status === 'copying' ? '复制中' : t.status === 'creating' ? '建表中' : t.status === 'done' ? '完成' : t.status === 'failed' ? '失败' : t.status}
