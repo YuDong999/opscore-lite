@@ -26,7 +26,7 @@ export default function DataPanel({
   const [showColFilter, setShowColFilter] = useState(false)
   const [showFilterRow, setShowFilterRow] = useState(false)
   const [orderBy, setOrderBy] = useState('')
-  const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('asc')
+  const [orderDir, setOrderDir] = useState<'ASC' | 'DESC'>('ASC')
   const [filters, setFilters] = useState<Array<{ col: string; op: string; value: string }>>([])
   const where = useMemo(() => filters.map(f => {
     const col = f.col
@@ -227,7 +227,7 @@ export default function DataPanel({
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
             onClearFilters={() => { setFilters([]); setOrderBy('') }}
-            onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir); setPage(1) }}
+            onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}
           />
           <div className="db-data-pager">
             <span className="dim">共 {total} 行</span>

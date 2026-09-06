@@ -4,20 +4,21 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listConnections, listDatabases, listTables, testConnection, deleteConnection, describeTable, fetchTableDDL, fetchTableInserts,
+  type ConnectionInfo, listConnections, listDatabases, listTables, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 interface TreeNode {
   key: string
-  level: 'conn' | 'db' | 'group' | 'table' | 'view'
+  level: 'conn' | 'db' | 'group' | 'table' | 'view' | 'connGroup'
   label: string
   conn?: ConnectionInfo
   db?: string
   table?: string
   count?: number
   leaf?: boolean
+  group?: string
 }
 
 export default function ConnectionTree({
@@ -114,6 +115,7 @@ export default function ConnectionTree({
       if (!expanded.has(node.key)) loadDbs(node.conn.id)
       return
     }
+    if (node.level === 'connGroup') { toggleGroup(node.key); return }
     if (node.level === 'db' || node.level === 'group') { toggle(node.key); return }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       onOpenTable(node.conn, node.db, node.table, node.level === 'view')
@@ -124,7 +126,7 @@ export default function ConnectionTree({
   const renderRow = (node: TreeNode, depth: number, children: React.ReactNode) => {
     const selected = activeKey === node.key
     const canExpand = !node.leaf
-    const isOpen = expanded.has(node.key)
+    const isOpen = node.level === 'connGroup' ? !collapsedGroups.has(node.key) : expanded.has(node.key)
     return (
       <div
         className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
@@ -160,6 +162,15 @@ export default function ConnectionTree({
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db || '') },
         { label: '测试连接', icon: <ActionIcon kind="test" />, onClick: () => quickTest(node.conn!) },
         { divider: true },
+        { label: '移动到分组…', icon: <ActionIcon kind="transfer" />, onClick: () => {
+            const g = prompt('输入分组名称(留空=移出分组)', node.conn!.config.group || '')
+            if (g === null) return
+            const group = g.trim()
+            updateConnection(node.conn!.id, node.conn!.name, { ...node.conn!.config, group }, '')
+              .then(() => listConnections())
+              .then(list => { onConnsChange(list); notify(true, group ? `已移入分组「${group}」` : '已移出分组') })
+              .catch((e: any) => notify(false, '移动失败: ' + e.message))
+          } },
         { label: '编辑连接', icon: <ActionIcon kind="edit" />, onClick: () => onEditConn(node.conn!) },
         { label: '删除连接', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => remove(node.conn!) },
       ]
@@ -296,34 +307,66 @@ export default function ConnectionTree({
     }
   }
 
+  // 连接分组(复用 config.group 字段)
+  const connGroups = useMemo(() => {
+    const ungrouped: ConnectionInfo[] = []
+    const map: Record<string, ConnectionInfo[]> = {}
+    for (const c of visibleConns) {
+      const g = (c.config.group || '').trim()
+      if (g) (map[g] = map[g] || []).push(c)
+      else ungrouped.push(c)
+    }
+    const byGroup = Object.keys(map).sort().map(name => ({ name, conns: map[name] }))
+    return { ungrouped, byGroup }
+  }, [visibleConns])
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const toggleGroup = (name: string) => setCollapsedGroups(prev => {
+    const next = new Set(prev)
+    if (next.has(name)) next.delete(name); else next.add(name)
+    return next
+  })
+
+  const moveToGroup = async (c: ConnectionInfo, group: string) => {
+    try {
+      await updateConnection(c.id, c.name, { ...c.config, group: group.trim() }, '')
+      notify(true, group.trim() ? `已移入分组「${group.trim()}」` : '已移出分组')
+      onConnsChange(await listConnections())
+    } catch (e: any) {
+      notify(false, '移动失败: ' + e.message)
+    }
+  }
+
   // 组装可见行
   const rows: TreeNode[] = []
-  for (const c of visibleConns) {
+
+  const renderConn = (c: ConnectionInfo, groupName: string) => {
     const ckey = `conn:${c.id}`
     const isConnOpen = expanded.has(ckey)
-    rows.push({ key: ckey, level: 'conn', label: c.name, conn: c })
-    if (!isConnOpen) continue
+    rows.push({ key: ckey, level: 'conn', label: c.name, conn: c, group: groupName })
+    if (!isConnOpen) return
     const dbs = dbCache[c.id] || []
     for (const db of dbs) {
       const dkey = `${ckey}|db:${db}`
-      if (f && !db.toLowerCase().includes(f) && !c.name.toLowerCase().includes(f)) continue
-      const isDbOpen = expanded.has(dkey)
       rows.push({ key: dkey, level: 'db', label: db, conn: c, db })
-      if (!isDbOpen) continue
+      if (!expanded.has(dkey)) continue
       const ck2 = `${c.id}|${db}`
       const objs = tablesCache[ck2]
       if (!objs) continue
-      // �?视图不再作为树节�? 改为平铺卡片(�?db 节点下方连续渲染)
       const tables = objs.tables.filter(t => !f || t.toLowerCase().includes(f))
       const views = objs.views.filter(t => !f || t.toLowerCase().includes(f))
-      // 用特殊的 group 节点标记, 渲染时展开为卡片
-      if (tables.length > 0) {
-        rows.push({ key: `${dkey}|group:table`, level: 'group', label: `表 (${tables.length})`, conn: c, db, count: tables.length })
-      }
-      if (views.length > 0) {
-        rows.push({ key: `${dkey}|group:view`, level: 'group', label: `视图 (${views.length})`, conn: c, db, count: views.length })
-      }
+      if (tables.length > 0) rows.push({ key: `${dkey}|group:table`, level: 'group', label: `表 (${tables.length})`, conn: c, db, count: tables.length })
+      if (views.length > 0) rows.push({ key: `${dkey}|group:view`, level: 'group', label: `视图 (${views.length})`, conn: c, db, count: views.length })
     }
+  }
+
+  // 未分组连接平铺在前, 分组按名渲染(组头可折叠)
+  for (const c of connGroups.ungrouped) renderConn(c, '')
+  for (const g of connGroups.byGroup) {
+    const gkey = `cgroup:${g.name}`
+    const isOpen = !collapsedGroups.has(gkey)
+    rows.push({ key: gkey, level: 'connGroup', label: g.name, group: g.name, count: g.conns.length })
+    if (isOpen) for (const c of g.conns) renderConn(c, g.name)
   }
 
   // 懒加载触发
@@ -381,6 +424,7 @@ export default function ConnectionTree({
           const isConn = node.level === 'conn'
           const isDb = node.level === 'db'
           const isGroup = node.level === 'group'
+          const isConnGroup = node.level === 'connGroup'
           const selected = activeKey === node.key
 
           // group 节点(表/视图分组) + 展开后的表行(dbx: 表就是普通行)
@@ -426,6 +470,18 @@ export default function ConnectionTree({
                 })}
               </React.Fragment>
             )
+          }
+
+          if (isConnGroup) {
+            return renderRow(node, depth, (
+              <>
+                <NodeIcon level={node.level} />
+                <span className="truncate font-medium">{node.label}</span>
+                {node.count !== undefined && (
+                  <span className="ml-0.5 inline-flex h-4 items-center rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{node.count}</span>
+                )}
+              </>
+            ))
           }
 
           return renderRow(node, depth, (

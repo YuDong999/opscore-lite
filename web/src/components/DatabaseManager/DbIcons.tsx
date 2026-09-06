@@ -91,7 +91,7 @@ export function EngineIcon({ engine, size = 16 }: { engine: string | EngineType 
 }
 
 /** 树节点图标: db / folder / table / view */
-export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'table' | 'view'; size?: number }) {
+export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'connGroup' | 'table' | 'view'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (level) {
     case 'conn':
@@ -104,6 +104,7 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
           <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
         </svg>
       )
+    case 'connGroup':
     case 'group':
       return (
         <svg {...common} className="dbx-node-icon icon-group">
