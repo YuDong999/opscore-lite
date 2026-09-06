@@ -83,6 +83,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [targetSchema, setTargetSchema] = useState('')
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
+  const [syncEngines, setSyncEngines] = useState<string[] | null>(null)
   const [tblOpen, setTblOpen] = useState(false)
   const [tblFilter, setTblFilter] = useState('')
   const [tblPos, setTblPos] = useState<{ left: number; top: number; bottom: number; up: boolean; maxH: number; width: number }>({ left: 0, top: 0, bottom: 0, up: false, maxH: 380, width: 0 })
@@ -138,6 +139,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   )
 
   useEffect(() => {
+    fetch('/api/dbmanager/sync/engines', { headers: localStorage.getItem('opscore-token') ? { Authorization: `Bearer ${localStorage.getItem('opscore-token')}` } : {} })
+      .then(r => r.json()).then(d => setSyncEngines(d.engines || [])).catch(() => setSyncEngines(null))
+  }, [])
+  useEffect(() => {
     if (!sourceId && activeConnId) setSourceId(activeConnId)
   }, [activeConnId])
   useEffect(() => {
@@ -180,17 +185,19 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       if (presetApplied.current) return
       presetApplied.current = true
       const schemas = [...new Set(names.map(n => { const i = n.indexOf('.'); return i > 0 ? n.slice(0, i) : '' }).filter(Boolean))].sort()
+      const pool = srcSchemas.length ? srcSchemas : schemas
       if (presetTable) {
+        // 表级入口: 该表预选, 模式锁定为其所属模式
         if (names.includes(presetTable)) setPickedTables(new Set([presetTable]))
         const i = presetTable.indexOf('.')
         const pfx = i > 0 ? presetTable.slice(0, i) : ''
-        const def = pfx && (srcSchemas.includes(pfx) || schemas.includes(pfx)) ? pfx : ''
-        if (def) setSrcSchema(def)
-      } else if (srcSchemas.length || schemas.length) {
-        const pool = srcSchemas.length ? srcSchemas : schemas
-        const def = presetSchema && pool.includes(presetSchema) ? presetSchema
-          : pool.includes('public') ? 'public' : pool[0]
-        setSrcSchema(def)
+        if (pfx && pool.includes(pfx)) setSrcSchema(pfx)
+      } else if (presetSchema) {
+        // 模式级入口: 锁定该模式
+        setSrcSchema(pool.includes(presetSchema) ? presetSchema : '')
+      } else {
+        // 库级入口(及面板进入): 全部模式 —— 整库同步不做擅自收窄
+        setSrcSchema('')
       }
     }).catch(() => setSrcTables([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -273,6 +280,14 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
         </span></span>
       </div>
 
+      {presetDb && (
+        <div style={{ padding: '0.35rem 0.6rem', background: 'var(--surface-tint)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="db-engine-badge">同步范围</span>
+          <b>{presetTable ? `表 ${shortName(presetTable)}` : presetSchema ? `模式 ${presetSchema}` : `库 ${presetDb}`}</b>
+          <span className="dim">源侧已固定{presetTable ? ', 可在范围内追加其他表' : ''}</span>
+        </div>
+      )}
+
       <div className="db-form">
         <div className="db-form-row">
           <label className="db-form-grow">
@@ -281,7 +296,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
               onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema('') }}
               style={locked ? { opacity: 0.65 } : undefined}>
               <option value="">(选择连接)</option>
-              {dbOptions.map(c => <option key={c.id} value={c.id}>{c.name} ({c.engine})</option>)}
+              {dbOptions.map(c => {
+                const ok = !syncEngines || syncEngines.includes(c.engine)
+                return <option key={c.id} value={c.id} disabled={!ok}>{c.name} ({c.engine}){ok ? '' : ' · 不支持同步'}</option>
+              })}
             </select>
           </label>
           <label className="db-form-grow">

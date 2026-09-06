@@ -20,22 +20,34 @@ func EngineDialect(engine string) Dialect {
 	return ""
 }
 
-// mysqlFamily / postgresFamily: 引擎→方言族注册处, 新引擎接入在此声明一次,
-// 方言归一(EngineDialect)与能力判定(EngineHasSchema)都从这里取, 不散落硬编码。
-func mysqlFamily(engine string) bool {
-	switch engine {
-	case "mysql", "mysql_agent", "mariadb", "goldendb":
-		return true
+// 引擎→方言族注册表: 新引擎接入在此声明一次, 方言归一(EngineDialect)、
+// 模式能力(EngineHasSchema)、同步能力(SyncCapableEngines)都从这里取, 不散落硬编码。
+// 注: 三级命名不止 PG 族 —— Oracle 族为 连接→模式→对象(无库层), 接入时
+// 除声明本表外还需扩展无库层结构(dbx 同款), 属引擎接入工作的一部分。
+var (
+	mysqlFamilyEngines    = []string{"mysql", "mysql_agent", "mariadb", "goldendb"}
+	postgresFamilyEngines = []string{"postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb"}
+)
+
+func inList(list []string, engine string) bool {
+	for _, e := range list {
+		if e == engine {
+			return true
+		}
 	}
 	return false
 }
 
-func postgresFamily(engine string) bool {
-	switch engine {
-	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
-		return true
-	}
-	return false
+func mysqlFamily(engine string) bool { return inList(mysqlFamilyEngines, engine) }
+
+func postgresFamily(engine string) bool { return inList(postgresFamilyEngines, engine) }
+
+// SyncCapableEngines 已接入同步方言族的引擎清单(前端据此标注连接可同步性)。
+func SyncCapableEngines() []string {
+	out := make([]string, 0, len(mysqlFamilyEngines)+len(postgresFamilyEngines))
+	out = append(out, mysqlFamilyEngines...)
+	out = append(out, postgresFamilyEngines...)
+	return out
 }
 
 // EngineHasSchema 报告引擎命名空间是否为 库→模式→表 三级(对象需要模式限定)。

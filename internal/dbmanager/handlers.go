@@ -55,6 +55,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
 			{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
 			{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
+			{Path: "/api/dbmanager/sync/engines", Handler: h.handleSyncEngines},
 			{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
 			{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
 			{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
@@ -1065,6 +1066,15 @@ func (h *Handlers) handleSyncPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"plan": plan})
+}
+
+// handleSyncEngines GET -> 已接入同步方言族的引擎清单(能力驱动, 前端标注连接可同步性)
+func (h *Handlers) handleSyncEngines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, map[string]any{"engines": syncpkg.SyncCapableEngines()})
 }
 
 // handleSyncRun POST {同 plan 请求} -> 启动后台任务, 返回 jobId
