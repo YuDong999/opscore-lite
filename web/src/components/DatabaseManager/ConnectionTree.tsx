@@ -4,26 +4,27 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listConnections, listDatabases, listTables, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
+  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 interface TreeNode {
   key: string
-  level: 'conn' | 'db' | 'group' | 'table' | 'view' | 'connGroup'
+  level: 'conn' | 'db' | 'group' | 'schema' | 'table' | 'view' | 'connGroup'
   label: string
   conn?: ConnectionInfo
   db?: string
   table?: string
   count?: number
+  schema?: string
   leaf?: boolean
   group?: string
 }
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
-  onSyncDb, onSyncTable, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
+  onSyncDb, onSyncTable, onSyncSchema, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
   onRefresh,
 }: {
   conns: ConnectionInfo[]
@@ -38,6 +39,7 @@ export default function ConnectionTree({
   notify: (ok: boolean, msg: string) => void
   onSyncDb: (conn: ConnectionInfo, db: string) => void
   onSyncTable?: (conn: ConnectionInfo, db: string, table: string) => void
+  onSyncSchema?: (conn: ConnectionInfo, db: string, schema: string) => void
   onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
   onOpenExplain: (conn: ConnectionInfo, db: string, table: string) => void
   onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
@@ -100,6 +102,14 @@ export default function ConnectionTree({
     } catch { setTablesCache(prev => ({ ...prev, [ck]: { tables: [], views: [] } })) }
   }
 
+  // 模式能力探测(dbx loadSchemas 同构): 列模式非空 → 库下渲染模式层级; 空/失败 → 平铺对象
+  const [schemaCache, setSchemaCache] = useState<Record<string, string[]>>({})
+  const probeSchemas = (connId: string) => {
+    listSchemas(connId)
+      .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
+      .catch(() => setSchemaCache(prev => ({ ...prev, [connId]: [] })))
+  }
+
   const toggle = (key: string) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -117,7 +127,7 @@ export default function ConnectionTree({
       return
     }
     if (node.level === 'connGroup') { toggleGroup(node.key); return }
-    if (node.level === 'db' || node.level === 'group') { toggle(node.key); return }
+    if (node.level === 'db' || node.level === 'schema' || node.level === 'group') { toggle(node.key); return }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       onOpenTable(node.conn, node.db, node.table, node.level === 'view')
     }
@@ -174,6 +184,16 @@ export default function ConnectionTree({
           } },
         { label: '编辑连接', icon: <ActionIcon kind="edit" />, onClick: () => onEditConn(node.conn!) },
         { label: '删除连接', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => remove(node.conn!) },
+      ]
+    }
+    if (node.level === 'schema' && node.conn && node.db && node.schema) {
+      return [
+        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
+        { divider: 'heavy' },
+        ...(onSyncSchema ? [{ label: '跨库同步此模式', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncSchema(node.conn!, node.db!, node.schema!) }] : []),
+        { divider: 'heavy' },
+        { label: '复制模式名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.schema!); notify(true, `已复制 ${node.schema}`) } },
       ]
     }
     if (node.level === 'db' && node.conn && node.db) {
@@ -271,7 +291,7 @@ export default function ConnectionTree({
   }
 
   const refreshAll = () => {
-    setDbCache({}); setTablesCache({}); setExpanded(new Set())
+    setDbCache({}); setTablesCache({}); setSchemaCache({}); setExpanded(new Set())
     notify(true, '已刷新, 重新展开连接加载')
   }
 
@@ -352,8 +372,23 @@ export default function ConnectionTree({
       const dkey = `${ckey}|db:${db}`
       rows.push({ key: dkey, level: 'db', label: db, conn: c, db })
       if (!expanded.has(dkey)) continue
+      const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
       const ck2 = `${c.id}|${db}`
       const objs = tablesCache[ck2]
+      if (schemas.length > 0) {
+        // 三级命名(dbx loadSchemas 同构): 库 → 模式(真层级节点) → 表/视图分组
+        for (const sc of schemas) {
+          const skey = `${dkey}|schema:${sc}`
+          rows.push({ key: skey, level: 'schema', label: sc, conn: c, db, schema: sc })
+          if (!expanded.has(skey) || !objs) continue
+          const pfx = sc + '.'
+          const sTables = objs.tables.filter(t => t.startsWith(pfx) && (!f || t.toLowerCase().includes(f)))
+          const sViews = objs.views.filter(t => t.startsWith(pfx) && (!f || t.toLowerCase().includes(f)))
+          if (sTables.length > 0) rows.push({ key: `${skey}|group:table`, level: 'group', label: `表 (${sTables.length})`, conn: c, db, schema: sc, count: sTables.length })
+          if (sViews.length > 0) rows.push({ key: `${skey}|group:view`, level: 'group', label: `视图 (${sViews.length})`, conn: c, db, schema: sc, count: sViews.length })
+        }
+        continue
+      }
       if (!objs) continue
       const tables = objs.tables.filter(t => !f || t.toLowerCase().includes(f))
       const views = objs.views.filter(t => !f || t.toLowerCase().includes(f))
@@ -378,6 +413,7 @@ export default function ConnectionTree({
       if (key.startsWith('conn:') && !dbPart) {
         const connId = key.slice(5)
         if (connId && !dbCache[connId]) loadDbs(connId)
+        if (connId && !schemaCache[connId]) probeSchemas(connId)
       }
       if (dbPart && dbPart.startsWith('db:')) {
         const connId = connPart.slice(5)
@@ -433,8 +469,10 @@ export default function ConnectionTree({
           if (isGroup && node.conn && node.db) {
             const ck2 = `${node.conn.id}|${node.db}`
             const objs = tablesCache[ck2]
-            const tables = objs ? objs.tables.filter(t => !f || t.toLowerCase().includes(f)) : []
-            const views = objs ? objs.views.filter(t => !f || t.toLowerCase().includes(f)) : []
+            const pfx = node.schema ? node.schema + '.' : ''
+            const inScope = (t: string) => (!pfx || t.startsWith(pfx)) && (!f || t.toLowerCase().includes(f))
+            const tables = objs ? objs.tables.filter(inScope) : []
+            const views = objs ? objs.views.filter(inScope) : []
             const isTableGroup = node.label.startsWith('表')
             const allItems = isTableGroup ? tables : views
             const items = [...allItems].sort((a, b) => {
@@ -464,7 +502,7 @@ export default function ConnectionTree({
                         {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
                       </span>
                       <span className="truncate">
-                        {t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
+                        {pfx ? t.slice(pfx.length) : t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
                       </span>
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
                     </>
