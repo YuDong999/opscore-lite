@@ -83,6 +83,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [tblOpen, setTblOpen] = useState(false)
+  const [tblFilter, setTblFilter] = useState('')
   const [mode, setMode] = useState<SyncMode>('schema_full')
   const [plan, setPlan] = useState<SyncPlan | null>(null)
   const [job, setJob] = useState<Job | null>(null)
@@ -131,7 +132,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
 
   // 源表列表: 级联下游重置, 然后应用入口预设(表级进入: 预选该表并固定其模式)
   useEffect(() => {
-    setSrcTables([]); setPickedTables(new Set()); setTargetNames({}); setPlan(null); presetApplied.current = false
+    setSrcTables([]); setPickedTables(new Set()); setTargetNames({}); setPlan(null); setSrcSchema(''); setTblOpen(false); presetApplied.current = false
     if (!sourceId || !sourceDb) return
     listTables(sourceId, sourceDb).then(ts => {
       const names = ts.map(t => t.name)
@@ -254,7 +255,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           </label>
           <label className="db-form-grow">
             目标连接
-            <select className="input" value={targetId} onChange={e => { setTargetId(e.target.value); setTargetDb('') }}>
+            <select className="input" value={targetId} onChange={e => { setTargetId(e.target.value); setTargetDb(''); setPlan(null) }}>
               <option value="">(选择连接)</option>
               {dbOptions.filter(c => c.id !== sourceId).map(c => <option key={c.id} value={c.id}>{c.name} ({c.engine})</option>)}
             </select>
@@ -309,7 +310,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
         <div style={{ position: 'relative' }}>
           <button type="button" className="input" disabled={visibleTables.length === 0}
             style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-            onClick={() => setTblOpen(o => !o)}>
+            onClick={() => { setTblOpen(o => !o); setTblFilter('') }}>
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {pickedTables.size === 0
                 ? (visibleTables.length ? '选择表 (可多选, 支持自定义目标表名)' : '请先选择源连接与库')
@@ -322,17 +323,23 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
               <div style={{ position: 'fixed', inset: 0, zIndex: 29 }} onClick={() => setTblOpen(false)} />
               <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 2,
                 background: 'var(--surface-solid)', border: '1px solid var(--border)', borderRadius: 6,
-                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: '18rem', overflowY: 'auto', padding: '0.3rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.2rem 0.4rem', position: 'sticky', top: 0, background: 'var(--surface-solid)' }}>
-                  <span className="dim" style={{ fontSize: '0.6875rem' }}>
-                    {srcSchema ? `模式 ${srcSchema} · ` : ''}{visibleTables.length} 张表
-                  </span>
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(new Set(visibleTables))}>全选</button>
-                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setPickedTables(new Set()); setTargetNames({}) }}>清空</button>
-                  </span>
+                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: '15rem', overflowY: 'auto', padding: '0.3rem' }}>
+                <div style={{ position: 'sticky', top: 0, background: 'var(--surface-solid)', zIndex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.4rem' }}>
+                    <span className="dim" style={{ fontSize: '0.6875rem', flexShrink: 0 }}>
+                      {srcSchema ? `模式 ${srcSchema} · ` : ''}{visibleTables.length} 张表
+                    </span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(new Set(visibleTables))}>全选</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(prev => new Set(visibleTables.filter(t => !prev.has(t))))}>反选</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setPickedTables(new Set()); setTargetNames({}) }}>清空</button>
+                    </span>
+                  </div>
+                  <div style={{ padding: '0.15rem 0.4rem 0.25rem' }}>
+                    <input className="input input-sm" style={{ width: '100%' }} placeholder="搜索表名..." value={tblFilter} onChange={e => setTblFilter(e.target.value)} />
+                  </div>
                 </div>
-                {visibleTables.map(t => (
+                {visibleTables.filter(t => !tblFilter.trim() || shortName(t).toLowerCase().includes(tblFilter.trim().toLowerCase()) || t.toLowerCase().includes(tblFilter.trim().toLowerCase())).map(t => (
                   <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0.4rem' }}>
                     <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '9rem', maxWidth: '14rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />

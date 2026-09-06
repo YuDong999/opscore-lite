@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, type TableData } from './api'
+import { type ConnectionInfo, fetchData, describeTable, type TableData, type ColumnInfo } from './api'
 import DataGrid from './DataGrid'
 
 type ViewMode = 'table' | 'json' | 'text'
@@ -17,6 +17,7 @@ export default function DataPanel({
 }) {
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
+  const [colMeta, setColMeta] = useState<ColumnInfo[] | undefined>(undefined)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -66,6 +67,7 @@ export default function DataPanel({
     describeTable(conn.id, database, table)
       .then(d => {
         setColTypes(d.columns.map(c => c.type))
+        setColMeta(d.columns)
       })
       .catch(() => setColTypes(undefined))
   }, [conn.id, database, table])
@@ -225,6 +227,7 @@ export default function DataPanel({
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
+            columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
             onClearFilters={() => { setFilters([]); setOrderBy('') }}
             onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}

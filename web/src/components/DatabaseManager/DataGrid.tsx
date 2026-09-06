@@ -23,12 +23,13 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onFilter, onClearFilters, onSortDatabase }: {
+export default function DataGrid({ result, onEdit, connId, sql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
   sql?: string
   columnTypes?: (string | undefined)[]  // 列类型(数据浏览模式展示在列头第二行)
+  columnMeta?: ColumnInfo[]             // 完整列元数据(describe; 注释/可空/键)
   onFilter?: (col: string, op: string, value: string) => void
   onClearFilters?: () => void
   onSortDatabase?: (col: string, dir: 'asc' | 'desc') => void
@@ -39,7 +40,10 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
   const [sortCol, setSortCol] = useState<number | null>(null)
   const [sortAsc, setSortAsc] = useState(true)
   const [copied, setCopied] = useState('')
-  const [detail, setDetail] = useState<{ v: any; col: string } | null>(null)
+  const [detail, setDetail] = useState<{ r: number; c: number } | null>(null)
+  const [rowDetail, setRowDetail] = useState<number | null>(null)
+  const [colDetail, setColDetail] = useState<number | null>(null)
+  const [fieldFilter, setFieldFilter] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null)
   const [rowCtxMenu, setRowCtxMenu] = useState<{ row: number; x: number; y: number } | null>(null)
 
@@ -110,6 +114,24 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
     return idx.map(i => editedRows[i])
   }, [editedRows, sortCol, sortAsc])
 
+  // ── 详情(单/行/列三种聚合共用一个原子构建器, dbx dataGridDetail 同构) ──
+  const metaByName = useMemo(() => new Map((columnMeta || []).map(m => [m.name, m])), [columnMeta])
+  const buildCellInfo = useCallback((r: number, c: number) => {
+    if (!result || !result.columns) return null
+    const column = result.columns[c]
+    if (column === undefined) return null
+    const value = result.rows[r]?.[c] ?? null
+    const meta = metaByName.get(column)
+    return {
+      column, rowNumber: r + 1, value,
+      type: columnMeta?.[c]?.type || columnTypes?.[c] || '',
+      comment: meta?.comment || '',
+      nullable: meta?.nullable,
+      key: meta?.key || '',
+      length: value === null ? 0 : String(value).length,
+    }
+  }, [result, metaByName, columnMeta, columnTypes])
+
   const copyCell = useCallback((v: any) => {
     const text = renderCell(v)
     navigator.clipboard?.writeText(text).then(() => {
@@ -142,7 +164,9 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
       { label: '复制列名', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(colName) },
       { divider: 'heavy' },
       // ── 详情 ──
-      { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ v: cellValue, col: colName }) },
+      { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ r: row, c: col }) },
+      { label: '行详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setRowDetail(row) } },
+      { label: '列详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setColDetail(col) } },
       { divider: 'heavy' },
       // ── 排序(dbx 双模式: 数据库排序=后端 ORDER BY, 当前页排序=本地) ──
       ...(onSortDatabase ? [
@@ -302,7 +326,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
                       setRowCtxMenu(null)
                       setCtxMenu({ row: i, col: j, x: e.clientX, y: e.clientY })
                     }}
-                    onDoubleClick={() => setDetail({ v: cell, col: result.columns[j] })}
+                    onDoubleClick={() => setDetail({ r: i, c: j })}
                     onClick={() => {
                       if (editingCell?.row === i && editingCell?.col === j) return
                       if (isEditable) handleCellClick(i, j)
@@ -350,19 +374,129 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
           onClose={() => setRowCtxMenu(null)}
         />
       )}
-      {detail && createPortal(
-        <div className="qo-overlay" onClick={() => setDetail(null)}>
-          <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
-            <div className="db-cell-detail-head">
-              <span className="db-cell-detail-col">{detail.col}</span>
-              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(renderCell(detail.v)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制</button>
-              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(null)}>✕</button>
+      {/* 单元格详情: 元数据网格 + 注释 + 值(dbx CellDetailDialog 同构) */}
+      {detail && (() => {
+        const info = buildCellInfo(detail.r, detail.c)
+        if (!info) return null
+        return createPortal(
+          <div className="qo-overlay" onClick={() => setDetail(null)}>
+            <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
+              <div className="db-cell-detail-head">
+                <span className="db-cell-detail-col">单元格详情</span>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(null)}>✕</button>
+              </div>
+              <div className="db-cell-detail-body">
+                <div className="db-cell-meta">
+                  <div><span className="dim">列名</span><b>{info.column}</b></div>
+                  <div><span className="dim">行号</span>{info.rowNumber}</div>
+                  <div><span className="dim">类型</span>{info.type || '-'}</div>
+                  <div><span className="dim">长度</span>{info.length}</div>
+                  {columnMeta && <div><span className="dim">可空</span>{info.nullable ? 'YES' : 'NO'}</div>}
+                  {columnMeta && <div><span className="dim">键</span>{info.key || '-'}</div>}
+                </div>
+                <div className="db-cell-meta-comment">
+                  <span className="dim">注释</span>
+                  <span>{info.comment || '暂无注释'}</span>
+                </div>
+                <div className="db-cell-meta-value">
+                  <div className="db-cell-meta-value-head">
+                    <span className="dim">值</span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.value === null ? '' : renderCell(info.value)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制值</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.column); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制列名</button>
+                    </span>
+                  </div>
+                  <pre>{info.value === null ? <i className="dim">NULL</i> : typeof info.value === 'object' ? JSON.stringify(info.value, null, 2) : String(info.value)}</pre>
+                </div>
+              </div>
             </div>
-            <pre className="db-cell-detail-body">{detail.v === null ? 'NULL' : typeof detail.v === 'object' ? JSON.stringify(detail.v, null, 2) : String(detail.v)}</pre>
-          </div>
-        </div>,
-        document.body,
-      )}
+          </div>,
+          document.body,
+        )
+      })()}
+      {/* 行详情: 字段列表(列名+值, 可过滤) + 复制 JSON/TSV */}
+      {rowDetail !== null && (() => {
+        if (!result || !result.columns) return null
+        const fields = result.columns
+          .map((column, c) => buildCellInfo(rowDetail, c))
+          .filter(Boolean) as NonNullable<ReturnType<typeof buildCellInfo>>[]
+        const kw = fieldFilter.trim().toLowerCase()
+        const shown = fields.filter(f => !kw || f.column.toLowerCase().includes(kw) || String(f.value ?? '').toLowerCase().includes(kw))
+        const json = JSON.stringify(Object.fromEntries(fields.map(f => [f.column, f.value])), null, 2)
+        const tsv = fields.map(f => renderCell(f.value)).join('	')
+        return createPortal(
+          <div className="qo-overlay" onClick={() => setRowDetail(null)}>
+            <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
+              <div className="db-cell-detail-head">
+                <span className="db-cell-detail-col">行详情 · 第 {rowDetail + 1} 行 <span className="dim">{fields.length} 列</span></span>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(json); setCopied('已复制 JSON'); setTimeout(() => setCopied(''), 1200) }}>复制 JSON</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(tsv); setCopied('已复制 TSV'); setTimeout(() => setCopied(''), 1200) }}>复制 TSV</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setRowDetail(null)}>✕</button>
+              </div>
+              <div className="db-cell-detail-body">
+                <input className="input input-sm" style={{ marginBottom: 6 }} placeholder="过滤列名 / 值..." value={fieldFilter} onChange={e => setFieldFilter(e.target.value)} />
+                <div className="db-detail-fields">
+                  {shown.map(f => (
+                    <div key={f.column} className="db-detail-field-row">
+                      <span className="db-detail-field-name" title={f.column}>{f.column}</span>
+                      <span className="db-detail-field-val">{f.value === null ? <i className="dim">NULL</i> : renderCell(f.value)}</span>
+                    </div>
+                  ))}
+                  {shown.length === 0 && <div className="db-empty-sm">无匹配字段</div>}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      })()}
+      {/* 列详情: 列元数据头 + 本列逐行值(可过滤) */}
+      {colDetail !== null && (() => {
+        if (!result || !result.columns) return null
+        const meta = buildCellInfo(0, colDetail)
+        if (!meta) return null
+        const kw = fieldFilter.trim().toLowerCase()
+        const rows = result.rows
+          .map((row, r) => ({ rowNumber: r + 1, value: row[colDetail] }))
+          .filter(x => !kw || String(x.value ?? '').toLowerCase().includes(kw) || String(x.rowNumber).includes(kw))
+        const tsv = result.rows.map(row => renderCell(row[colDetail])).join('\n')
+        const json = JSON.stringify(result.rows.map((row, r) => ({ row: r + 1, value: row[colDetail] })), null, 2)
+        return createPortal(
+          <div className="qo-overlay" onClick={() => setColDetail(null)}>
+            <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
+              <div className="db-cell-detail-head">
+                <span className="db-cell-detail-col">列详情 · {meta.column}</span>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(json); setCopied('已复制 JSON'); setTimeout(() => setCopied(''), 1200) }}>复制 JSON</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(tsv); setCopied('已复制 全列值'); setTimeout(() => setCopied(''), 1200) }}>复制全列值</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setColDetail(null)}>✕</button>
+              </div>
+              <div className="db-cell-detail-body">
+                <div className="db-cell-meta">
+                  <div><span className="dim">类型</span>{meta.type || '-'}</div>
+                  {columnMeta && <div><span className="dim">可空</span>{meta.nullable ? 'YES' : 'NO'}</div>}
+                  {columnMeta && <div><span className="dim">键</span>{meta.key || '-'}</div>}
+                  <div><span className="dim">行数</span>{result.rows.length}</div>
+                </div>
+                <div className="db-cell-meta-comment">
+                  <span className="dim">注释</span>
+                  <span>{meta.comment || '暂无注释'}</span>
+                </div>
+                <input className="input input-sm" style={{ margin: '6px 0' }} placeholder="过滤值 / 行号..." value={fieldFilter} onChange={e => setFieldFilter(e.target.value)} />
+                <div className="db-detail-fields">
+                  {rows.map(x => (
+                    <div key={x.rowNumber} className="db-detail-field-row">
+                      <span className="db-detail-field-name">{x.rowNumber}</span>
+                      <span className="db-detail-field-val">{x.value === null ? <i className="dim">NULL</i> : renderCell(x.value)}</span>
+                    </div>
+                  ))}
+                  {rows.length === 0 && <div className="db-empty-sm">无匹配行</div>}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      })()}
     </div>
   )
 }
