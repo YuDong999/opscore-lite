@@ -467,7 +467,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
       {/* 主从两栏撑满视口剩余高度, 各自框内滑动(滚动条悬停才显示) */}
       <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-3 items-start lg:items-stretch lg:h-[calc(100vh-14rem)]">
         {/* 左: 流水线清单(主) */}
-        <Card className="flex flex-col overflow-hidden lg:h-full">
+        <Card className="gap-0 flex flex-col overflow-hidden lg:h-full">
           <CardHeader className="pb-2 shrink-0">
             <div className="flex items-center justify-between gap-1">
               <CardTitle className="text-sm tabular-nums">流水线 ({pipes.length})</CardTitle>
@@ -600,7 +600,7 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
   }, [live, p.lastRun?.id])
 
   return (
-    <Card className="flex flex-col overflow-hidden lg:h-full min-h-0">
+    <Card className="gap-0 flex flex-col overflow-hidden lg:h-full min-h-0">
       <CardHeader className="pb-3 shrink-0">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div className="min-w-0">
@@ -1294,7 +1294,7 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
         <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <CardTitle className="tabular-nums">运行历史 ({runs.length})</CardTitle>
@@ -1660,7 +1660,7 @@ function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   }
 
   return (
-    <Card className="h-full flex flex-col overflow-hidden min-h-0">
+    <Card className="gap-0 h-full flex flex-col overflow-hidden min-h-0">
       <CardHeader className="pb-2 shrink-0">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle>Stage View</CardTitle>
@@ -1781,7 +1781,7 @@ function ScriptsTab() {
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
         <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">脚本库 ({scripts.length})</CardTitle>
@@ -1905,7 +1905,7 @@ function ReposTab() {
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
 
-      <Card className="mb-4">
+      <Card className="gap-0 mb-4 lg:mb-0 lg:flex-[3] lg:min-h-0 flex flex-col overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">代码仓库 ({(repos.data || []).length})</CardTitle>
@@ -1939,7 +1939,7 @@ function ReposTab() {
         </CardContent>
       </Card>
 
-      <Card className="lg:flex-[2] lg:min-h-0 flex flex-col overflow-hidden">
+      <Card className="gap-0 lg:flex-[2] lg:min-h-0 flex flex-col overflow-hidden">
         <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">镜像仓库 ({(registries.data || []).length})</CardTitle>
@@ -2054,7 +2054,7 @@ function CredentialsTab() {
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
-      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <Card className="gap-0 flex-1 min-h-0 flex flex-col overflow-hidden">
         <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="tabular-nums">凭据中心 ({creds.length})</CardTitle>
@@ -2216,7 +2216,7 @@ function AuditCard() {
   const { data } = useResource<{ ts: string; actor: string; action: string; target: string; detail: string }[]>(API.audit)
   const list = (data || []).slice(0, 8)
   return (
-    <Card className="h-full flex flex-col overflow-hidden min-h-0">
+    <Card className="gap-0 h-full flex flex-col overflow-hidden min-h-0">
       <CardHeader className="pb-2 shrink-0">
         <CardTitle className="text-sm">操作审计</CardTitle>
       </CardHeader>
@@ -2251,7 +2251,7 @@ function StatChip({ label, value, warn, tone }: { label: string; value: string; 
 function RecentActivity({ runs, onOpenRun, onMore }: { runs: Run[]; onOpenRun: (id: string) => void; onMore?: () => void }) {
   const list = (runs || []).slice(0, 9)
   return (
-    <Card className="h-full flex flex-col overflow-hidden">
+    <Card className="gap-0 h-full flex flex-col overflow-hidden">
       <CardHeader className="pb-2 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm">最近运行</CardTitle>
