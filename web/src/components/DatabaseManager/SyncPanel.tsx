@@ -86,7 +86,6 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [syncEngines, setSyncEngines] = useState<string[] | null>(null)
-  const [entryCleared, setEntryCleared] = useState(false)      // 更换源连接 → 入口预设失效, 恢复自由选择
   const [tblOpen, setTblOpen] = useState(false)
   const [tblFilter, setTblFilter] = useState('')
   const [tblPos, setTblPos] = useState<{ left: number; top: number; bottom: number; up: boolean; maxH: number; width: number }>({ left: 0, top: 0, bottom: 0, up: false, maxH: 380, width: 0 })
@@ -98,8 +97,8 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [expanded, setExpanded] = useState<string | null>(null)
   const presetApplied = useRef(false)
 
-  // 生效的入口预设(换源连接后清除)
-  const eff = entryCleared ? { db: '', schema: '', table: '' } : { db: presetDb || '', schema: presetSchema || '', table: presetTable || '' }
+  // 生效的入口预设(库/模式/表右键进入); 顶部按钮/面板进入为无预设
+  const eff = { db: presetDb || '', schema: presetSchema || '', table: presetTable || '' }
   const srcThree = srcSchemas.length > 0
   const dstThree = dstSchemas.length > 0
   // 源范围栏固定条件: 表级/模式级入口(两级/三级都固定); 两级引擎的库级入口也固定库
@@ -291,7 +290,6 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const pickedSummary = [...pickedTables].slice(0, 3).map(shortName).join(', ') + (pickedTables.size > 3 ? ` 等 ${pickedTables.size} 张` : '')
   const srcConn = conns.find(c => c.id === sourceId)
   const dstConn = conns.find(c => c.id === targetId)
-  const clearEntry = () => setEntryCleared(true)
 
   return (
     <div className="db-doc">
@@ -313,17 +311,27 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       <div className="db-form">
         {/* 第一行: 源连接 → 源范围(库|模式) → 表 */}
         <div className="db-form-row">
-          <label className="db-form-grow">
-            源连接
-            <select className="input" value={sourceId} title={eff.db ? '更换连接将解除入口预设' : undefined}
-              onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema(''); resetDownstream(); clearEntry() }}>
-              <option value="">(选择连接)</option>
-              {dbOptions.map(c => {
-                const ok = !syncEngines || syncEngines.includes(c.engine)
-                return <option key={c.id} value={c.id} disabled={!ok}>{c.name} ({c.engine}){ok ? '' : ' · 不支持同步'}</option>
-              })}
-            </select>
-          </label>
+          {eff.db ? (
+            <div className="db-form-grow">
+              源连接 · 固定
+              <div className="input" style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: 0.75 }} title="已由入口(库/模式/表右键)固定; 同步其他连接请从对应节点进入或用顶部同步按钮">
+                <b>{srcConn?.name || eff.db}</b>
+                <span className="dim">{srcConn?.engine}</span>
+              </div>
+            </div>
+          ) : (
+            <label className="db-form-grow">
+              源连接
+              <select className="input" value={sourceId}
+                onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema(''); resetDownstream() }}>
+                <option value="">(选择连接)</option>
+                {dbOptions.map(c => {
+                  const ok = !syncEngines || syncEngines.includes(c.engine)
+                  return <option key={c.id} value={c.id} disabled={!ok}>{c.name} ({c.engine}){ok ? '' : ' · 不支持同步'}</option>
+                })}
+              </select>
+            </label>
+          )}
           <label className="db-form-grow">
             源范围{srcThree ? ' (模式)' : ' (库)'}{srcScopeFixed ? ' · 固定' : ''}
             {srcThree ? (
@@ -379,10 +387,13 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             目标范围{dstThree ? ' (模式)' : ' (库)'}
             {dstThree ? (
               <>
+                <select className="input" value={targetDb} disabled title="三级命名引擎: 库即连接库(驱动按连接定库), 实际写入位置由下方模式决定" style={{ opacity: 0.65 }}>
+                  <option value="">{dstConn?.config.database || '(连接默认库)'}</option>
+                </select>
                 <select className="input" value={targetSchema} onChange={e => { setTargetSchema(e.target.value); setPlan(null) }}>
                   {dstSchemas.map(sc => <option key={sc} value={sc}>{sc}</option>)}
                 </select>
-                <span className="dim" style={{ fontSize: '0.6875rem' }}>库: {dstConn?.config.database || '(连接默认库)'} · 表将建在所选模式下</span>
+                <span className="dim" style={{ fontSize: '0.6875rem' }}>表将建在所选模式下</span>
               </>
             ) : (
               <select className="input" value={targetDb} onChange={e => { setTargetDb(e.target.value); setPlan(null) }}>
