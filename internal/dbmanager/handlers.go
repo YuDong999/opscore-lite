@@ -5,12 +5,12 @@ package dbmanager
 
 import (
 	"bytes"
-	"os"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -29,44 +29,45 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
 	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool)}
-module := &registry.Module{
-			Manifest: registry.Manifest{
-				ID:          PluginID,
-				Name:        "数据库管理",
-				Icon:        "database",
-				RoutePath:   "/dbmanager",
-				Group:       "plugin",
-				Description: "MySQL/PostgreSQL 连接管理、可视化查询、元数据浏览",
-			},
-Routes: []registry.Route{
-					{Path: "/api/dbmanager/connections", Handler: h.handleConnections},
-					{Path: "/api/dbmanager/connections/test", Handler: h.handleTestConnection},
-					{Path: "/api/dbmanager/query", Handler: h.handleQuery},
-					{Path: "/api/dbmanager/export", Handler: h.handleExport},
-					{Path: "/api/dbmanager/metadata", Handler: h.handleMetadata},
-					{Path: "/api/dbmanager/describe", Handler: h.handleDescribe},
-					{Path: "/api/dbmanager/write-unlock", Handler: h.handleWriteUnlock},
-					{Path: "/api/dbmanager/write-lock", Handler: h.handleWriteLock},
-				{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
-				{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
-				{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
-				{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
-				{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
-				{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
-				{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
-				{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
-				{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
-				{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
-				{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
-				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
+	module := &registry.Module{
+		Manifest: registry.Manifest{
+			ID:          PluginID,
+			Name:        "数据库管理",
+			Icon:        "database",
+			RoutePath:   "/dbmanager",
+			Group:       "plugin",
+			Description: "MySQL/PostgreSQL 连接管理、可视化查询、元数据浏览",
+		},
+		Routes: []registry.Route{
+			{Path: "/api/dbmanager/connections", Handler: h.handleConnections},
+			{Path: "/api/dbmanager/connections/test", Handler: h.handleTestConnection},
+			{Path: "/api/dbmanager/query", Handler: h.handleQuery},
+			{Path: "/api/dbmanager/export", Handler: h.handleExport},
+			{Path: "/api/dbmanager/metadata", Handler: h.handleMetadata},
+			{Path: "/api/dbmanager/schemas", Handler: h.handleSchemas},
+			{Path: "/api/dbmanager/describe", Handler: h.handleDescribe},
+			{Path: "/api/dbmanager/write-unlock", Handler: h.handleWriteUnlock},
+			{Path: "/api/dbmanager/write-lock", Handler: h.handleWriteLock},
+			{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
+			{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
+			{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
+			{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
+			{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
+			{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
+			{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
+			{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
+			{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
+			{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
+			{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
+			{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
 			{Path: "/api/dbmanager/data", Handler: h.handleData},
 			{Path: "/api/dbmanager/table-inserts", Handler: h.handleTableInserts},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
 			{Path: "/api/dbmanager/drivers/install", Handler: h.handleDriverInstall},
-			},
-		}
+		},
+	}
 	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)
 	return module
 }
@@ -140,37 +141,37 @@ func (h *Handlers) handleConnections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"connections": conns})
-case http.MethodPost:
-			var body struct {
-				Name     string           `json:"name"`
-				Engine   EngineType       `json:"engine"`
-				Config   ConnectionConfig `json:"config"`
-				Password string           `json:"password"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				writeErr(w, "invalid body", http.StatusBadRequest)
-				return
-			}
-			if !engineTypeSupported(body.Engine) {
-				writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
-				return
-			}
-			
-			// 如果没有提供配置，使用默认配置
-			if isEmptyConfig(body.Config) {
-				body.Config = GetEngineDefaultConfig(body.Engine)
-			}
-			
-			if !validConnConfig(body.Config) {
-				writeErr(w, "连接配置校验失败", http.StatusBadRequest)
-				return
-			}
-			conn, err := h.store.Create(body.Name, body.Engine, body.Config, body.Password)
-			if err != nil {
-				writeErr(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			writeJSON(w, map[string]any{"ok": true, "connection": conn})
+	case http.MethodPost:
+		var body struct {
+			Name     string           `json:"name"`
+			Engine   EngineType       `json:"engine"`
+			Config   ConnectionConfig `json:"config"`
+			Password string           `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if !engineTypeSupported(body.Engine) {
+			writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
+			return
+		}
+
+		// 如果没有提供配置，使用默认配置
+		if isEmptyConfig(body.Config) {
+			body.Config = GetEngineDefaultConfig(body.Engine)
+		}
+
+		if !validConnConfig(body.Config) {
+			writeErr(w, "连接配置校验失败", http.StatusBadRequest)
+			return
+		}
+		conn, err := h.store.Create(body.Name, body.Engine, body.Config, body.Password)
+		if err != nil {
+			writeErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "connection": conn})
 	case http.MethodPut:
 		var body struct {
 			ID       string           `json:"id"`
@@ -462,6 +463,28 @@ func (h *Handlers) interceptWrite(w http.ResponseWriter, conn *Connection, connI
 // ===== /api/dbmanager/metadata =====
 // GET ?id=...&type=databases|tables&database=... -> 拉取级联元数据
 
+// handleSchemas GET ?id=... -> 连接引擎的命名空间列表(三级命名引擎), 其余引擎返回空数组。
+func (h *Handlers) handleSchemas(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if !reConnID.MatchString(id) {
+		writeErr(w, "id 格式非法", http.StatusBadRequest)
+		return
+	}
+	schemas, err := h.svc.ListSchemas(r.Context(), id)
+	if err != nil {
+		writeErr(w, "列出模式失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if schemas == nil {
+		schemas = []string{}
+	}
+	writeJSON(w, map[string]any{"schemas": schemas})
+}
+
 func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -739,7 +762,7 @@ func (h *Handlers) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===== /api/dbmanager/audit =====
-	// GET ?id=... -> 审计记录(新的在前, 可选按连接过滤)
+// GET ?id=... -> 审计记录(新的在前, 可选按连接过滤)
 
 func (h *Handlers) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -983,19 +1006,19 @@ func (h *Handlers) handleSlowSQL(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeJSON(w, map[string]any{
-			"engine": conn.Info.Engine,
-			"rows": []any{},
+			"engine":  conn.Info.Engine,
+			"rows":    []any{},
 			"columns": []string{"digest_text", "count_star", "avg_ms", "total_ms", "max_ms", "first_seen", "last_seen"},
-			"note": fmt.Sprintf("%s 引擎暂不支持慢 SQL 采集", conn.Info.Engine),
+			"note":    fmt.Sprintf("%s 引擎暂不支持慢 SQL 采集", conn.Info.Engine),
 		})
 		return
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"rows":     rows,
-		"columns":  cols,
-		"limit":    limit,
+		"engine":  conn.Info.Engine,
+		"rows":    rows,
+		"columns": cols,
+		"limit":   limit,
 	})
 }
 
@@ -1190,8 +1213,8 @@ func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeJSON(w, map[string]any{
-			"engine": conn.Info.Engine,
-			"note":   fmt.Sprintf("%s 引擎暂不支持表属性查询", conn.Info.Engine),
+			"engine":  conn.Info.Engine,
+			"note":    fmt.Sprintf("%s 引擎暂不支持表属性查询", conn.Info.Engine),
 			"columns": []string{"name", "value"},
 			"rows": []any{
 				map[string]any{"name": "引擎", "value": conn.Info.Engine},
@@ -1203,9 +1226,9 @@ func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"columns":  cols,
-		"rows":     rows,
+		"engine":  conn.Info.Engine,
+		"columns": cols,
+		"rows":    rows,
 	})
 }
 
@@ -1271,11 +1294,11 @@ func (h *Handlers) handleExplain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"sql":      body.SQL,
-		"format":   format,
-		"columns":  cols,
-		"rows":     outRows,
+		"engine":  conn.Info.Engine,
+		"sql":     body.SQL,
+		"format":  format,
+		"columns": cols,
+		"rows":    outRows,
 	})
 }
 

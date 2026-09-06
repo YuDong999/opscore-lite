@@ -111,7 +111,7 @@ export default function DatabaseManagerModule() {
   // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填)
   const querySeedRef = useRef<string>('')
   const explainSqlRef = useRef<string>('')
-  const syncSeedRef = useRef<{ connId: string; db: string } | null>(null)
+  const syncSeedRef = useRef<{ connId: string; db: string; table?: string } | null>(null)
 
   // ── 树交互 ──
   const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
@@ -148,6 +148,11 @@ export default function DatabaseManagerModule() {
   const handleSyncDb = (c: ConnectionInfo, db: string) => {
     setConn(c)
     syncSeedRef.current = { connId: c.id, db }
+    setShowSync(true)
+  }
+  const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    syncSeedRef.current = { connId: c.id, db, table }
     setShowSync(true)
   }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
@@ -262,6 +267,7 @@ export default function DatabaseManagerModule() {
           conns={conns}
           activeConnId={conn?.id}
           presetDb={syncSeedRef.current?.db}
+          presetTable={syncSeedRef.current?.table}
           onClose={() => { setShowSync(false); syncSeedRef.current = null }}
         />
       )}
@@ -279,6 +285,7 @@ export default function DatabaseManagerModule() {
             onConnsChange={setConns}
             notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
             onSyncDb={handleSyncDb}
+            onSyncTable={handleSyncTable}
             onOpenStatus={handleOpenStatus}
             onOpenExplain={handleOpenExplain}
             onNewQueryWithSQL={handleNewQueryWithSQL}

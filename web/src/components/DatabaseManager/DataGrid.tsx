@@ -157,6 +157,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, onF
       // ── 筛选 ──
       ...filterItems,
     ]
+    return items
   }, [result, copyCell, onFilter, onClearFilters, sortCol])
 
   const buildRowCtxMenu = useCallback((row: number, x: number, y: number): ContextMenuItem[] => {

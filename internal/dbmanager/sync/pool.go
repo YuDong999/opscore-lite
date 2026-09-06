@@ -103,7 +103,7 @@ func (r *Runner) BuildPlan(ctx context.Context, req SyncRequest) (*SyncPlan, err
 		}
 		tp.SourcePK = primaryKeyOf(cols)
 
-		ddl, idxDDL, notes := GenerateCreateDDL(req.TargetDB, tr.target, cols, idx, srcDialect, dstDialect)
+		ddl, idxDDL, notes := GenerateCreateDDL(EffectiveSchema(req, dstDialect), tr.target, cols, idx, srcDialect, dstDialect)
 		tp.CreateDDL = ddl
 		tp.IndexDDL = idxDDL
 		tp.Notes = notes

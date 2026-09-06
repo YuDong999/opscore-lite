@@ -23,7 +23,7 @@ interface TreeNode {
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
-  onSyncDb, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
+  onSyncDb, onSyncTable, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
   onRefresh,
 }: {
   conns: ConnectionInfo[]
@@ -37,6 +37,7 @@ export default function ConnectionTree({
   onConnsChange: (list: ConnectionInfo[]) => void
   notify: (ok: boolean, msg: string) => void
   onSyncDb: (conn: ConnectionInfo, db: string) => void
+  onSyncTable?: (conn: ConnectionInfo, db: string, table: string) => void
   onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
   onOpenExplain: (conn: ConnectionInfo, db: string, table: string) => void
   onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
@@ -195,6 +196,7 @@ export default function ConnectionTree({
       const dataItems: ContextMenuItem[] = [
         { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
         { label: '表统计 / 状态', icon: <ActionIcon kind="gear" />, onClick: () => onOpenStatus(node.conn!, node.db!, node.table!) },
+        ...(isTable && onSyncTable ? [{ label: '跨库同步此表', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncTable(node.conn!, node.db!, node.table!) }] : []),
       ]
       // ── SQL 与结构 ──
       const sqlItems: ContextMenuItem[] = [

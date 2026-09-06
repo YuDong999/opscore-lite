@@ -368,6 +368,13 @@ export async function listDatabases(id: string): Promise<string[]> {
   return r.databases || []
 }
 
+// 列出连接引擎的命名空间(模式)。三级命名引擎(PG 族)返回模式列表,
+// 其余引擎返回空数组 —— 空=无模式层级, 前端据此动态显隐模式下拉(能力驱动)。
+export async function listSchemas(id: string): Promise<string[]> {
+  const r = await getJSON<{ schemas: string[] }>(`/api/dbmanager/schemas?id=${id}`)
+  return r.schemas || []
+}
+
 export async function listTables(id: string, database: string): Promise<TableInfo[]> {
   const r = await getJSON<{ tables: TableInfo[] }>(
     `/api/dbmanager/metadata?type=tables&id=${id}&database=${encodeURIComponent(database)}`,

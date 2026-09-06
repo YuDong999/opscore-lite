@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	gonavibase "opscore/internal/dbmanager/gonavi/db"
 	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
+	gonavibase "opscore/internal/dbmanager/gonavi/db"
+	syncpkg "opscore/internal/dbmanager/sync"
 )
 
 // DBService 数据库管理服务接口。
@@ -20,6 +21,9 @@ type DBService interface {
 	TestConnection(ctx context.Context, conn *Connection) (string, error)
 	// ListDatabases 列出可访问的数据库。
 	ListDatabases(ctx context.Context, connID string) ([]string, error)
+	// ListSchemas 列出连接所属引擎的命名空间(模式)。仅 库→模式→表 三级引擎有值,
+	// 其余返回空 —— 前端据此动态决定是否渲染模式下拉(能力驱动, 非按引擎硬编码 UI)。
+	ListSchemas(ctx context.Context, connID string) ([]string, error)
 	// ListTables 列出指定库下的表/视图。
 	ListTables(ctx context.Context, connID, database string) ([]TableInfo, error)
 	// DescribeTable 返回列/索引/DDL。
@@ -85,6 +89,28 @@ func (s *GonaviService) ListDatabases(ctx context.Context, connID string) ([]str
 		return nil, err
 	}
 	return db.GetDatabases()
+}
+
+func (s *GonaviService) ListSchemas(ctx context.Context, connID string) ([]string, error) {
+	db, conn, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	if !syncpkg.EngineHasSchema(string(conn.Info.Engine)) {
+		return nil, nil // 能力缺失(如 MySQL 族): 空即"无模式层级"
+	}
+	rows, _, err := syncpkg.QueryRows(ctx, db, `SELECT nspname FROM pg_catalog.pg_namespace `+
+		`WHERE nspname <> 'information_schema' AND nspname NOT LIKE 'pg|_%' ESCAPE '|' ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if n, ok := row["nspname"].(string); ok && n != "" {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func (s *GonaviService) ListTables(ctx context.Context, connID, database string) ([]TableInfo, error) {

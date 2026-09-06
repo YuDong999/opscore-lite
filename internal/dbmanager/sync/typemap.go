@@ -11,20 +11,42 @@ import (
 // EngineDialect 把 dbmanager 引擎类型归一为方言族。
 // MySQL 兼容族与 PostgreSQL 兼容族之外的引擎返回 "" (Phase 1 不支持同步)。
 func EngineDialect(engine string) Dialect {
-	switch engine {
-	case "mysql", "mysql_agent", "mariadb", "goldendb":
+	switch {
+	case mysqlFamily(engine):
 		return DialectMySQL
-	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+	case postgresFamily(engine):
 		return DialectPostgres
 	}
 	return ""
 }
 
+// mysqlFamily / postgresFamily: 引擎→方言族注册处, 新引擎接入在此声明一次,
+// 方言归一(EngineDialect)与能力判定(EngineHasSchema)都从这里取, 不散落硬编码。
+func mysqlFamily(engine string) bool {
+	switch engine {
+	case "mysql", "mysql_agent", "mariadb", "goldendb":
+		return true
+	}
+	return false
+}
+
+func postgresFamily(engine string) bool {
+	switch engine {
+	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+		return true
+	}
+	return false
+}
+
+// EngineHasSchema 报告引擎命名空间是否为 库→模式→表 三级(对象需要模式限定)。
+// 前端据此动态显示/隐藏模式下拉 —— 有模式能力的引擎才出现模式选择, 无能力(如 MySQL)不出现。
+func EngineHasSchema(engine string) bool { return postgresFamily(engine) }
+
 // parsedType 解析形如 varchar(64) / decimal(10,2) / int unsigned 的类型名。
 type parsedType struct {
-	base  string // 小写基础类型
-	len   int    // 长度/精度, 无则 -1
-	scale int    // 小数位, 无则 -1
+	base     string // 小写基础类型
+	len      int    // 长度/精度, 无则 -1
+	scale    int    // 小数位, 无则 -1
 	unsigned bool
 }
 
@@ -264,7 +286,7 @@ func mapColumn(col gonaviConnection.ColumnDefinition, srcDialect, dstDialect Dia
 	}
 	if out.AutoIncr {
 		out.Target = strings.TrimSuffix(out.Target, " NOT NULL") // 自增列不加 NOT NULL(由 DDL 生成器处理)
-		out.Target = stripAutoDefault(out.Target)                 // PG/MySQL 自增列不带字面 DEFAULT
+		out.Target = stripAutoDefault(out.Target)                // PG/MySQL 自增列不带字面 DEFAULT
 	}
 	return out
 }

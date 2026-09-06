@@ -1,12 +1,13 @@
 // 跨库同步面板: MySQL 族 ↔ PostgreSQL 族。
-// 流程: 选源/目标连接+库 → 选表+模式 → plan 预览(类型映射/DDL/增量策略) → run 后台执行 → 进度轮询。
+// 级联: 连接 → 库 → 模式(能力探测, 有模式层级的引擎才出现) → 表(下拉卡片多选)。
+// 流程: 选源/目标 → 选表+模式 → plan 预览(类型映射/DDL/增量策略) → run 后台执行 → 进度轮询。
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../Toast'
 import {
   type ConnectionInfo,
-  listConnections,
   listDatabases,
+  listSchemas,
   listTables,
 } from './api'
 
@@ -36,6 +37,7 @@ interface Job {
 }
 interface SyncRequest {
   sourceId: string; sourceDb: string; targetId: string; targetDb: string
+  targetSchema?: string
   tables?: string[]
   tableMaps?: Array<{ source: string; target: string }>
   mode: SyncMode; incrementalColumn?: string
@@ -54,7 +56,18 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   return data
 }
 
-export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema }: { conns: ConnectionInfo[]; activeConnId?: string; presetDb?: string; presetSchema?: string }) {
+// 下拉箭头(SVG, 避免 ▸ 字形缺字渲染成月牙)
+const Chevron = ({ open }: { open: boolean }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s', flexShrink: 0 }}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+)
+
+export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema, presetTable }: {
+  conns: ConnectionInfo[]; activeConnId?: string
+  presetDb?: string; presetSchema?: string; presetTable?: string
+}) {
   const toast = useToast()
   const [sourceId, setSourceId] = useState('')
   const [sourceDb, setSourceDb] = useState('')
@@ -63,23 +76,32 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
   const [srcDbs, setSrcDbs] = useState<string[]>([])
   const [dstDbs, setDstDbs] = useState<string[]>([])
   const [srcTables, setSrcTables] = useState<string[]>([])
+  const [srcSchemas, setSrcSchemas] = useState<string[]>([])   // 能力探测: 空数组=该引擎无模式层级
+  const [dstSchemas, setDstSchemas] = useState<string[]>([])
   const [srcSchema, setSrcSchema] = useState('')
+  const [targetSchema, setTargetSchema] = useState('')
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
+  const [tblOpen, setTblOpen] = useState(false)
   const [mode, setMode] = useState<SyncMode>('schema_full')
   const [plan, setPlan] = useState<SyncPlan | null>(null)
   const [job, setJob] = useState<Job | null>(null)
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const presetApplied = useRef(false)
+
+  // 入口预设(库级/表级右键进入): 源侧固定, 不可改
+  const locked = !!presetDb
 
   const dbOptions = useMemo(() => conns.map(c => ({ id: c.id, name: c.name, engine: c.engine })), [conns])
 
-  // 级联: 库 → 模式 → 表(PG 族 GetTables 返回 schema.table, 据此派生模式列表)
-  const srcSchemas = useMemo(() => {
+  // 源表名兜底派生模式(驱动未返回模式列表时, 从 schema.table 前缀取)
+  const nameSchemas = useMemo(() => {
     const set = new Set<string>()
     for (const t of srcTables) { const i = t.indexOf('.'); if (i > 0) set.add(t.slice(0, i)) }
     return [...set].sort()
   }, [srcTables])
+  const srcSchemaOptions = srcSchemas.length ? srcSchemas : nameSchemas
   const visibleTables = useMemo(
     () => srcSchema ? srcTables.filter(t => t.startsWith(srcSchema + '.')) : srcTables,
     [srcTables, srcSchema],
@@ -92,28 +114,45 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
     if (presetDb) setSourceDb(presetDb)
   }, [presetDb])
 
-  // 源/目标库列表
+  // 源/目标库列表 + 模式能力探测
   useEffect(() => {
-    if (!sourceId) { setSrcDbs([]); setSrcTables([]); return }
+    if (!sourceId) { setSrcDbs([]); setSrcSchemas([]); setSrcTables([]); return }
     listDatabases(sourceId).then(dbs => setSrcDbs(dbs || [])).catch(() => setSrcDbs([]))
+    listSchemas(sourceId).then(ss => setSrcSchemas(ss || [])).catch(() => setSrcSchemas([]))
   }, [sourceId])
   useEffect(() => {
-    if (!targetId) { setDstDbs([]); return }
+    if (!targetId) { setDstDbs([]); setDstSchemas([]); setTargetSchema(''); return }
     listDatabases(targetId).then(dbs => setDstDbs(dbs || [])).catch(() => setDstDbs([]))
+    listSchemas(targetId).then(ss => {
+      setDstSchemas(ss || [])
+      setTargetSchema(ss?.includes('public') ? 'public' : (ss?.[0] || ''))
+    }).catch(() => { setDstSchemas([]); setTargetSchema('') })
   }, [targetId])
 
-  // 源表列表
+  // 源表列表: 级联下游重置, 然后应用入口预设(表级进入: 预选该表并固定其模式)
   useEffect(() => {
-    setSrcTables([]); setPickedTables(new Set()); setPlan(null)
+    setSrcTables([]); setPickedTables(new Set()); setTargetNames({}); setPlan(null); presetApplied.current = false
     if (!sourceId || !sourceDb) return
     listTables(sourceId, sourceDb).then(ts => {
       const names = ts.map(t => t.name)
       setSrcTables(names)
+      if (presetApplied.current) return
+      presetApplied.current = true
       const schemas = [...new Set(names.map(n => { const i = n.indexOf('.'); return i > 0 ? n.slice(0, i) : '' }).filter(Boolean))].sort()
-      const def = presetSchema && schemas.includes(presetSchema) ? presetSchema
-        : schemas.length ? (schemas.includes('public') ? 'public' : schemas[0]) : ''
-      setSrcSchema(def)
+      if (presetTable) {
+        if (names.includes(presetTable)) setPickedTables(new Set([presetTable]))
+        const i = presetTable.indexOf('.')
+        const pfx = i > 0 ? presetTable.slice(0, i) : ''
+        const def = pfx && (srcSchemas.includes(pfx) || schemas.includes(pfx)) ? pfx : ''
+        if (def) setSrcSchema(def)
+      } else if (srcSchemas.length || schemas.length) {
+        const pool = srcSchemas.length ? srcSchemas : schemas
+        const def = presetSchema && pool.includes(presetSchema) ? presetSchema
+          : pool.includes('public') ? 'public' : pool[0]
+        setSrcSchema(def)
+      }
     }).catch(() => setSrcTables([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId, sourceDb])
 
   const toggleTable = (t: string) => {
@@ -125,11 +164,22 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
     setPlan(null)
   }
 
+  const buildRequest = (): SyncRequest | null => {
+    if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return null }
+    if (dstSchemas.length > 0 && !targetSchema) { toast.error('请选择目标模式'); return null }
+    if (pickedTables.size === 0) { toast.error('请至少选择一张表'); return null }
+    return {
+      sourceId, sourceDb, targetId, targetDb,
+      targetSchema: dstSchemas.length > 0 ? targetSchema : undefined,
+      mode,
+      tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })),
+    }
+  }
+
   const doPlan = async () => {
-    if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return }
+    const req = buildRequest(); if (!req) return
     setBusy(true)
     try {
-      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })) }
       const r = await post<{ plan: SyncPlan }>('/api/dbmanager/sync/plan', req)
       setPlan(r.plan)
       if (r.plan.unsupported?.length) toast.error(r.plan.unsupported.join('; '))
@@ -141,12 +191,12 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
   }
 
   const doRun = async () => {
-    if (!sourceId || !targetId || !sourceDb || !targetDb) { toast.error('请选择源/目标连接与库'); return }
+    const req = buildRequest(); if (!req) return
     setBusy(true)
     try {
-      const req: SyncRequest = { sourceId, sourceDb, targetId, targetDb, mode, tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })) }
       const r = await post<{ jobId: string }>('/api/dbmanager/sync/run', req)
       toast.success(`任务已启动: ${r.jobId}`)
+      setTblOpen(false)
       poll(r.jobId)
     } catch (e: any) {
       toast.error('启动失败: ' + e.message)
@@ -171,25 +221,33 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
 
   const visiblePlan = plan?.tables?.filter(t => !t.skipped) || []
   const skipped = plan?.tables?.filter(t => t.skipped) || []
+  const shortName = (t: string) => { const i = t.indexOf('.'); return i > 0 ? t.slice(i + 1) : t }
+  const pickedSummary = [...pickedTables].slice(0, 3).map(shortName).join(', ') + (pickedTables.size > 3 ? ` 等 ${pickedTables.size} 张` : '')
 
   return (
     <div className="db-doc">
       <div className="db-conn-list-head">
-        <span>跨库同步 <span className="dim" style={{ fontWeight: 400, fontSize: '0.6875rem' }}>MySQL 族 ↔ PostgreSQL 族 · 结构/全量/增量</span></span>
+        <span>跨库同步 <span className="dim" style={{ fontWeight: 400, fontSize: '0.6875rem' }}>
+          MySQL 族 ↔ PostgreSQL 族 · 库→模式→表级联 · 结构/全量/增量{locked ? ' · 源已由入口固定' : ''}
+        </span></span>
       </div>
 
       <div className="db-form">
         <div className="db-form-row">
           <label className="db-form-grow">
-            源连接
-            <select className="input" value={sourceId} onChange={e => { setSourceId(e.target.value); setSourceDb('') }}>
+            源连接{locked ? ' (固定)' : ''}
+            <select className="input" value={sourceId} disabled={locked} title={locked ? '已由入口固定' : undefined}
+              onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema('') }}
+              style={locked ? { opacity: 0.65 } : undefined}>
               <option value="">(选择连接)</option>
               {dbOptions.map(c => <option key={c.id} value={c.id}>{c.name} ({c.engine})</option>)}
             </select>
           </label>
           <label className="db-form-grow">
-            源库
-            <select className="input" value={sourceDb} onChange={e => setSourceDb(e.target.value)}>
+            源库{locked ? ' (固定)' : ''}
+            <select className="input" value={sourceDb} disabled={locked} title={locked ? '已由入口固定' : undefined}
+              onChange={e => setSourceDb(e.target.value)}
+              style={locked ? { opacity: 0.65 } : undefined}>
               <option value="">(选择库)</option>
               {srcDbs.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
@@ -210,6 +268,33 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
           </label>
         </div>
 
+        {/* 模式行: 仅对有模式层级的引擎出现(能力探测), MySQL 族不渲染 */}
+        {(srcSchemaOptions.length > 0 || dstSchemas.length > 0) && (
+          <div className="db-form-row">
+            {srcSchemaOptions.length > 0 && (
+              <label className="db-form-grow">
+                源模式 (Schema){locked && srcSchema ? ' (固定)' : ''}
+                <select className="input" value={srcSchema} disabled={locked && !!srcSchema}
+                  title={locked && srcSchema ? '已由入口固定' : srcSchema ? undefined : '(全部模式)'}
+                  onChange={e => { setSrcSchema(e.target.value); setPickedTables(new Set()); setTargetNames({}); setPlan(null) }}
+                  style={locked && srcSchema ? { opacity: 0.65 } : undefined}>
+                  <option value="">全部模式</option>
+                  {srcSchemaOptions.map(sc => <option key={sc} value={sc}>{sc}</option>)}
+                </select>
+              </label>
+            )}
+            {dstSchemas.length > 0 && (
+              <label className="db-form-grow">
+                目标模式 (Schema)
+                <select className="input" value={targetSchema} onChange={e => { setTargetSchema(e.target.value); setPlan(null) }}>
+                  {dstSchemas.map(sc => <option key={sc} value={sc}>{sc}</option>)}
+                </select>
+                <span className="dim" style={{ fontSize: '0.6875rem' }}>表将建在该模式下; 不选则回落目标库</span>
+              </label>
+            )}
+          </div>
+        )}
+
         <label>
           同步模式
           <select className="input" value={mode} onChange={e => { setMode(e.target.value as SyncMode); setPlan(null) }}>
@@ -220,50 +305,59 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema 
           <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
         </label>
 
-        {srcSchemas.length > 0 && (
-          <label>
-            源模式 (Schema)
-            <select className="input" value={srcSchema} onChange={e => { setSrcSchema(e.target.value); setPickedTables(new Set()); setTargetNames({}); setPlan(null) }}>
-              <option value="">全部模式</option>
-              {srcSchemas.map(sc => <option key={sc} value={sc}>{sc}</option>)}
-            </select>
-            <span className="dim" style={{ fontSize: '0.6875rem' }}>库 → 模式 → 表逐级联动, 切换模式清空已选表</span>
-          </label>
-        )}
-
-        {visibleTables.length > 0 && (
-          <div>
-            <div className="db-cascade-label">
-              选择表{srcSchema ? ` (${srcSchema})` : ''}
-              <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 8 }}
-                onClick={() => setPickedTables(pickedTables.size === visibleTables.length ? new Set() : new Set(visibleTables))}>
-                {pickedTables.size === visibleTables.length ? '全不选' : '全选'}
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', maxHeight: '8rem', overflowY: 'auto' }}>
-              {visibleTables.map(t => (
-                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
-                  <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '8rem' }}>
-                    <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
-                    {t}
-                  </label>
-                  {pickedTables.has(t) && (
-                    <>
-                      <span className="dim">→</span>
-                      <input
-                        className="input"
-                        style={{ height: '1.6rem', fontSize: '0.75rem', padding: '0.1rem 0.4rem', flex: 1, minWidth: 0 }}
-                        value={targetNames[t] ?? ''}
-                        onChange={e => setTargetNames(prev => ({ ...prev, [t]: e.target.value }))}
-                        placeholder="目标表名(留空=同名, 自定义则自动建表)"
-                      />
-                    </>
-                  )}
+        {/* 表选择: 下拉卡片(多选 + 自定义目标名) */}
+        <div style={{ position: 'relative' }}>
+          <button type="button" className="input" disabled={visibleTables.length === 0}
+            style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+            onClick={() => setTblOpen(o => !o)}>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {pickedTables.size === 0
+                ? (visibleTables.length ? '选择表 (可多选, 支持自定义目标表名)' : '请先选择源连接与库')
+                : `已选 ${pickedTables.size} 张表: ${pickedSummary}`}
+            </span>
+            <Chevron open={tblOpen} />
+          </button>
+          {tblOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 29 }} onClick={() => setTblOpen(false)} />
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 2,
+                background: 'var(--surface-solid)', border: '1px solid var(--border)', borderRadius: 6,
+                boxShadow: 'var(--shadow, 0 8px 24px rgba(0,0,0,.18))', maxHeight: '18rem', overflowY: 'auto', padding: '0.3rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.2rem 0.4rem', position: 'sticky', top: 0, background: 'var(--surface-solid)' }}>
+                  <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                    {srcSchema ? `模式 ${srcSchema} · ` : ''}{visibleTables.length} 张表
+                  </span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setPickedTables(new Set(visibleTables))}>全选</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setPickedTables(new Set()); setTargetNames({}) }}>清空</button>
+                  </span>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+                {visibleTables.map(t => (
+                  <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.15rem 0.4rem' }}>
+                    <label className="db-advanced-toggle" style={{ flexShrink: 0, minWidth: '9rem', maxWidth: '14rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <input type="checkbox" checked={pickedTables.has(t)} onChange={() => toggleTable(t)} />
+                      <span title={t}>{shortName(t)}</span>
+                    </label>
+                    {pickedTables.has(t) ? (
+                      <>
+                        <span className="dim">→</span>
+                        <input
+                          className="input input-sm"
+                          style={{ flex: 1, minWidth: 0 }}
+                          value={targetNames[t] ?? ''}
+                          onChange={e => setTargetNames(prev => ({ ...prev, [t]: e.target.value }))}
+                          placeholder="目标表名(留空=同名, 自定义则自动建表)"
+                        />
+                      </>
+                    ) : (
+                      <span className="dim" style={{ fontSize: '0.6875rem' }}>勾选后可自定义目标表名</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="db-form-actions" style={{ justifyContent: 'flex-start' }}>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={doPlan} disabled={busy}>生成计划预览</button>
