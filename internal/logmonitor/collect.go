@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // collectLogLines 执行 cmd 并返回去尾空白后的行切片；错误时返回错误。
@@ -46,6 +47,22 @@ func CollectDockerLogs(name string, tail int) ([]string, error) {
 	return lines, nil
 }
 
+// CollectDockerLogsSince 抓 Docker 容器自 sinceMs(毫秒时间戳) 之后的新日志。
+// 依赖 docker logs --since=RFC3339 按时间绝对过滤，poller 增量采集去重用。
+func CollectDockerLogsSince(name string, sinceMs int64) ([]string, error) {
+	args := []string{"logs", "--tail", "2000"}
+	if sinceMs > 0 {
+		args = append(args, "--since", time.UnixMilli(sinceMs).UTC().Format(time.RFC3339Nano))
+	}
+	args = append(args, name)
+	cmd := exec.Command("docker", args...)
+	lines, err := collectLogLines(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
 // CollectK8sPodLogs 用落盘 kubeconfig 抓指定 K8S pod 日志尾部 <tail> 行。
 // kubeconfig 为绝对路径；ns/pod 定位唯一 pod。
 func CollectK8sPodLogs(kubeconfig, ns, pod string, tail int) ([]string, error) {
@@ -56,6 +73,22 @@ func CollectK8sPodLogs(kubeconfig, ns, pod string, tail int) ([]string, error) {
 		tail = 5000
 	}
 	args := []string{"--kubeconfig", kubeconfig, "logs", "-n", ns, pod, "--tail=" + strconv.Itoa(tail)}
+	cmd := exec.Command("kubectl", args...)
+	lines, err := collectLogLines(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
+// CollectK8sPodLogsSince 抓 K8S pod 自 sinceMs 之后的新日志。
+// 用 kubectl logs --since-time=RFC3339 绝对时间过滤 + --timestamps=true 强制行首带时间戳，
+// 保证每行可被 ParseLine 提取真实时间用于游标去重。
+func CollectK8sPodLogsSince(kubeconfig, ns, pod string, sinceMs int64) ([]string, error) {
+	args := []string{"--kubeconfig", kubeconfig, "logs", "-n", ns, pod, "--tail=2000", "--timestamps=true"}
+	if sinceMs > 0 {
+		args = append(args, "--since-time", time.UnixMilli(sinceMs).UTC().Format(time.RFC3339))
+	}
 	cmd := exec.Command("kubectl", args...)
 	lines, err := collectLogLines(cmd)
 	if err != nil {

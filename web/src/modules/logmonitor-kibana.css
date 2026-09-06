@@ -269,7 +269,10 @@
   font-weight: 600;
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-soft, #888) 8%, transparent);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -645,3 +648,104 @@
   justify-content: center;
 }
 .kib-badge.kib-multi { background: #22a06b; }
+
+/* ── 合并工具栏：搜索框 + 查询/重置/Live/刷新 一行 ── */
+.kib-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.kib-search-bar .kib-search {
+  flex: 1 1 300px;
+  min-width: 200px;
+  max-width: 350px;
+}
+.kib-search-bar .kib-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.kib-search-bar .kib-live {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* ── 字段层级树（类似 Kibana） ── */
+.kib-field-tree {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.kib-field-tree:last-child {
+  border-bottom: none;
+}
+.kib-field-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.kib-field-name {
+  flex: 1;
+  font-weight: 600;
+}
+.kib-field-toggle {
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.kib-field-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.kib-field-children {
+  padding: 2px 0 4px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kib-field-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.kib-field-child:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.kib-field-child.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.kib-field-child.active .kib-field-child-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+.kib-field-child-check {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+}
+.kib-field-child-val {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.kib-field-child-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.85;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
+
+/* ── 错误横幅 ── */
+.kib-err {
+  border-color: var(--danger, #ff4d4f) !important;
+  background: color-mix(in srgb, #ff4d4f 10%, transparent) !important;
+}

@@ -78,6 +78,46 @@ func (s *Store) migrate() error {
 		created_at   INTEGER NOT NULL DEFAULT 0,
 		updated_at   INTEGER NOT NULL DEFAULT 0
 	);
+
+	CREATE TABLE IF NOT EXISTS alert_rules (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		condition   TEXT NOT NULL DEFAULT '',
+		count_thresh INTEGER NOT NULL DEFAULT 0,
+		window_ms   INTEGER NOT NULL DEFAULT 60000,
+		cooldown_ms INTEGER NOT NULL DEFAULT 300000,
+		channels    TEXT NOT NULL DEFAULT '[]',
+		created_at  INTEGER NOT NULL DEFAULT 0,
+		updated_at  INTEGER NOT NULL DEFAULT 0,
+		state       TEXT NOT NULL DEFAULT 'ok',
+		last_fired  INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS alert_channels (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		type       TEXT NOT NULL DEFAULT 'webhook',
+		url        TEXT NOT NULL DEFAULT '',
+		method     TEXT NOT NULL DEFAULT 'POST',
+		headers    TEXT NOT NULL DEFAULT '{}',
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS alert_events (
+		id          TEXT PRIMARY KEY,
+		rule_id     TEXT NOT NULL DEFAULT '',
+		rule_name   TEXT NOT NULL DEFAULT '',
+		level       TEXT NOT NULL DEFAULT '',
+		service     TEXT NOT NULL DEFAULT '',
+		count       INTEGER NOT NULL DEFAULT 0,
+		fired_at    INTEGER NOT NULL DEFAULT 0,
+		resolved_at INTEGER NOT NULL DEFAULT 0,
+		status      TEXT NOT NULL DEFAULT 'firing'
+	);
+	CREATE INDEX IF NOT EXISTS idx_alert_events_fired ON alert_events(fired_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_alert_events_rule  ON alert_events(rule_id);
 	`
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("migrate log_meta: %w", err)
@@ -90,6 +130,18 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_meta_index_id ON log_meta(index_id)"); err != nil {
 		return fmt.Errorf("migrate index_id index: %w", err)
+	}
+
+	// log_sources 持续采集所需列（老库幂等补列）
+	for _, col := range []struct{ name, typ string }{
+		{"index_id", "TEXT NOT NULL DEFAULT ''"},
+		{"namespace", "TEXT NOT NULL DEFAULT ''"},
+		{"cluster", "TEXT NOT NULL DEFAULT ''"},
+		{"last_ts", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.ensureColumn("log_sources", col.name, col.typ); err != nil {
+			return err
+		}
 	}
 
 	// 自动创建数据目录
@@ -157,6 +209,21 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 }
 
 // Query 多条件查询（走复合索引）
+// inClause 把逗号分隔的多值拼成 IN (...), 单值退化为 =?
+func inClause(col, csv string, args *[]interface{}) string {
+	vals := strings.Split(csv, ",")
+	if len(vals) == 1 {
+		*args = append(*args, strings.TrimSpace(vals[0]))
+		return col + " = ?"
+	}
+	phs := make([]string, len(vals))
+	for i, v := range vals {
+		phs[i] = "?"
+		*args = append(*args, strings.TrimSpace(v))
+	}
+	return col + " IN (" + strings.Join(phs, ",") + ")"
+}
+
 func (s *Store) Query(q *LogQuery) (*LogQueryResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -167,21 +234,13 @@ func (s *Store) Query(q *LogQuery) (*LogQueryResult, error) {
 	args := []interface{}{}
 
 	if q.Service != "" {
-		where = append(where, "service = ?")
-		args = append(args, q.Service)
+		where = append(where, inClause("service", q.Service, &args))
 	}
 	if q.Level != "" {
-		levels := strings.Split(q.Level, ",")
-		placeholders := make([]string, len(levels))
-		for i, l := range levels {
-			placeholders[i] = "?"
-			args = append(args, strings.TrimSpace(l))
-		}
-		where = append(where, "level IN ("+strings.Join(placeholders, ",")+")")
+		where = append(where, inClause("level", q.Level, &args))
 	}
 	if q.Source != "" {
-		where = append(where, "source = ?")
-		args = append(args, q.Source)
+		where = append(where, inClause("source", q.Source, &args))
 	}
 	if q.StartTs > 0 {
 		where = append(where, "ts >= ?")
@@ -196,8 +255,7 @@ func (s *Store) Query(q *LogQuery) (*LogQueryResult, error) {
 		args = append(args, "%"+q.Keyword+"%")
 	}
 	if q.IndexID != "" {
-		where = append(where, "index_id = ?")
-		args = append(args, q.IndexID)
+		where = append(where, inClause("index_id", q.IndexID, &args))
 	}
 
 	whereClause := ""
@@ -260,8 +318,7 @@ func (s *Store) Stats(q *LogStatsQuery) (*LogStats, error) {
 	args := []interface{}{}
 	if q != nil {
 		if q.Service != "" {
-			where = append(where, "service = ?")
-			args = append(args, q.Service)
+			where = append(where, inClause("service", q.Service, &args))
 		}
 		if q.StartTs > 0 {
 			where = append(where, "ts >= ?")
@@ -348,14 +405,14 @@ func (s *Store) Histogram(q *LogStatsQuery, bucketMs int64) ([]HistogramBucket, 
 	}
 
 	// 按桶聚合
-	query := fmt.Sprintf(`
+	histoQuery := fmt.Sprintf(`
 		SELECT (ts / %d) * %d AS bucket, level, COUNT(*)
 		FROM log_meta %s
 		GROUP BY bucket, level
 		ORDER BY bucket
 	`, bucketMs, bucketMs, wc)
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.Query(histoQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +444,103 @@ func (s *Store) Histogram(q *LogStatsQuery, bucketMs int64) ([]HistogramBucket, 
 	return result, nil
 }
 
+// Terms 字段聚合（对标 ES terms aggregation）
+func (s *Store) Terms(q *LogTermsQuery) (*TermsResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	start := time.Now()
+
+	// 验证聚合字段
+	field := q.Field
+	if field == "" {
+		field = "service" // 默认按 service 聚合
+	}
+	// 只允许安全的字段
+	switch field {
+	case "service", "level", "source", "indexId":
+	default:
+		return nil, fmt.Errorf("unsupported terms field: %s", field)
+	}
+
+	where := []string{}
+	args := []interface{}{}
+	if q != nil {
+		if q.Service != "" {
+			where = append(where, inClause("service", q.Service, &args))
+		}
+		if q.Level != "" {
+			where = append(where, inClause("level", q.Level, &args))
+		}
+		if q.Source != "" {
+			where = append(where, inClause("source", q.Source, &args))
+		}
+		if q.Keyword != "" {
+			where = append(where, "summary LIKE ?")
+			args = append(args, "%"+q.Keyword+"%")
+		}
+		if q.StartTs > 0 {
+			where = append(where, "ts >= ?")
+			args = append(args, q.StartTs)
+		}
+		if q.EndTs > 0 {
+			where = append(where, "ts <= ?")
+			args = append(args, q.EndTs)
+		}
+		if q.IndexID != "" {
+			where = append(where, inClause("index_id", q.IndexID, &args))
+		}
+	}
+	wc := ""
+	if len(where) > 0 {
+		wc = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	// 执行聚合查询
+	size := q.Size
+	if size <= 0 {
+		size = 10 // 默认 top 10
+	}
+	if size > 100 {
+		size = 100 // 最大 100
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s, COUNT(*) as cnt
+		FROM log_meta %s
+		GROUP BY %s
+		ORDER BY cnt DESC
+		LIMIT ?`, field, wc, field)
+
+	args = append(args, size)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []TermsBucket
+	for rows.Next() {
+		var key string
+		var count int64
+		if err := rows.Scan(&key, &count); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, TermsBucket{Key: key, Count: count})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	took := float64(time.Since(start).Microseconds()) / 1000.0
+	return &TermsResult{
+		Field:   field,
+		Buckets: buckets,
+		TookMs:  took,
+	}, nil
+}
+
 // fillEmptyBuckets 沿 [StartTs, EndTs] 以 bucketMs 为步长补齐缺失桶(零计数)。
 // 桶数过多时截断, 避免超大数组; x 轴随时间选择联动。
 func fillEmptyBuckets(buckets []HistogramBucket, q *LogStatsQuery, bucketMs int64) []HistogramBucket {
@@ -416,8 +570,8 @@ func fillEmptyBuckets(buckets []HistogramBucket, q *LogStatsQuery, bucketMs int6
 	if last < first {
 		return buckets
 	}
-	// 上限保护: 超过 maxBuckets 个桶则按比例降采样到 maxBuckets
-	const maxBuckets = 1000
+	// 上限保护: 超过 maxBuckets 个桶则按比例降采样到 maxBuckets (对齐 Kibana histogram:maxBars)
+	const maxBuckets = 100
 	n := last - first + 1
 	if n > maxBuckets {
 		// 按步长采样
@@ -501,7 +655,7 @@ func (s *Store) ListSources() ([]*LogSource, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT id, name, type, path, service, enabled, follow FROM log_sources ORDER BY name")
+	rows, err := s.db.Query("SELECT id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts FROM log_sources ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +664,7 @@ func (s *Store) ListSources() ([]*LogSource, error) {
 	sources := []*LogSource{}
 	for rows.Next() {
 		src := &LogSource{}
-		rows.Scan(&src.ID, &src.Name, &src.Type, &src.Path, &src.Service, &src.Enabled, &src.Follow)
+		rows.Scan(&src.ID, &src.Name, &src.Type, &src.Path, &src.Service, &src.Enabled, &src.Follow, &src.IndexID, &src.Namespace, &src.Cluster, &src.LastTs)
 		sources = append(sources, src)
 	}
 	return sources, nil
@@ -520,9 +674,9 @@ func (s *Store) SaveSource(src *LogSource) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO log_sources (id, name, type, path, service, enabled, follow)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		src.ID, src.Name, src.Type, src.Path, src.Service, src.Enabled, src.Follow)
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO log_sources (id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		src.ID, src.Name, src.Type, src.Path, src.Service, src.Enabled, src.Follow, src.IndexID, src.Namespace, src.Cluster, src.LastTs)
 	return err
 }
 
@@ -531,6 +685,15 @@ func (s *Store) DeleteSource(id string) error {
 	defer s.mu.Unlock()
 
 	_, err := s.db.Exec("DELETE FROM log_sources WHERE id = ?", id)
+	return err
+}
+
+// AdvanceSourceCursor 推进持续采集游标（实现幂等，不改变其它字段）
+func (s *Store) AdvanceSourceCursor(id string, lastTs int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE log_sources SET last_ts = ? WHERE id = ?", lastTs, id)
 	return err
 }
 
@@ -712,4 +875,107 @@ func withDefaultIlm(p IlmPolicy) IlmPolicy {
 		}
 	}
 	return p
+}
+
+// ---------- Alert Rules CRUD ----------
+
+func (s *Store) ListAlertRules() ([]*AlertRule, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT id, name, enabled, condition, count_thresh, window_ms, cooldown_ms, channels, created_at, updated_at, state, last_fired FROM alert_rules ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rules := []*AlertRule{}
+	for rows.Next() {
+		r := &AlertRule{}
+		var channels string
+		if err := rows.Scan(&r.ID, &r.Name, &r.Enabled, &r.Condition, &r.CountThresh, &r.WindowMs, &r.CooldownMs, &channels, &r.CreatedAt, &r.UpdatedAt, &r.State, &r.LastFired); err != nil {
+			return nil, err
+		}
+		if channels != "" {
+			json.Unmarshal([]byte(channels), &r.Channels)
+		}
+		if r.Channels == nil { r.Channels = []string{} }
+		rules = append(rules, r)
+	}
+	return rules, nil
+}
+
+func (s *Store) SaveAlertRule(r *AlertRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if r.ID == "" { r.ID = "ar_" + strconv.FormatInt(time.Now().UnixMilli(), 10) }
+	channelsB, _ := json.Marshal(r.Channels)
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO alert_rules (id, name, enabled, condition, count_thresh, window_ms, cooldown_ms, channels, created_at, updated_at, state, last_fired)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, r.Enabled, r.Condition, r.CountThresh, r.WindowMs, r.CooldownMs, string(channelsB), r.CreatedAt, time.Now().UnixMilli(), r.State, r.LastFired)
+	return err
+}
+
+func (s *Store) DeleteAlertRule(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM alert_rules WHERE id = ?", id)
+	return err
+}
+
+// ---------- Alert Channels CRUD ----------
+
+func (s *Store) ListAlertChannels() ([]*AlertChannel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT id, name, type, url, method, headers, enabled, created_at FROM alert_channels ORDER BY name")
+	if err != nil { return nil, err }
+	defer rows.Close()
+
+	chans := []*AlertChannel{}
+	for rows.Next() {
+		c := &AlertChannel{}
+		var headers string
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.URL, &c.Method, &headers, &c.Enabled, &c.CreatedAt); err != nil { return nil, err }
+		if headers != "" { json.Unmarshal([]byte(headers), &c.Headers) }
+		chans = append(chans, c)
+	}
+	return chans, nil
+}
+
+func (s *Store) SaveAlertChannel(c *AlertChannel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.ID == "" { c.ID = "ac_" + strconv.FormatInt(time.Now().UnixMilli(), 10) }
+	hB, _ := json.Marshal(c.Headers)
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO alert_channels (id, name, type, url, method, headers, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Type, c.URL, c.Method, string(hB), c.Enabled, c.CreatedAt)
+	return err
+}
+
+func (s *Store) DeleteAlertChannel(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM alert_channels WHERE id = ?", id)
+	return err
+}
+
+// ---------- Alert Events ----------
+
+func (s *Store) ListAlertEvents(limit int) ([]*AlertEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 { limit = 100 }
+	rows, err := s.db.Query("SELECT id, rule_id, rule_name, level, service, count, fired_at, resolved_at, status FROM alert_events ORDER BY fired_at DESC LIMIT ?", limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	events := []*AlertEvent{}
+	for rows.Next() {
+		e := &AlertEvent{}
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Level, &e.Service, &e.Count, &e.FiredAt, &e.ResolvedAt, &e.Status); err != nil { return nil, err }
+		events = append(events, e)
+	}
+	return events, nil
 }

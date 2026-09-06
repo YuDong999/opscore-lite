@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ const (
 type Service struct {
 	store    *Store
 	archiver *Archiver
+	dataDir  string
 	mu       sync.Mutex
 	cancel   chan struct{}
 	// 采集状态
@@ -33,12 +35,138 @@ type Service struct {
 }
 
 func NewService(store *Store, archiver *Archiver) *Service {
-	return &Service{store: store, archiver: archiver}
+	return &Service{store: store, archiver: archiver, cancel: make(chan struct{})}
+}
+
+// Start 启动后台持续采集：每 10s 对 log_sources 中 enabled+follow 的源做增量采集。
+func (s *Service) Start(dataDir string) {
+	s.dataDir = dataDir
+	go s.pollLoop(10 * time.Second)
+}
+
+func (s *Service) Stop() {
+	select {
+	case <-s.cancel:
+	default:
+		close(s.cancel)
+	}
+}
+
+func (s *Service) pollLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.cancel:
+			return
+		case <-ticker.C:
+			s.poll()
+		}
+	}
+}
+
+// poll 对每个 follow 源增量采集。已归档（有 last_ts 游标）的源按游标增量，首采全量 tail。
+func (s *Service) poll() {
+	if s.inFlight.Load() > 0 {
+		return // 上一轮未完成，跳过防并发攒批
+	}
+	s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+
+	sources, err := s.store.ListSources()
+	if err != nil {
+		return
+	}
+	for _, src := range sources {
+		if !src.Enabled || !src.Follow {
+			continue
+		}
+		switch src.Type {
+		case "container":
+			s.pollContainer(src)
+		case "k8s", "k8spod":
+			s.pollK8s(src)
+		}
+	}
+}
+
+func (s *Service) pollContainer(src *LogSource) {
+	lines, err := CollectDockerLogsSince(src.Path, src.LastTs)
+	if err != nil {
+		return
+	}
+	s.ingestIncremental(src, lines, "container")
+}
+
+func (s *Service) pollK8s(src *LogSource) {
+	kc := kubeconfigPathFor(s.dataDir, src.Cluster)
+	if kc == "" {
+		return
+	}
+	// 首采(lastTs=0)不带 since-time，取尾巴后续增量; 已有游标则增量
+	lines, err := CollectK8sPodLogsSince(kc, src.Namespace, src.Path, src.LastTs)
+	if err != nil {
+		return
+	}
+	s.ingestIncremental(src, lines, "k8s")
+}
+
+// ingestIncremental 把抓到的行入库，只保留 ts>lastTs 的新行，并推进游标。
+func (s *Service) ingestIncremental(src *LogSource, lines []string, source string) {
+	entries := make([]*LogEntry, 0, len(lines))
+	var maxTs int64 = src.LastTs
+	for i, line := range lines {
+		e := s.ParseLine(line, "http-ingest", int64(i), src.Service, source, src.IndexID)
+		if source == "k8s" && src.Service != "" {
+			e.Service = src.Service
+		}
+		if e.Ts <= src.LastTs {
+			continue // 去重：跳过游标前已入库的行
+		}
+		entries = append(entries, e)
+		if e.Ts > maxTs {
+			maxTs = e.Ts
+		}
+	}
+	if len(entries) == 0 {
+		return
+	}
+	if src.IndexID != "" && s.archiver != nil {
+		_, _ = s.store.InsertBatch(entries)
+		_ = s.archiver.appendBatch(entries)
+	} else {
+		_, _ = s.store.InsertBatch(entries)
+	}
+	if maxTs > src.LastTs {
+		_ = s.store.AdvanceSourceCursor(src.ID, maxTs)
+	}
+}
+
+// NormalizeSvcName 将 K8S pod 名规整为逻辑服务名，如：
+// nginx-6d664c6d47-s7ljj        → nginx
+// halo-66859784d5-fvh9r         → halo
+// smart-alert-aggregator-b6ccff87d-scsfm → smart-alert-aggregator
+// halo-0 (statefulset)          → halo
+func NormalizeSvcName(s string) string {
+	if s == "" {
+		return s
+	}
+	if m := rePodHash.FindString(s); m != "" {
+		return strings.TrimSuffix(s, m)
+	}
+	if idx := strings.LastIndexByte(s, '-'); idx > 0 {
+		if tail, err := strconv.Atoi(s[idx+1:]); err == nil && tail >= 0 {
+			return s[:idx]
+		}
+	}
+	return s
 }
 
 var (
 	// reService 提取服务名：如 [order-api] 或 service=order-api
 	reService = regexp.MustCompile(`\[([a-zA-Z0-9\-_\.]+)\]|service[=:]\s*([a-zA-Z0-9\-_\.]+)`)
+	// rePodHash 匹配 K8S 生成的 pod 名后缀：deployment pod: <name>-<rs-hash>-<pod-hash>；statefulset pod: <name>-<序号>
+	rePodHash = regexp.MustCompile(`-[a-z0-9]{5,10}-[a-z0-9]{4,6}$`)
 	// reLevel 提取级别
 	reLevel = regexp.MustCompile(`\b(ERROR|WARN|INFO|DEBUG|FATAL)\b`)
 	// reTimestamp 时间戳匹配（多种格式）
@@ -71,6 +199,7 @@ func (s *Service) ParseLine(line string, filePath string, offset int64, defaultS
 			e.Service = m[2]
 		}
 	}
+	e.Service = NormalizeSvcName(e.Service)
 
 	// 提取时间戳
 	if m := reTimestamp.FindStringSubmatch(line); m != nil {
@@ -138,7 +267,12 @@ func (s *Service) Ingest(line, service, source, indexID string) (*LogEntry, erro
 func (s *Service) IngestBatch(lines []string, service, source, indexID string) (int, error) {
 	entries := make([]*LogEntry, 0, len(lines))
 	for i, line := range lines {
-		entries = append(entries, s.ParseLine(line, "http-ingest", int64(i), service, source, indexID))
+		e := s.ParseLine(line, "http-ingest", int64(i), service, source, indexID)
+		// k8s 来源: service 由调用方指定(pod 容器名=服务名), 不被日志行内 [xxx] 提取结果覆盖
+		if source == "k8s" && service != "" {
+			e.Service = service
+		}
+		entries = append(entries, e)
 	}
 	if indexID != "" {
 		ids, err := s.store.InsertBatch(entries)
