@@ -194,12 +194,12 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
         <div className="table-wrap">
           <table className="data-table">
             <thead><tr>
-              <th style={{ width: '4%' }}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
-              <th style={{ width: '19%' }}>名称</th>
-              <th style={{ width: '24%' }}>镜像</th>
-              <th style={{ width: '9%' }}>状态</th>
-              <th style={{ width: '16%' }}>端口</th>
-              <th style={{ width: '28%' }}>操作</th>
+              <th style={{ width: '3%' }}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
+              <th style={{ width: '17%' }}>名称</th>
+              <th style={{ width: '20%' }}>镜像</th>
+              <th style={{ width: '6%' }}>状态</th>
+              <th style={{ width: '9%' }}>端口</th>
+              <th style={{ width: '45%' }}>操作</th>
             </tr></thead>
             <tbody>
               {containers.length === 0 && (
@@ -380,7 +380,7 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
       .catch((e) => onDone(false, '✗ ' + String(e)))
   }
 
-  const rowStyle = { display: 'grid', gridTemplateColumns: '1fr 1fr 4.5rem auto', gap: '0.375rem', alignItems: 'center' } as const
+  const rowStyle = { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) 4.5rem auto', gap: '0.375rem', alignItems: 'center' } as const
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -417,7 +417,7 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
 
           <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.04em' }}>卷挂载 / 文件挂载(宿主绝对路径)</div>
           {vols.map((v, i) => (
-            <div key={i} className="form-grid-row" style={{ gridTemplateColumns: '1.4fr 1fr auto auto' }}>
+            <div key={i} className="form-grid-row" style={{ gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr) auto auto' }}>
               <input className="input mono" placeholder="/data/app 或 /etc/nginx/nginx.conf" value={v.hostPath} onChange={(e) => setVols(vols.map((x, j) => j === i ? { ...x, hostPath: e.target.value } : x))} />
               <input className="input mono" placeholder="/usr/share/nginx/html" value={v.ctrlPath} onChange={(e) => setVols(vols.map((x, j) => j === i ? { ...x, ctrlPath: e.target.value } : x))} />
               <label style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap', display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -430,7 +430,7 @@ function ContainerRunModal({ initial, host, onClose, onDone }: {
 
           <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.04em' }}>环境变量</div>
           {envs.map((en, i) => (
-            <div key={i} className="form-grid-row" style={{ gridTemplateColumns: '1fr 2fr auto' }}>
+            <div key={i} className="form-grid-row" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,2fr) auto' }}>
               <input className="input mono" placeholder="KEY" value={en.key} onChange={(e) => setEnvs(envs.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
               <input className="input mono" placeholder="value" value={en.value} onChange={(e) => setEnvs(envs.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
               <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => setEnvs(envs.filter((_, j) => j !== i))}>×</button>

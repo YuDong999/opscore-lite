@@ -71,6 +71,76 @@ func stripFuncs(in []*kubernetes.ActionSpec) []map[string]any {
 	return out
 }
 
+// K8sActionPreviewHandler GET → 生成"将要执行的 kubectl 命令"预览 + 当前值回填
+// query: cluster/res/ns/name/action + params 各字段 (来自 GET query, 便于 preview 结合当前值)
+func K8sActionPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	q := r.URL.Query()
+	cluster := q.Get("cluster")
+	res := q.Get("res")
+	ns := q.Get("ns")
+	name := q.Get("name")
+	action := q.Get("action")
+	if !reK8sClusterID.MatchString(cluster) || (!kubernetes.ValidResource(res) && !kubernetes.IsCRDName(res)) ||
+		name == "" || (ns != "" && !reK8sNamespace.MatchString(ns)) {
+		WriteJSON(w, map[string]any{"ok": false, "error": "invalid query"})
+		return
+	}
+	spec, ok := kubernetes.ActionCatalog[action]
+	if !ok {
+		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action: " + action})
+		return
+	}
+	if !spec.AllowsRes(res) {
+		WriteJSON(w, map[string]any{"ok": false, "error": "资源 " + res + " 不支持 action " + action})
+		return
+	}
+	if spec.Preview == nil {
+		WriteJSON(w, map[string]any{"ok": true, "command": "", "defaults": map[string]any{}, "supported": false})
+		return
+	}
+	// 从 query 解析表单参数 (数字转 float64, bool 转 bool, select 保持字符串)
+	params := map[string]any{}
+	for _, p := range spec.Params {
+		raw := q.Get(p.Name)
+		if raw == "" {
+			continue
+		}
+		params[p.Name] = parseIntrospect(raw, p.Type)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	rc := kubernetes.RunCtx{Ctx: ctx, Cluster: cluster, Res: res, Ns: ns, Name: name, Params: params}
+	cmd, defaults, err := spec.Preview(k8sMgr, rc)
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true, "command": cmd, "defaults": defaults, "supported": true})
+}
+
+// parseIntrospect query 字符串按 Param 类型转成参数值
+func parseIntrospect(raw string, t kubernetes.ParamType) any {
+	switch t {
+	case kubernetes.ParamBool:
+		b, _ := strconv.ParseBool(raw)
+		return b
+	case kubernetes.ParamNumber:
+		if f, err := strconv.ParseFloat(raw, 64); err == nil {
+			return f
+		}
+		return raw
+	default:
+		return raw
+	}
+}
+
 // K8sActionHandler POST {cluster,res,ns,name,action,params} → 查表执行
 func K8sActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

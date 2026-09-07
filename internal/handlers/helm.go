@@ -309,27 +309,6 @@ func K8sHelmUninstallHandler(w http.ResponseWriter, r *http.Request) {
 // ===== repo 列表 =====
 
 // K8sHelmReposHandler GET ?cluster=
-func K8sHelmReposHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	cluster := r.URL.Query().Get("cluster")
-	if !reK8sClusterID.MatchString(cluster) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
-		return
-	}
-	raw, err := helmJSON(cluster, "repo", "list", "--output", "json")
-	if err != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	WriteJSON(w, map[string]any{"ok": true, "repos": json.RawMessage(raw)})
-}
-
 // K8sHelmSearchHandler GET ?cluster=&q= — 在已 add 的 repo 中搜索 chart。
 func K8sHelmSearchHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -359,34 +338,6 @@ func K8sHelmSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, map[string]any{"ok": true, "charts": json.RawMessage(raw)})
-}
-
-// K8sHelmShowValuesHandler GET ?cluster=&chart=&version= — 展示 chart 默认 values。
-func K8sHelmShowValuesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	q := r.URL.Query()
-	cluster, chart, ver := q.Get("cluster"), q.Get("chart"), q.Get("version")
-	if !reK8sClusterID.MatchString(cluster) || !reHelmChart.MatchString(chart) ||
-		(ver != "" && !reHelmVer.MatchString(ver)) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
-		return
-	}
-	args := []string{"show", "values", chart}
-	if ver != "" {
-		args = append(args, "--version", ver)
-	}
-	out, err := helmExec(cluster, args...)
-	if err != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	WriteJSON(w, map[string]any{"ok": true, "values": out})
 }
 
 // ===== 工具 =====

@@ -24,12 +24,15 @@ function KindIcon({ kind, size = 13 }: { kind: string; size?: number }) {
   const paths: Record<string, any> = {
     Deployment: <><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 12 12 17 22 12" /><polyline points="2 17 12 22 22 17" /></>,
     StatefulSet: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>,
+    DaemonSet: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
     Service: <><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></>,
     Ingress: <><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></>,
     ConfigMap: <><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></>,
     Secret: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
     CronJob: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
     PVC: <><line x1="22" y1="12" x2="2" y2="12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /><line x1="6" y1="16" x2="6.01" y2="16" /><line x1="10" y1="16" x2="10.01" y2="16" /></>,
+    PV: <><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="3" /></>,
+    StorageClass: <><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></>,
     Role: <><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /><path d="M7 3v18M5 21l2-2 2 2M18 3v5" /></>,
     ClusterRole: <><circle cx="10" cy="8" r="5" /><line x1="2" y1="21" x2="10" y2="21" /><line x1="4" y1="16.5" x2="16" y2="16.5" /><line x1="16" y1="21" x2="22" y2="21" /></>,
     RoleBinding: <><circle cx="6" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="M9 9l6 6" /><path d="M6 12V9M6 12a7 7 0 0 1 6-6M12 18h3M12 18a7 7 0 0 0 6-6" /></>,
@@ -48,12 +51,15 @@ function KindIcon({ kind, size = 13 }: { kind: string; size?: number }) {
 const KINDS = [
   { k: 'Deployment', res: 'deployments', desc: '无状态应用' },
   { k: 'StatefulSet', res: 'statefulsets', desc: '有状态应用' },
+  { k: 'DaemonSet', res: 'daemonsets', desc: '每个节点一个Pod' },
   { k: 'Service', res: 'services', desc: '服务暴露' },
   { k: 'Ingress', res: 'ingresses', desc: '七层路由 · host/path → Service' },
   { k: 'ConfigMap', res: 'configmaps', desc: '配置 k/v' },
   { k: 'Secret', res: 'secrets', desc: '敏感数据' },
   { k: 'CronJob', res: 'cronjobs', desc: '定时任务' },
   { k: 'PVC', res: 'persistentvolumeclaims', desc: '存储申请' },
+  { k: 'PV', res: 'persistentvolumes', desc: '集群存储' },
+  { k: 'StorageClass', res: 'storageclasses', desc: '存储供给(含 CSI / NFS / Ceph)' },
   { k: 'ServiceAccount', res: 'serviceaccounts', desc: 'Pod 内进程访问 apiserver 的身份' },
   { k: 'Role', res: 'roles', desc: '命名空间级权限规则' },
   { k: 'ClusterRole', res: 'clusterroles', desc: '集群级权限规则' },
@@ -77,6 +83,9 @@ type Model = {
   dataItems: Kv[]; secretType: string
   schedule: string; command: string
   storage: string; storageClass: string; accessModes: string[]
+  reclaimPolicy: string; claimRefNs: string; claimRef: string
+  pvMode: string; pvHostPath: string; pvNfsServer: string; pvNfsPath: string
+  scName: string; scProvisioner: string; scReclaim: string; scBindingMode: string; scAllowExpansion: boolean; scParams: string
   rbacKind: string
   rbacRules: RbacRule[]
   rbacSubjects: RbacSubject[]
@@ -96,6 +105,9 @@ const blank = (kind: string): Model => ({
   dataItems: [], secretType: 'Opaque',
   schedule: '*/10 * * * *', command: '',
   storage: '5Gi', storageClass: '', accessModes: ['ReadWriteOnce'],
+  reclaimPolicy: 'Retain', claimRefNs: 'default', claimRef: '',
+  pvMode: 'hostPath', pvHostPath: '/mnt/data', pvNfsServer: '', pvNfsPath: '/',
+  scName: '', scProvisioner: '', scReclaim: 'Retain', scBindingMode: 'Immediate', scAllowExpansion: false, scParams: '{}',
   rbacKind: kind,
   rbacRules: [{ apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }],
   rbacSubjects: [{ kind: 'User', name: '', namespace: '' }],
@@ -104,8 +116,8 @@ const blank = (kind: string): Model => ({
 })
 
 // ── 集群已有资源选项(严格下拉数据源) ──
-type Opts = { scs: string[]; ics: string[]; nodes: string[]; cms: string[]; secrets: string[]; svcs: string[] }
-const EMPTY_OPTS: Opts = { scs: [], ics: [], nodes: [], cms: [], secrets: [], svcs: [] }
+type Opts = { scs: string[]; ics: string[]; nodes: string[]; cms: string[]; secrets: string[]; svcs: string[]; pvcs: string[]; pvs: string[] }
+const EMPTY_OPTS: Opts = { scs: [], ics: [], nodes: [], cms: [], secrets: [], svcs: [], pvcs: [], pvs: [] }
 
 function useClusterOptions(cluster: string, ns: string): Opts {
   const [o, setO] = useState<Opts>(EMPTY_OPTS)
@@ -122,7 +134,13 @@ function useClusterOptions(cluster: string, ns: string): Opts {
     getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=configmaps&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, cms: names(d) }))).catch(() => {})
     getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=secrets&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, secrets: names(d) }))).catch(() => {})
     getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=services&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, svcs: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=persistentvolumeclaims&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, pvcs: names(d) }))).catch(() => {})
   }, [cluster, ns])
+  useEffect(() => {
+    if (!cluster) return
+    const names = (d: any) => (d.rows || []).map((r: any) => String(r.name)).filter(Boolean)
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=persistentvolumes`).then((d) => setO((x) => ({ ...x, pvs: names(d) }))).catch(() => {})
+  }, [cluster])
   return o
 }
 
@@ -204,6 +222,10 @@ function buildManifest(m: Model): Record<string, any> | null {
       out.apiVersion = 'apps/v1'
       out.spec = { serviceName: `${name}-headless`, replicas: Number(m.replicas) || 1, selector: { matchLabels: { app: name } }, template: podTemplate }
       break
+    case 'DaemonSet':
+      out.apiVersion = 'apps/v1'
+      out.spec = { selector: { matchLabels: { app: name } }, template: podTemplate }
+      break
     case 'Service':
       out.spec = {
         type: m.svcType,
@@ -260,6 +282,37 @@ function buildManifest(m: Model): Record<string, any> | null {
         accessModes: m.accessModes.length ? m.accessModes : ['ReadWriteOnce'],
         ...(m.storageClass ? { storageClassName: m.storageClass } : {}),
         resources: { requests: { storage: m.storage || '5Gi' } },
+      }
+      break
+    case 'PV':
+      delete meta.namespace
+      out.spec = {
+        capacity: { storage: m.storage || '5Gi' },
+        accessModes: m.accessModes.length ? m.accessModes : ['ReadWriteOnce'],
+      }
+      if (m.reclaimPolicy) out.spec.persistentVolumeReclaimPolicy = m.reclaimPolicy
+      if (m.storageClass) out.spec.storageClassName = m.storageClass
+      if (m.claimRef) out.spec.claimRef = { namespace: m.claimRefNs || 'default', name: m.claimRef }
+      if (m.pvMode === 'nfs') {
+        out.spec.nfs = { server: m.pvNfsServer, path: m.pvNfsPath || '/' }
+      } else if (m.pvMode === 'local') {
+        out.spec.local = { path: m.pvHostPath || '/mnt/data' }
+        out.spec.nodeAffinity = {
+          required: { nodeSelectorTerms: [{ matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['<节点名>'] }] }] },
+        }
+      } else {
+        out.spec.hostPath = { path: m.pvHostPath || '/mnt/data' }
+      }
+      break
+    case 'StorageClass':
+      delete meta.namespace
+      out.apiVersion = 'storage.k8s.io/v1'
+      out.provisioner = m.scProvisioner || ''
+      if (m.scReclaim) out.reclaimPolicy = m.scReclaim
+      if (m.scBindingMode) out.volumeBindingMode = m.scBindingMode
+      if (m.scAllowExpansion) out.allowVolumeExpansion = true
+      if (m.scParams && m.scParams.trim() && m.scParams.trim() !== '{}') {
+        try { out.parameters = JSON.parse(m.scParams) } catch { /* 非法 JSON 留给用户检查 */ }
       }
       break
     case 'ServiceAccount':
@@ -342,10 +395,20 @@ function KvRows({ items, onChange, kHint, vHint, vOptions }: { items: Kv[]; onCh
   )
 }
 
-// 统一删除按钮(所有列表行共用, 避免每个字段重复写一样的 ✕)
+// 统一删除按钮(所有列表行共用, 避免每个字段重复写一样的 ✕)。
+// 用 Lucide circle-x 线性 SVG, 与 KindIcon(Feather 系)视觉一致; 内联样式刻意覆盖 btn-glass-soft-sm 的 padding/line-height, 使图标在固定 2rem 块内居中。
 function Del({ onClick, title }: { onClick: () => void; title?: string }) {
   return (
-    <button type="button" className="btn-glass-soft btn-glass-soft-sm k8s-del-cluster cr-del" style={{ width: '2rem', height: '2rem', opacity: 1 }} onClick={onClick} title={title}>✕</button>
+    <button type="button" className="btn-glass-soft btn-glass-soft-sm k8s-del-cluster cr-del"
+      style={{ width: '2rem', height: '2rem', padding: 0, margin: 0, lineHeight: 1, opacity: 1,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClick} title={title}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+        strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <circle cx="12" cy="12" r="10" />
+        <path d="m15 9-6 6" />
+        <path d="m9 9 6 6" />
+      </svg>
+    </button>
   )
 }
 
@@ -362,7 +425,9 @@ function RowList({ rows, onDelete, onAdd, addLabel, children }: {
     <div className="cr-rowlist">
       {rows.map((r, i) => (
         <div key={i} className="cr-row">
-          {children(r, i)}
+          <div className="cr-row-fields">
+            {children(r, i)}
+          </div>
           {onDelete && <Del onClick={() => onDelete(i)} title="删除" />}
         </div>
       ))}
@@ -379,7 +444,7 @@ function Strict({ label, value, onChange, options, emptyHint, allowEmpty, emptyT
   emptyHint?: string; allowEmpty?: boolean; emptyText?: string
 }) {
   return (
-    <F label={label} hint={emptyHint}>
+    <F label={label}>
       <select className={`${IN} sel`} value={value} onChange={(e) => onChange(e.target.value)}>
         {(allowEmpty ?? true) && <option value="">{emptyText ?? '(不指定)'}</option>}
         {options.length === 0 && <option value="" disabled>{emptyHint ?? '集群中暂无可选项'}</option>}
@@ -460,7 +525,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
       .catch((e) => { setBusy(false); onMsg('✗ ' + String(e)) })
   }
 
-  const isWl = m.kind === 'Deployment' || m.kind === 'StatefulSet'
+  const isWl = m.kind === 'Deployment' || m.kind === 'StatefulSet' || m.kind === 'DaemonSet'
   const kindMeta = KINDS.find((x) => x.k === m.kind)
 
   return (
@@ -485,23 +550,25 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
         <div className="card-body cr-form-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
           <Grid cols={2}>
             <F label="名称 *"><input className={IN} value={m.name} placeholder="如 my-nginx" onChange={(e) => set({ name: e.target.value })} /></F>
-            <F label="命名空间 *" hint="从已有选择或手动输入">
-              {!nsManual ? (
-                <select className={`${IN} sel`} value={nsList.includes(m.ns) ? m.ns : '__manual__'}
-                  onChange={(e) => { if (e.target.value === '__manual__') setNsManual(true); else set({ ns: e.target.value }) }}>
-                  {nsList.length === 0 && <option value={m.ns || 'default'}>{m.ns || 'default'}</option>}
-                  {!nsList.includes(m.ns) && <option value="__manual__">{m.ns || '(未设置)'} ✎ 改为手动输入</option>}
-                  {nsList.map((n) => <option key={n} value={n}>{n}</option>)}
-                  <option value="__manual__">✎ 手动输入新命名空间…</option>
-                </select>
-              ) : (
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <input className={IN} autoFocus value={m.ns} placeholder="新命名空间(需已存在, 否则创建时报错)"
-                    onChange={(e) => set({ ns: e.target.value })} />
-                  <button className="btn-glass-soft btn-glass-soft-sm" title="返回选择列表" onClick={() => setNsManual(false)}>↺</button>
-                </div>
-              )}
-            </F>
+            {m.kind !== 'PV' && m.kind !== 'StorageClass' && (
+              <F label="命名空间 *" hint="从已有选择或手动输入">
+                {!nsManual ? (
+                  <select className={`${IN} sel`} value={nsList.includes(m.ns) ? m.ns : '__manual__'}
+                    onChange={(e) => { if (e.target.value === '__manual__') setNsManual(true); else set({ ns: e.target.value }) }}>
+                    {nsList.length === 0 && <option value={m.ns || 'default'}>{m.ns || 'default'}</option>}
+                    {!nsList.includes(m.ns) && <option value="__manual__">{m.ns || '(未设置)'} ✎ 改为手动输入</option>}
+                    {nsList.map((n) => <option key={n} value={n}>{n}</option>)}
+                    <option value="__manual__">✎ 手动输入新命名空间…</option>
+                  </select>
+                ) : (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input className={IN} autoFocus value={m.ns} placeholder="新命名空间(需已存在, 否则创建时报错)"
+                      onChange={(e) => set({ ns: e.target.value })} />
+                    <button className="btn-glass-soft btn-glass-soft-sm" title="返回选择列表" onClick={() => setNsManual(false)}>↺</button>
+                  </div>
+                )}
+              </F>
+            )}
           </Grid>
 
           {isWl && (
@@ -513,7 +580,9 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                     <datalist id="cr-img">{recentImages.map((i) => <option key={i} value={i} />)}</datalist>
                   </>
                 </F>
-                <F label="副本数"><input className={IN} type="number" min={0} value={m.replicas} onChange={(e) => set({ replicas: e.target.value })} /></F>
+                {m.kind !== 'DaemonSet' && (
+                  <F label="副本数"><input className={IN} type="number" min={0} value={m.replicas} onChange={(e) => set({ replicas: e.target.value })} /></F>
+                )}
               </Grid>
               <Grid cols={5}>
                 <F label="容器端口"><input className={IN} type="number" value={m.containerPort} placeholder="80" onChange={(e) => set({ containerPort: e.target.value })} /></F>
@@ -560,7 +629,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                   {m.ingressRules.map((r, ri) => (
                     <div key={ri} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <input className={IN} value={r.host} placeholder="域名, 如 app.example.com (留空=全host)"
+                        <input className={IN} value={r.host} placeholder="域名, 如 app.example.com (留空=全host)" style={{ flex: '1 1 auto', minWidth: 0 }}
                           onChange={(e) => { const n = [...m.ingressRules]; n[ri] = { ...r, host: e.target.value }; set({ ingressRules: n }) }} />
                         {m.ingressRules.length > 1 && <Del onClick={() => set({ ingressRules: m.ingressRules.filter((_, j) => j !== ri) })} title="删除规则" />}
                       </div>
@@ -638,6 +707,99 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                 </div>
               </F>
             </Grid>
+          )}
+
+          {m.kind === 'PV' && (
+            <>
+              <Grid cols={2}>
+                <F label="容量 *"><input className={IN} value={m.storage} placeholder="5Gi" onChange={(e) => set({ storage: e.target.value })} /></F>
+                <Strict label="StorageClass(存储类)" value={m.storageClass} onChange={(v) => set({ storageClass: v })}
+                  options={opts.scs} emptyText="(不指定)" emptyHint="集群中暂无 StorageClass" />
+                <F label="访问模式">
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', height: '2.2rem' }}>
+                    {AM.map(([full, short]) => (
+                      <label key={full} style={{ display: 'flex', gap: 2, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text)' }}>
+                        <input type="checkbox" checked={m.accessModes.includes(full)}
+                          onChange={(e) => set({ accessModes: e.target.checked ? [...m.accessModes, full] : m.accessModes.filter((x) => x !== full) })} />
+                        {short}
+                      </label>
+                    ))}
+                  </div>
+                </F>
+                <F label="回收策略">
+                  <select className={`${IN} sel`} value={m.reclaimPolicy} onChange={(e) => set({ reclaimPolicy: e.target.value })}>
+                    <option value="Retain">Retain (保留)</option>
+                    <option value="Recycle">Recycle (回收)</option>
+                    <option value="Delete">Delete (删除)</option>
+                  </select>
+                </F>
+              </Grid>
+
+              <F label="绑定已有 PVC(可选)" hint="PV 创建后自动预绑定该 PVC">
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input className={IN} value={m.claimRefNs} placeholder="命名空间" style={{ flex: '0 1 160px' }}
+                    onChange={(e) => set({ claimRefNs: e.target.value || 'default' })} />
+                  <select className={`${IN} sel`} value={m.claimRef} onChange={(e) => set({ claimRef: e.target.value })} style={{ flex: '1 1 auto' }}>
+                    <option value="">(不绑定 PVC)</option>
+                    {opts.pvcs.length === 0 && <option value="" disabled>该命名空间暂无 PVC</option>}
+                    {opts.pvcs.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              </F>
+
+              <Section title="存储后端详情" badge="hostPath / local / nfs">
+                <F label="类型">
+                  <select className={`${IN} sel`} value={m.pvMode} onChange={(e) => set({ pvMode: e.target.value })}>
+                    <option value="hostPath">hostPath (本机目录)</option>
+                    <option value="local">local (本地设备)</option>
+                    <option value="nfs">nfs (NFS 共享)</option>
+                  </select>
+                </F>
+                {m.pvMode === 'nfs' ? (
+                  <>
+                    <F label="NFS 服务器地址 *"><input className={IN} value={m.pvNfsServer} placeholder="192.168.1.10" onChange={(e) => set({ pvNfsServer: e.target.value })} /></F>
+                    <F label="NFS 路径 *"><input className={IN} value={m.pvNfsPath} placeholder="/export/data" onChange={(e) => set({ pvNfsPath: e.target.value })} /></F>
+                  </>
+                ) : (
+                  <F label={m.pvMode === 'local' ? '本地路径 *' : '主机路径 *'}>
+                    <input className={IN} value={m.pvHostPath} placeholder="/mnt/data" onChange={(e) => set({ pvHostPath: e.target.value })} />
+                  </F>
+                )}
+                {m.pvMode === 'local' && (
+                  <span className="dim" style={{ fontSize: '0.6875rem' }}>local 类型需填写 Kubernetes 节点名(nodeAffinity), 保存后请在 YAML 模式中替换 &lt;节点名&gt;。</span>
+                )}
+              </Section>
+            </>
+          )}
+
+          {m.kind === 'StorageClass' && (
+            <>
+              <Grid cols={2}>
+                <F label="名称 *"><input className={IN} value={m.scName} placeholder="如 fast-nvme" onChange={(e) => set({ scName: e.target.value })} /></F>
+                <F label="Provisioner *" hint="存储插件, 如 nfs / ceph.com/cephfs / ebs.csi.aws.com">
+                  <input className={IN} value={m.scProvisioner} placeholder="kubernetes.io/no-provisioner" onChange={(e) => set({ scProvisioner: e.target.value })} />
+                </F>
+                <F label="回收策略">
+                  <select className={`${IN} sel`} value={m.scReclaim} onChange={(e) => set({ scReclaim: e.target.value })}>
+                    <option value="Retain">Retain (保留)</option>
+                    <option value="Delete">Delete (删除 PVC 时删 PV)</option>
+                  </select>
+                </F>
+                <F label="绑定模式">
+                  <select className={`${IN} sel`} value={m.scBindingMode} onChange={(e) => set({ scBindingMode: e.target.value })}>
+                    <option value="Immediate">Immediate (立即绑定)</option>
+                    <option value="WaitForFirstConsumer">WaitForFirstConsumer (等待调度)</option>
+                  </select>
+                </F>
+              </Grid>
+              <label style={{ display: 'flex', gap: 4, fontSize: '0.75rem', alignItems: 'center', color: 'var(--text)' }}>
+                <input type="checkbox" checked={m.scAllowExpansion} onChange={(e) => set({ scAllowExpansion: e.target.checked })} />
+                允许 PVC 扩容(allowVolumeExpansion)
+              </label>
+              <F label="参数 params(JSON, 可选)" hint={'如 {"type":"ext4"} 或 {"pathPattern":"$(PV)-$(PVC)"}'}>
+                <input className={IN} value={m.scParams} placeholder='{"type":"ext4"}' onChange={(e) => set({ scParams: e.target.value })} />
+              </F>
+            </>
           )}
 
           {/* ── workload 可选区 ── */}

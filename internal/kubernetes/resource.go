@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -46,6 +47,10 @@ var (
 	gvrCronJobs      = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 	gvrStorageClasse = schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
 	gvrQuotas        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
+	gvrLimitRanges   = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "limitranges"}
+	gvrHPAs          = schema.GroupVersionResource{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}
+	gvrPDBs          = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
+	gvrPriorityClass = schema.GroupVersionResource{Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"}
 	gvrSAs           = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}
 	gvrRoles         = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}
 	gvrClusterRoles  = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}
@@ -61,6 +66,7 @@ func ValidResource(res string) bool {
 		"persistentvolumes", "persistentvolumeclaims", "storageclasses",
 		"nodes", "namespaces", "events",
 		"networkpolicies", "resourcequotas", "ingressclasses",
+		"horizontalpodautoscalers", "poddisruptionbudgets", "limitranges", "priorityclasses",
 		"serviceaccounts", "roles", "rolebindings", "clusterroles", "clusterrolebindings":
 		return true
 	}
@@ -95,6 +101,14 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrStorageClasse
 	case "resourcequotas":
 		return gvrQuotas
+	case "limitranges":
+		return gvrLimitRanges
+	case "horizontalpodautoscalers":
+		return gvrHPAs
+	case "poddisruptionbudgets":
+		return gvrPDBs
+	case "priorityclasses":
+		return gvrPriorityClass
 	case "services":
 		return gvrServices
 	case "configmaps":
@@ -125,7 +139,7 @@ func gvrOf(res string) schema.GroupVersionResource {
 func nsFor(ns, res string) string {
 	switch res {
 	case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses",
-		"clusterroles", "clusterrolebindings":
+		"clusterroles", "clusterrolebindings", "priorityclasses":
 		return ""
 	default:
 		return ns
@@ -375,6 +389,52 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 	case "resourcequotas":
 		row, err := quotaRow(it.Object)
 		return row, err
+	case "horizontalpodautoscalers":
+		targetName, _, _ := unstructured.NestedString(it.Object, "spec", "scaleTargetRef", "name")
+		min, _, _ := unstructured.NestedInt64(it.Object, "spec", "minReplicas")
+		max, _, _ := unstructured.NestedInt64(it.Object, "spec", "maxReplicas")
+		cur, _, _ := unstructured.NestedInt64(it.Object, "status", "currentReplicas")
+		des, _, _ := unstructured.NestedInt64(it.Object, "status", "desiredReplicas")
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"target":  targetName,
+			"min/max": fmt.Sprintf("%d→%d", min, max),
+			"current": fmt.Sprintf("%d/%d", cur, des),
+			"age":     age,
+		}, nil
+	case "poddisruptionbudgets":
+		minAvVal, _, _ := unstructured.NestedFieldNoCopy(it.Object, "spec", "minAvailable")
+		desHeal, _, _ := unstructured.NestedInt64(it.Object, "status", "desiredHealthy")
+		curHeal, _, _ := unstructured.NestedInt64(it.Object, "status", "currentHealthy")
+		dAllow, _, _ := unstructured.NestedInt64(it.Object, "status", "disruptionsAllowed")
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"minAvailable": fmt.Sprintf("%v", minAvVal),
+			"healthy":      fmt.Sprintf("%d/%d", curHeal, desHeal),
+			"allowed":      dAllow,
+			"age":          age,
+		}, nil
+	case "limitranges":
+		var lr corev1.LimitRange
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &lr); err != nil {
+			return nil, err
+		}
+		count := len(lr.Spec.Limits)
+		types := make([]string, 0, count)
+		for _, l := range lr.Spec.Limits {
+			types = append(types, string(l.Type))
+		}
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"limits": strings.Join(types, ","), "count": count, "age": age,
+		}, nil
+	case "priorityclasses":
+		val, _, _ := unstructured.NestedInt64(it.Object, "value")
+		gd, _, _ := unstructured.NestedBool(it.Object, "globalDefault")
+		return map[string]any{
+			"name": name, "value": val,
+			"globalDefault": gd, "age": age,
+		}, nil
 	case "events":
 		var e corev1.Event
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &e); err != nil {
@@ -977,31 +1037,43 @@ func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name 
 
 // kindToRes: 可视化创建(apply)允许的 kind → 资源名映射。
 var kindToRes = map[string]string{
-	"Deployment":            "deployments",
-	"StatefulSet":           "statefulsets",
-	"DaemonSet":             "daemonsets",
-	"Service":               "services",
-	"ConfigMap":             "configmaps",
-	"Secret":                "secrets",
-	"CronJob":               "cronjobs",
-	"Job":                   "jobs",
-	"PersistentVolumeClaim": "persistentvolumeclaims",
-	"Ingress":               "ingresses",
-	"ServiceAccount":        "serviceaccounts",
-	"Role":                  "roles",
-	"ClusterRole":           "clusterroles",
-	"RoleBinding":           "rolebindings",
-	"ClusterRoleBinding":    "clusterrolebindings",
-	"Namespace":             "namespaces",
+	"Deployment":               "deployments",
+	"StatefulSet":              "statefulsets",
+	"DaemonSet":                "daemonsets",
+	"Service":                  "services",
+	"ConfigMap":                "configmaps",
+	"Secret":                   "secrets",
+	"CronJob":                  "cronjobs",
+	"Job":                      "jobs",
+	"PersistentVolumeClaim":    "persistentvolumeclaims",
+	"Ingress":                  "ingresses",
+	"ServiceAccount":           "serviceaccounts",
+	"Role":                     "roles",
+	"ClusterRole":              "clusterroles",
+	"RoleBinding":              "rolebindings",
+	"ClusterRoleBinding":       "clusterrolebindings",
+	"Namespace":                "namespaces",
+	"HorizontalPodAutoscaler":  "horizontalpodautoscalers",
+	"PodDisruptionBudget":      "poddisruptionbudgets",
+	"ResourceQuota":            "resourcequotas",
+	"LimitRange":               "limitranges",
+	"PriorityClass":            "priorityclasses",
+	"NetworkPolicy":            "networkpolicies",
+	"StorageClass":             "storageclasses",
+	"PersistentVolume":         "persistentvolumes",
 }
 
 // ApplyResourceYAML 创建(或覆盖更新)单个资源对象。
 // 返回 (kind, name, created, error)。overwrite=false 时同名资源报错, 避免误覆盖。
-func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr string, overwrite bool) (string, string, bool, error) {
-	var obj map[string]any
-	if err := sigsyaml.Unmarshal([]byte(yamlStr), &obj); err != nil {
-		return "", "", false, fmt.Errorf("YAML 解析失败: %w", err)
-	}
+// clusterScopedResources lists resources that are NOT namespaced.
+var clusterScopedResources = map[string]bool{
+	"nodes": true, "namespaces": true, "persistentvolumes": true,
+	"storageclasses": true, "ingressclasses": true,
+	"clusterroles": true, "clusterrolebindings": true, "priorityclasses": true,
+}
+
+// UpsertObject 通用创建/覆盖: obj 中 kind 决定 GVR; 集群级资源自动去 namespace。
+func (m *Manager) UpsertObject(ctx context.Context, clusterID string, obj map[string]any, overwrite bool) (string, string, bool, error) {
 	kind, _ := obj["kind"].(string)
 	meta, _ := obj["metadata"].(map[string]any)
 	name, _ := meta["name"].(string)
@@ -1010,10 +1082,9 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 	}
 	res, ok := kindToRes[kind]
 	if !ok {
-		return "", "", false, fmt.Errorf("暂不支持创建类型 %q (支持: Deployment/StatefulSet/DaemonSet/Service/ConfigMap/Secret/CronJob/Job/PVC/Ingress)", kind)
+		return "", "", false, fmt.Errorf("暂不支持创建类型 %q", kind)
 	}
 	if kind == "Secret" {
-		// type 字段缺失时 apiserver 默认 Opaque, 无需补; 但 stringData/data 都空时报错提醒
 		data, _ := obj["data"].(map[string]any)
 		sdata, _ := obj["stringData"].(map[string]any)
 		if len(data) == 0 && len(sdata) == 0 {
@@ -1025,16 +1096,31 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 		return "", "", false, err
 	}
 	gvr := gvrOf(res)
-	ns := nsFor(nsForMeta(meta), res)
+	isCluster := clusterScopedResources[res]
+	var ns string
+	if !isCluster {
+		ns = nsFor(nsForMeta(meta), res)
+		// 确保 metadata 带 namespace 供 apiserver 校验
+		if ns != "" {
+			meta["namespace"] = ns
+		}
+	} else {
+		// 集群级资源: 删除 namespace 字段(apiserver 会拒绝含 namespace 的创建)
+		delete(meta, "namespace")
+	}
 	u := &unstructured.Unstructured{Object: obj}
-	existing, getErr := dyn.Resource(gvr).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	var dynResource dynamic.ResourceInterface = dyn.Resource(gvr)
+	if !isCluster {
+		dynResource = dyn.Resource(gvr).Namespace(ns)
+	}
+	existing, getErr := dynResource.Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case getErr == nil:
 		if !overwrite {
 			return kind, name, false, fmt.Errorf("%s %q 已存在(勾选覆盖可更新)", kind, name)
 		}
 		u.SetResourceVersion(existing.GetResourceVersion())
-		_, uerr := dyn.Resource(gvr).Namespace(ns).Update(ctx, u, metav1.UpdateOptions{})
+		_, uerr := dynResource.Update(ctx, u, metav1.UpdateOptions{})
 		if uerr != nil {
 			return kind, name, false, fmt.Errorf("更新失败: %w", uerr)
 		}
@@ -1043,12 +1129,21 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 		if !apierrors.IsNotFound(getErr) {
 			return "", "", false, getErr
 		}
-		_, uerr := dyn.Resource(gvr).Namespace(ns).Create(ctx, u, metav1.CreateOptions{})
+		_, uerr := dynResource.Create(ctx, u, metav1.CreateOptions{})
 		if uerr != nil {
 			return kind, name, true, fmt.Errorf("创建失败: %w", uerr)
 		}
 		return kind, name, true, nil
 	}
+}
+
+// ApplyResourceYAML 解析 YAML 后创建或覆盖。
+func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr string, overwrite bool) (string, string, bool, error) {
+	var obj map[string]any
+	if err := sigsyaml.Unmarshal([]byte(yamlStr), &obj); err != nil {
+		return "", "", false, fmt.Errorf("YAML 解析失败: %w", err)
+	}
+	return m.UpsertObject(ctx, clusterID, obj, overwrite)
 }
 
 // nsForMeta 从对象 metadata.namespace 取命名空间(缺省 default)。

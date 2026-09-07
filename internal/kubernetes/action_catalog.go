@@ -59,6 +59,7 @@ type ActionSpec struct {
 	AllowedRes  []string `json:"allowedRes"`            // 资源白名单, 含 "*"
 	Params      []Param  `json:"params"`                // 表单 schema
 	Run         RunFunc  `json:"-"`                     // 实际执行
+	Preview     PreviewFunc `json:"-"`                  // 生成"将要执行的 kubectl 命令"预览(前端确认前展示)
 	RequiresTTY bool     `json:"requiresTTY,omitempty"` // 是否走 WS(交互/流式)
 	Description string   `json:"description,omitempty"`
 }
@@ -75,6 +76,10 @@ type RunCtx struct {
 
 // RunFunc 真正的执行; m 可为 nil (只读/前端 dryrun)
 type RunFunc func(m *Manager, rc RunCtx) error
+
+// PreviewFunc 根据已填参数生成将要执行的 kubectl 命令预览 + 可选默认值(回填表单)。
+// defaults 返回形如 {"min":1,"max":4} 的字段回填; 仅在用户尚未编辑表单时应用。
+type PreviewFunc func(m *Manager, rc RunCtx) (command string, defaults map[string]any, err error)
 
 // ActionCatalog 资源 × 操作 矩阵
 //
@@ -143,7 +148,6 @@ func init() {
 	registerAction(catalogUncordon())
 	registerAction(catalogDrain())
 	registerAction(catalogDeleteNode())
-	registerAction(catalogNodeJoin())
 	registerAction(catalogSetImage())
 	registerAction(catalogEditYAML())
 	registerAction(catalogPatch())
@@ -155,6 +159,26 @@ func init() {
 	registerAction(catalogLogsStream())
 	registerAction(catalogPortForward())
 	registerAction(catalogCp())
+	// 新增: taint / set-env / set-resources / set-sa / wait
+	registerAction(catalogTaintAdd())
+	registerAction(catalogTaintRemove())
+	registerAction(catalogSetEnv())
+	registerAction(catalogSetResources())
+	registerAction(catalogSetSA())
+	registerAction(catalogWait())
+	// 新增: 创建类
+	registerAction(catalogAutoscale())
+	registerAction(catalogCreatePDB())
+	registerAction(catalogCreateQuota())
+	registerAction(catalogCreateLimitRange())
+	registerAction(catalogCreateNP())
+	registerAction(catalogCreateSC())
+	registerAction(catalogCreatePV())
+	registerAction(catalogCreatePriorityClass())
+	registerAction(catalogCreateNamespace())
+	registerAction(catalogExpose())
+	// 新增: HPA 可视化编辑 (样例)
+	registerAction(catalogUpdateHPA())
 }
 
 // ===== 现有 14 个 legacy action (与 k8s_actions.go 行为一致) =====
@@ -354,26 +378,6 @@ func catalogDeleteNode() *ActionSpec {
 			}
 			_, _, err := m.NodeDelete(rc.Ctx, rc.Cluster, rc.Name, opt)
 			return err
-		},
-	}
-}
-
-// catalogNodeJoin 生成"加入集群"的 kubeadm join 命令。
-// 依赖 control-plane 节点 (本平台运行的主机) 存在 kubeadm 与 /etc/kubernetes/pki。
-// join 命令需要返回给前端, 故不走 catalog 端点, 由独立 handler 提供。
-// (占位: 让目录里能看到该操作; 实际执行走 /k8s/node-join-command)
-// Run 无实际作用。
-func catalogNodeJoin() *ActionSpec {
-	return &ActionSpec{
-		Name: "node-join", Label: "获取加入命令", Category: "lifecycle",
-		AllowedRes: []string{"nodes"},
-		Params: []Param{
-			{Name: "ttl", Label: "Token 有效期", Type: ParamNumber, Default: 1,
-				Help: "小时 (≤720), 传给 kubeadm token create --ttl"},
-		},
-		Description: "在 control-plane 上生成 kubeadm join(含 token + ca-cert-hash)。命令由独立端点返回。",
-		Run: func(m *Manager, rc RunCtx) error {
-			return fmt.Errorf("此操作请使用加入集群面板 (前端独立入口)")
 		},
 	}
 }
@@ -618,6 +622,430 @@ func catalogCp() *ActionSpec {
 		},
 		Run: nil,
 		Description: "kubectl cp 等价, 走 WebSocket + tar",
+	}
+}
+
+// ===== 新增: taint / set-env / set-resources / set-sa / wait =====
+
+func catalogTaintAdd() *ActionSpec {
+	return &ActionSpec{
+		Name: "taint-add", Label: "添加污点", Category: "lifecycle",
+		AllowedRes: []string{"nodes"},
+		Params: []Param{
+			{Name: "key", Label: "Taint 键", Type: ParamString, Required: true},
+			{Name: "effect", Label: "效应", Type: ParamSelect, Required: true, Default: "NoSchedule",
+				Options: []SelectOption{
+					{Label: "NoSchedule", Value: "NoSchedule"},
+					{Label: "PreferNoSchedule", Value: "PreferNoSchedule"},
+					{Label: "NoExecute", Value: "NoExecute"},
+				}},
+			{Name: "value", Label: "值 (可空)", Type: ParamString, Default: "",
+				Help: "留空则为 key:effect, 否则 key=value:effect"},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			k, _ := rc.Params["key"].(string)
+			e, _ := rc.Params["effect"].(string)
+			v, _ := rc.Params["value"].(string)
+			return m.NodeTaintAdd(rc.Ctx, rc.Cluster, rc.Name, k, e, v)
+		},
+	}
+}
+
+func catalogTaintRemove() *ActionSpec {
+	return &ActionSpec{
+		Name: "taint-remove", Label: "移除污点", Category: "lifecycle",
+		AllowedRes: []string{"nodes"},
+		Params: []Param{
+			{Name: "key", Label: "Taint 键", Type: ParamString, Required: true},
+			{Name: "effect", Label: "效应 (留空=全部)", Type: ParamSelect, Default: "",
+				Options: []SelectOption{
+					{Label: "全部匹配 (仅按 key)", Value: ""},
+					{Label: "NoSchedule", Value: "NoSchedule"},
+					{Label: "PreferNoSchedule", Value: "PreferNoSchedule"},
+					{Label: "NoExecute", Value: "NoExecute"},
+				}},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			k, _ := rc.Params["key"].(string)
+			e, _ := rc.Params["effect"].(string)
+			return m.NodeTaintRemove(rc.Ctx, rc.Cluster, rc.Name, k, e)
+		},
+	}
+}
+
+func catalogSetEnv() *ActionSpec {
+	return &ActionSpec{
+		Name: "set-env", Label: "设置环境变量", Category: "edit",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
+		Params: []Param{
+			{Name: "key", Label: "变量名", Type: ParamString, Required: true},
+			{Name: "value", Label: "值", Type: ParamString, Required: true},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			k, _ := rc.Params["key"].(string)
+			v, _ := rc.Params["value"].(string)
+			return m.SetWorkloadEnv(rc.Ctx, rc.Cluster, rc.Res, rc.Ns, rc.Name, k, v)
+		},
+	}
+}
+
+func catalogSetResources() *ActionSpec {
+	return &ActionSpec{
+		Name: "set-resources", Label: "设置资源限制", Category: "edit",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
+		Params: []Param{
+			{Name: "cpuReq", Label: "CPU 请求 (如 100m)", Type: ParamString, Default: "",
+				Help: "留空则不修改该字段"},
+			{Name: "cpuLim", Label: "CPU 上限 (如 500m)", Type: ParamString, Default: ""},
+			{Name: "memReq", Label: "内存 请求 (如 64Mi)", Type: ParamString, Default: ""},
+			{Name: "memLim", Label: "内存 上限 (如 128Mi)", Type: ParamString, Default: ""},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			cr, _ := rc.Params["cpuReq"].(string)
+			cl, _ := rc.Params["cpuLim"].(string)
+			mr, _ := rc.Params["memReq"].(string)
+			ml, _ := rc.Params["memLim"].(string)
+			return m.SetWorkloadResources(rc.Ctx, rc.Cluster, rc.Res, rc.Ns, rc.Name, cr, cl, mr, ml)
+		},
+	}
+}
+
+func catalogSetSA() *ActionSpec {
+	return &ActionSpec{
+		Name: "set-sa", Label: "设置 ServiceAccount", Category: "edit",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
+		Params: []Param{
+			{Name: "sa", Label: "ServiceAccount 名", Type: ParamString, Required: true,
+				Help: "命名空间中已存在的 ServiceAccount; 留空=default"},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			sa, _ := rc.Params["sa"].(string)
+			return m.SetWorkloadSA(rc.Ctx, rc.Cluster, rc.Res, rc.Ns, rc.Name, sa)
+		},
+	}
+}
+
+func catalogWait() *ActionSpec {
+	return &ActionSpec{
+		Name: "wait", Label: "等待条件就绪", Category: "lifecycle",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets", "pods", "jobs", "nodes"},
+		Params: []Param{
+			{Name: "condition", Label: "条件类型", Type: ParamSelect, Required: true, Default: "Available",
+				Options: []SelectOption{
+					{Label: "Available (默认)", Value: "Available"},
+					{Label: "Ready", Value: "Ready"},
+					{Label: "Progressing", Value: "Progressing"},
+					{Label: "Complete", Value: "Complete"},
+					{Label: "PodScheduled", Value: "PodScheduled"},
+				},
+				Help: "Deployment → Available, Pod → Ready, Job → Complete, Node → Ready"},
+			{Name: "timeoutSec", Label: "超时 (秒)", Type: ParamNumber, Default: 60,
+				Min: floatPtr(5), Max: floatPtr(180)},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			cond, _ := rc.Params["condition"].(string)
+			t, _ := toInt(rc.Params["timeoutSec"])
+			return m.WaitForCondition(rc.Ctx, rc.Cluster, rc.Res, rc.Ns, rc.Name, cond, t)
+		},
+	}
+}
+
+// ===== 新增: 创建类 =====
+
+func catalogAutoscale() *ActionSpec {
+	return &ActionSpec{
+		Name: "autoscale", Label: "HPA 自动扩缩", Category: "scale",
+		AllowedRes: []string{"deployments", "statefulsets"},
+		Params: []Param{
+			{Name: "name", Label: "HPA 名称", Type: ParamString, Required: true},
+			{Name: "min", Label: "最小副本", Type: ParamNumber, Required: true, Default: 1,
+				Min: floatPtr(0), Max: floatPtr(1000)},
+			{Name: "max", Label: "最大副本", Type: ParamNumber, Required: true, Default: 10,
+				Min: floatPtr(1), Max: floatPtr(1000)},
+			{Name: "cpuPercent", Label: "CPU 目标利用率 (%)", Type: ParamNumber, Default: 80,
+				Min: floatPtr(1), Max: floatPtr(1000),
+				Help: "当 Pod 平均 CPU 使用率超过此值时扩容, 低于时缩容"},
+		},
+		Description: "创建 HorizontalPodAutoscaler; 依赖 Pod 已设置 CPU requests",
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["name"].(string)
+			min, _ := toInt(rc.Params["min"])
+			max, _ := toInt(rc.Params["max"])
+			cpu, _ := toInt(rc.Params["cpuPercent"])
+			return m.CreateHPA(rc.Ctx, rc.Cluster, rc.Ns, n, rc.Res, rc.Name, min, max, cpu)
+		},
+	}
+}
+
+func catalogCreatePDB() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-pdb", Label: "创建 PDB", Category: "lifecycle",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
+		Params: []Param{
+			{Name: "pdbName", Label: "PDB 名称", Type: ParamString, Required: true},
+			{Name: "minAvailable", Label: "最小可用数 (与 maxUnavailable 二选一)", Type: ParamString, Default: "",
+				Help: "如 1 或 50%; 与 maxUnavailable 互斥, 只填其中一个"},
+			{Name: "maxUnavailable", Label: "最大不可用数", Type: ParamString, Default: "",
+				Help: "如 1 或 25%; 与 minAvailable 互斥"},
+		},
+		Description: "创建 PodDisruptionBudget, 自动匹配工作负载的 Pod selector",
+		Run: func(m *Manager, rc RunCtx) error {
+			pn, _ := rc.Params["pdbName"].(string)
+			ma, _ := rc.Params["minAvailable"].(string)
+			mu, _ := rc.Params["maxUnavailable"].(string)
+			return m.CreatePDB(rc.Ctx, rc.Cluster, rc.Ns, rc.Res, rc.Name, pn, ma, mu)
+		},
+	}
+}
+
+func catalogCreateQuota() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-quota", Label: "创建 ResourceQuota", Category: "edit",
+		AllowedRes: []string{"namespaces"},
+		Params: []Param{
+			{Name: "quotaName", Label: "Quota 名称", Type: ParamString, Required: true},
+			{Name: "cpu", Label: "CPU 总量 (如 4)", Type: ParamString, Default: "",
+				Help: "同时限制 requests.cpu 和 limits.cpu; 留空则不限"},
+			{Name: "mem", Label: "内存 总量 (如 8Gi)", Type: ParamString, Default: ""},
+			{Name: "storage", Label: "存储 总量 (如 100Gi)", Type: ParamString, Default: ""},
+			{Name: "pods", Label: "Pod 数量", Type: ParamString, Default: ""},
+		},
+		Description: "限制命名空间内 CPU/内存/存储/Pod 总用量",
+		Run: func(m *Manager, rc RunCtx) error {
+			qn, _ := rc.Params["quotaName"].(string)
+			cpu, _ := rc.Params["cpu"].(string)
+			mem, _ := rc.Params["mem"].(string)
+			stor, _ := rc.Params["storage"].(string)
+			pods, _ := rc.Params["pods"].(string)
+			return m.CreateResourceQuota(rc.Ctx, rc.Cluster, rc.Ns, qn, cpu, mem, stor, pods)
+		},
+	}
+}
+
+func catalogCreateLimitRange() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-limitrange", Label: "创建 LimitRange", Category: "edit",
+		AllowedRes: []string{"namespaces"},
+		Params: []Param{
+			{Name: "lrName", Label: "LimitRange 名称", Type: ParamString, Required: true},
+			{Name: "defaultCpu", Label: "默认 CPU 上限", Type: ParamString, Default: "",
+				Help: "未设置 limits 的容器自动获得此值; 留空则不限"},
+			{Name: "defaultReqCpu", Label: "默认 CPU 请求", Type: ParamString, Default: ""},
+			{Name: "maxCpu", Label: "CPU 最大值", Type: ParamString, Default: ""},
+			{Name: "defaultMem", Label: "默认内存 上限", Type: ParamString, Default: ""},
+			{Name: "defaultReqMem", Label: "默认内存 请求", Type: ParamString, Default: ""},
+			{Name: "maxMem", Label: "内存 最大值", Type: ParamString, Default: ""},
+		},
+		Description: "为命名空间内未设置 limits 的容器设置默认资源限制; 至少填一个值",
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["lrName"].(string)
+			dc, _ := rc.Params["defaultCpu"].(string)
+			drc, _ := rc.Params["defaultReqCpu"].(string)
+			mc, _ := rc.Params["maxCpu"].(string)
+			dm, _ := rc.Params["defaultMem"].(string)
+			drm, _ := rc.Params["defaultReqMem"].(string)
+			mm, _ := rc.Params["maxMem"].(string)
+			return m.CreateLimitRange(rc.Ctx, rc.Cluster, rc.Ns, n, dc, drc, mc, dm, drm, mm)
+		},
+	}
+}
+
+func catalogCreateNP() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-networkpolicy", Label: "创建 NetworkPolicy", Category: "network",
+		AllowedRes: []string{"namespaces", "networkpolicies"},
+		Params: []Param{
+			{Name: "npName", Label: "策略名称", Type: ParamString, Required: true},
+			{Name: "podSelKey", Label: "目标 Pod 标签键 (留空=全部 Pod)", Type: ParamString, Default: "",
+				Help: "如 app; 留空则选择该命名空间全部 Pod"},
+			{Name: "podSelValue", Label: "目标 Pod 标签值", Type: ParamString, Default: ""},
+			{Name: "ingressFromKey", Label: "来源 Pod 标签键 (留空=全部来源)", Type: ParamString, Default: "",
+				Help: "如 app; 留空则允许所有入站流量"},
+			{Name: "ingressFromValue", Label: "来源 Pod 标签值", Type: ParamString, Default: ""},
+			{Name: "ingressPorts", Label: "放行端口 (如 80/TCP,443/TCP)", Type: ParamString, Default: "",
+				Help: "格式 port/protocol; 留空则放行全部端口"},
+		},
+		Description: "创建命名空间级网络隔离: 仅放行指定来源的入站流量",
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["npName"].(string)
+			pk, _ := rc.Params["podSelKey"].(string)
+			pv, _ := rc.Params["podSelValue"].(string)
+			fk, _ := rc.Params["ingressFromKey"].(string)
+			fv, _ := rc.Params["ingressFromValue"].(string)
+			ports, _ := rc.Params["ingressPorts"].(string)
+			return m.CreateNetworkPolicy(rc.Ctx, rc.Cluster, rc.Ns, n, pk, pv, fk, fv, ports)
+		},
+	}
+}
+
+func catalogCreateSC() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-sc", Label: "创建 StorageClass", Category: "edit",
+		AllowedRes: []string{"storageclasses", "namespaces"},
+		Params: []Param{
+			{Name: "scName", Label: "StorageClass 名称", Type: ParamString, Required: true},
+			{Name: "provisioner", Label: "Provisioner *", Type: ParamString, Required: true,
+				Help: "如 kubernetes.io/no-provisioner / nfs / ceph.com/cephfs 等"},
+			{Name: "reclaimPolicy", Label: "回收策略", Type: ParamSelect, Default: "Retain",
+				Options: []SelectOption{
+					{Label: "Retain (保留)", Value: "Retain"},
+					{Label: "Delete (删除 PVC 时删除 PV)", Value: "Delete"},
+				}},
+			{Name: "volumeBindingMode", Label: "绑定模式", Type: ParamSelect, Default: "Immediate",
+				Options: []SelectOption{
+					{Label: "Immediate (立即绑定)", Value: "Immediate"},
+					{Label: "WaitForFirstConsumer (等待调度)", Value: "WaitForFirstConsumer"},
+				}},
+			{Name: "allowExpansion", Label: "允许扩容", Type: ParamBool, Default: false},
+			{Name: "params", Label: "参数 (JSON)", Type: ParamCode, Default: "{}",
+				Help: "如 {\"type\":\"ext4\"} 或 {\"pathPattern\":\"$(PV)-$(PVC)\"}"},
+		},
+		Description: "创建动态存储供给类; Provisioner 字段参照所用存储插件文档",
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["scName"].(string)
+			p, _ := rc.Params["provisioner"].(string)
+			rp, _ := rc.Params["reclaimPolicy"].(string)
+			vbm, _ := rc.Params["volumeBindingMode"].(string)
+			ae, _ := rc.Params["allowExpansion"].(bool)
+			pm, _ := rc.Params["params"].(string)
+			return m.CreateStorageClass(rc.Ctx, rc.Cluster, n, p, rp, vbm, ae, pm)
+		},
+	}
+}
+
+func catalogCreatePV() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-pv", Label: "创建 PV", Category: "edit",
+		AllowedRes: []string{"persistentvolumes", "namespaces"},
+		Params: []Param{
+			{Name: "pvName", Label: "PV 名称", Type: ParamString, Required: true},
+			{Name: "capacity", Label: "容量", Type: ParamString, Required: true, Default: "1Gi",
+				Pattern: `^[0-9]+(\.[0-9]+)?([EPTGMK]i?|i)$`},
+			{Name: "accessMode", Label: "访问模式", Type: ParamSelect, Default: "ReadWriteOnce",
+				Options: []SelectOption{
+					{Label: "ReadWriteOnce (单节点读写)", Value: "ReadWriteOnce"},
+					{Label: "ReadOnlyMany (多节点只读)", Value: "ReadOnlyMany"},
+					{Label: "ReadWriteMany (多节点读写)", Value: "ReadWriteMany"},
+				}},
+			{Name: "storageClassName", Label: "StorageClass 名", Type: ParamString, Default: "manual",
+				Help: "静态供给需手动创建 PVC 并指定此名称"},
+			{Name: "mode", Label: "存储后端", Type: ParamSelect, Default: "hostPath",
+				Options: []SelectOption{
+					{Label: "hostPath (本机目录)", Value: "hostPath"},
+					{Label: "nfs (NFS 共享)", Value: "nfs"},
+					{Label: "local (本地设备)", Value: "local"},
+				}},
+			{Name: "hostPath", Label: "路径 (hostPath/local)", Type: ParamString, Default: "/mnt/data"},
+			{Name: "nfsServer", Label: "NFS 服务器地址", Type: ParamString, Default: ""},
+			{Name: "nfsPath", Label: "NFS 路径", Type: ParamString, Default: ""},
+		},
+		Description: "创建静态 PV; 通常需先手动在节点上准备好存储目录",
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["pvName"].(string)
+			cap_, _ := rc.Params["capacity"].(string)
+			am, _ := rc.Params["accessMode"].(string)
+			sc, _ := rc.Params["storageClassName"].(string)
+			md, _ := rc.Params["mode"].(string)
+			hp, _ := rc.Params["hostPath"].(string)
+			ns, _ := rc.Params["nfsServer"].(string)
+			np, _ := rc.Params["nfsPath"].(string)
+			return m.CreatePersistentVolume(rc.Ctx, rc.Cluster, n, cap_, am, sc, md, hp, ns, np)
+		},
+	}
+}
+
+func catalogCreatePriorityClass() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-priorityclass", Label: "创建 PriorityClass", Category: "edit",
+		AllowedRes: []string{"priorityclasses", "namespaces"},
+		Params: []Param{
+			{Name: "pcName", Label: "名称", Type: ParamString, Required: true},
+			{Name: "value", Label: "优先级值 (数字越大越高)", Type: ParamNumber, Required: true, Default: 1000000,
+				Min: floatPtr(-2147483648), Max: floatPtr(2147483647)},
+			{Name: "description", Label: "描述", Type: ParamString, Default: ""},
+			{Name: "globalDefault", Label: "全局默认", Type: ParamBool, Default: false,
+				Help: "true 则未显式设置 priorityClassName 的 Pod 使用此值"},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["pcName"].(string)
+			v, _ := toInt(rc.Params["value"])
+			desc, _ := rc.Params["description"].(string)
+			gd, _ := rc.Params["globalDefault"].(bool)
+			return m.CreatePriorityClass(rc.Ctx, rc.Cluster, n, v, desc, gd)
+		},
+	}
+}
+
+func catalogCreateNamespace() *ActionSpec {
+	return &ActionSpec{
+		Name: "create-namespace", Label: "创建 Namespace", Category: "edit",
+		AllowedRes: []string{"namespaces"},
+		Params: []Param{
+			{Name: "nsName", Label: "命名空间名称", Type: ParamString, Required: true,
+				Pattern: `^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`},
+		},
+		Run: func(m *Manager, rc RunCtx) error {
+			n, _ := rc.Params["nsName"].(string)
+			return m.CreateNamespaceObj(rc.Ctx, rc.Cluster, n)
+		},
+	}
+}
+
+func catalogExpose() *ActionSpec {
+	return &ActionSpec{
+		Name: "expose", Label: "暴露为 Service", Category: "network",
+		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
+		Params: []Param{
+			{Name: "svcName", Label: "Service 名称 (留空=同名)", Type: ParamString, Default: ""},
+			{Name: "svcType", Label: "Service 类型", Type: ParamSelect, Default: "ClusterIP",
+				Options: []SelectOption{
+					{Label: "ClusterIP (集群内)", Value: "ClusterIP"},
+					{Label: "NodePort (节点端口)", Value: "NodePort"},
+					{Label: "LoadBalancer (负载均衡)", Value: "LoadBalancer"},
+				}},
+			{Name: "port", Label: "Service 端口", Type: ParamNumber, Default: 80,
+				Min: floatPtr(1), Max: floatPtr(65535)},
+			{Name: "targetPort", Label: "目标端口 (0=自动检测)", Type: ParamNumber, Default: 0,
+				Help: "0 则读取容器 containerPort; 若无法读取则回退 80"},
+		},
+		Description: "为工作负载创建 Service, 自动读取 Pod selector 与容器端口",
+		Run: func(m *Manager, rc RunCtx) error {
+			sn, _ := rc.Params["svcName"].(string)
+			st, _ := rc.Params["svcType"].(string)
+			p, _ := toInt(rc.Params["port"])
+			tp, _ := toInt(rc.Params["targetPort"])
+			return m.CreateServiceFromWorkload(rc.Ctx, rc.Cluster, rc.Res, rc.Ns, rc.Name, sn, st, int32(p), int32(tp))
+		},
+	}
+}
+
+// ===== 新增: HPA 可视化编辑 (样例) =====
+
+func catalogUpdateHPA() *ActionSpec {
+	return &ActionSpec{
+		Name: "update-hpa", Label: "编辑扩缩规则", Category: "scale",
+		AllowedRes: []string{"horizontalpodautoscalers"},
+		Params: []Param{
+			{Name: "min", Label: "最小副本", Type: ParamNumber, Required: true,
+				Min: floatPtr(0), Max: floatPtr(1000)},
+			{Name: "max", Label: "最大副本", Type: ParamNumber, Required: true,
+				Min: floatPtr(1), Max: floatPtr(1000)},
+			{Name: "metricMode", Label: "扩容规则 (CPU / 内存 / 两者)", Type: ParamSelect, Default: "cpu",
+				Options: []SelectOption{
+					{Label: "仅 CPU 利用率", Value: "cpu"},
+					{Label: "仅 内存", Value: "memory"},
+					{Label: "CPU + 内存 同时", Value: "both"},
+				}},
+			{Name: "cpuPercent", Label: "CPU 目标利用率 (%)", Type: ParamNumber, Default: 80,
+				Min: floatPtr(1), Max: floatPtr(1000),
+				Help: "Pod 平均 CPU 使用率超过该值扩容, 低于缩容"},
+			{Name: "memoryTarget", Label: "内存目标 (如 512Mi 或 80%)", Type: ParamString, Default: "",
+				Help: "仅选内存/两者时必填; 可用绝对量(512Mi)或百分比(80%)"},
+		},
+		Description: "可视化编辑当前 HPA 的副本范围与扩容规则 (等价 kubectl patch, 后端 Go 原生执行)",
+		Run: func(m *Manager, rc RunCtx) error {
+			return m.UpdateHPA(rc.Ctx, rc.Cluster, rc.Ns, rc.Name, rc.Params)
+		},
 	}
 }
 

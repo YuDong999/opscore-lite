@@ -9,6 +9,7 @@ import Card from '../components/Card'
 import EChart from '../charts/EChart'
 import K8sActionPanel from '../components/K8sActionPanel'
 import ExecTerminalModal from '../components/ExecTerminalModal'
+import K8sCertsModal from '../components/K8sCertsModal'
 import LogStreamModal from '../components/LogStreamModal'
 import { useTheme } from '../theme'
 import jsYaml from 'js-yaml'
@@ -55,7 +56,7 @@ type K8sRes =
   | 'configmaps' | 'secrets'
   | 'persistentvolumes' | 'persistentvolumeclaims' | 'storageclasses'
   | 'nodes' | 'namespaces' | 'events'
-  | 'networkpolicies' | 'resourcequotas'
+  | 'networkpolicies' | 'resourcequotas' | 'horizontalpodautoscalers' | 'poddisruptionbudgets' | 'limitranges' | 'priorityclasses'
   | 'serviceaccounts' | 'roles' | 'rolebindings' | 'clusterroles' | 'clusterrolebindings'
 
 // 资源分组(kubevision 信息架构), 折叠状态持久化在 localStorage
@@ -87,11 +88,15 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
   { key: 'cluster', label: '集群', icon: <SideIcon paths={ICON_CLUSTER} sw={1.5} />, defaultOpen: true, items: [
     { res: 'nodes', title: 'Nodes' },
     { res: 'namespaces', title: 'Namespaces' },
+    { res: 'priorityclasses', title: 'PriorityClasses' },
     { res: 'events', title: 'Events' },
   ]},
-  { key: 'policy', label: '策略', icon: <SideIcon paths={ICON_POLICY} sw={1.5} />, defaultOpen: false, items: [
+  { key: 'policy', label: '策略与扩缩容', icon: <SideIcon paths={ICON_POLICY} sw={1.5} />, defaultOpen: false, items: [
+    { res: 'horizontalpodautoscalers', title: 'HPA 自动扩缩' },
+    { res: 'poddisruptionbudgets', title: 'PDB 扰动预算' },
     { res: 'networkpolicies', title: 'NetworkPolicies' },
     { res: 'resourcequotas', title: 'ResourceQuotas' },
+    { res: 'limitranges', title: 'LimitRanges' },
   ]},
   { key: 'rbac', label: '权限与账号', icon: <SideIcon paths={ICON_RBAC} sw={1.5} />, defaultOpen: true, items: [
     { res: 'serviceaccounts', title: 'ServiceAccounts' },
@@ -102,7 +107,7 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
   ]},
 ]
 
-const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings'])
+const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings', 'priorityclasses'])
 
 type Col = [string, string, number, ('mono' | 'dim' | 'status')?]
 const COLS: Partial<Record<K8sRes, Col[]>> = {
@@ -181,9 +186,25 @@ const COLS: Partial<Record<K8sRes, Col[]>> = {
   networkpolicies: [
     ['name', '名称', 45, 'mono'], ['namespace', '命名空间', 30, 'dim'], ['age', '年龄', 25, 'dim'],
   ],
+  horizontalpodautoscalers: [
+    ['name', '名称', 30, 'mono'], ['namespace', '命名空间', 20, 'dim'],
+    ['target', '目标', 24, 'mono'], ['min/max', '最小/最大', 14, 'mono'], ['current', '当前/期望', 14, 'mono'], ['age', '年龄', 12, 'dim'],
+  ],
+  poddisruptionbudgets: [
+    ['name', '名称', 30, 'mono'], ['namespace', '命名空间', 20, 'dim'],
+    ['minAvailable', '最小可用', 14, 'mono'], ['healthy', '健康/期望', 16, 'mono'], ['allowed', '允许中断', 10], ['age', '年龄', 12, 'dim'],
+  ],
   resourcequotas: [
     ['name', '名称', 24, 'mono'], ['namespace', '命名空间', 18, 'dim'],
     ['cpu', 'CPU(used/hard)', 25], ['memory', '内存(used/hard)', 25], ['age', '年龄', 12, 'dim'],
+  ],
+  limitranges: [
+    ['name', '名称', 30, 'mono'], ['namespace', '命名空间', 20, 'dim'],
+    ['limits', '限制类型', 26, 'dim'], ['count', '数量', 10], ['age', '年龄', 14, 'dim'],
+  ],
+  priorityclasses: [
+    ['name', '名称', 34, 'mono'],
+    ['value', '值', 12, 'mono'], ['globalDefault', '默认', 14], ['age', '年龄', 16, 'dim'],
   ],
   serviceaccounts: [
     ['name', '名称', 26, 'mono'], ['namespace', '命名空间', 20, 'dim'],
@@ -255,6 +276,9 @@ function colsForRes(res: string, rows: any[]): Col[] {
 
 const FOLD_KEY = 'k8s-side-fold'
 
+// legacy 动作名 → catalog 动作名 (写轨统一后同名即同义)
+const legacyActionName = (a: string): string => (a === 'setImage' ? 'set-image' : a)
+
 export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [clusters, setClusters] = useState<K8sCluster[] | null>(null)
   const [clusterID, setClusterID] = useState('')
@@ -268,6 +292,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState(false)
   const [showReg, setShowReg] = useState(false)
+  const [certModalOpen, setCertModalOpen] = useState(false)
   const [createKind, setCreateKind] = useState('Deployment')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: any } | null>(null)
@@ -277,7 +302,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   })
   // 资源弹层: 双击行或行内操作打开
   const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
-  const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string } | null>(null)
+  const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string; autoOpen?: string } | null>(null)
   // 加入节点弹层: 生成 kubeadm join 命令
   const [joinNode, setJoinNode] = useState(false)
 
@@ -329,9 +354,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     if (!confirm(confirmMsg.replace('{count}', String(selected.size)))) return
     const targets = Array.from(selected).map((k) => {
       const [nsPart, namePart] = k.split('/')
-      return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: ns === 'all' ? nsPart : ns }) }
+      return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: res === 'all' ? nsPart : ns }) }
     })
-    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action, targets })
+    // 批量也走 catalog 执行 (后端 /resources/action 已是 catalog 薄代理)
+    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets })
       .then((d: any) => {
         onMsg?.(d.ok ? `✓ 批量 ${action} ${selected.size} 个资源完成` : '✗ ' + (d.error || '失败'))
         if (d.ok) { setSelected(new Set()); setTimeout(loadRows, 600) }
@@ -349,7 +375,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
 
   const act = (body: Record<string, any>, confirmMsg?: string) => {
     if (confirmMsg && !confirm(confirmMsg)) return
-    postJSON('/api/plugins/containers/k8s/resource/action', { cluster: clusterID, ...body })
+    // 统一写轨: 一律走 /k8s/action (catalog); legacy 顶层字段名与 catalog 参数名对齐
+    const { action, res, ns, name, ...params } = body
+    const mapped = legacyActionName(action as string)
+    postJSON('/api/plugins/containers/k8s/action', { cluster: clusterID, res, ns, name, action: mapped, params })
       .then((d: any) => {
         onMsg?.(d.ok ? `✓ ${body.action} ${body.name} 完成` : '✗ ' + (d.error || '失败'))
         if (d.ok) { setModal(null); setTimeout(loadRows, 600) }
@@ -518,6 +547,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           </div>
           <div className="k8s-side-item k8s-top-item" onClick={() => setRes('overview' as any)} data-res="overview">
             <span>概览</span>
+          </div>
+          <div className="k8s-side-item k8s-top-item" onClick={() => setCertModalOpen(true)} data-res="certs">
+            <span>证书</span>
           </div>
           {RES_GROUPS.map((g) => (
             <div key={g.key} className="k8s-nav-group">
@@ -724,16 +756,26 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           res={res as K8sRes}
           ns={ns === 'all' ? ctxMenu.row.namespace || '' : ns}
           name={ctxMenu.row.name}
-          row={ctxMenu.row}
+          cluster={clusterID}
           onAction={(action, extra) => {
-            act({ res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns, name: ctxMenu.row.name, action, ...extra })
+            postJSON('/api/plugins/containers/k8s/action', {
+              cluster: clusterID,
+              res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns,
+              name: ctxMenu.row.name, action, params: extra || {},
+            }).then((d: any) => {
+              onMsg?.(d.ok ? `✓ ${action} ${ctxMenu.row.name} 完成` : '✗ ' + (d.error || '失败'))
+              if (d.ok) setTimeout(loadRows, 600)
+            }).catch((e) => onMsg?.('✗ ' + String(e)))
+          }}
+          onOpenForm={(action) => {
+            setActionPanel({
+              res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns,
+              name: ctxMenu.row.name, autoOpen: action,
+            })
+            setCtxMenu(null)
           }}
           onViewDetail={() => {
             openModal(res === 'pods' ? 'pod' : res === 'deployments' || res === 'statefulsets' ? 'workload' : res === 'nodes' ? 'node' : 'yaml', ctxMenu.row)
-            setCtxMenu(null)
-          }}
-          onViewYaml={() => {
-            openModal('yaml' as any, ctxMenu.row)
             setCtxMenu(null)
           }}
           onDescribe={() => {
@@ -758,6 +800,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 res={actionPanel.res} name={actionPanel.name}
                 ns={actionPanel.ns} cluster={clusterID}
                 onMsg={onMsg}
+                openActionName={actionPanel.autoOpen}
                 onClose={() => setActionPanel(null)} />
             </div>
             <div className="btn-row" style={{ marginTop: '1rem', justifyContent: 'flex-end' }}>
@@ -798,6 +841,15 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
         <RegisterModal
           onClose={() => setShowReg(false)}
           onDone={(ok, msg) => { setShowReg(false); onMsg?.(msg); if (ok) loadClusters() }}
+        />
+      )}
+
+      {certModalOpen && cluster && (
+        <K8sCertsModal
+          cluster={clusterID}
+          clusterName={cluster.name}
+          onClose={() => setCertModalOpen(false)}
+          onMsg={onMsg}
         />
       )}
     </div>
@@ -1154,6 +1206,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [err, setErr] = useState('')
   const [execOpen, setExecOpen] = useState(false)
   const [logStreamOpen, setLogStreamOpen] = useState(false)
+  const [logModalOpen, setLogModalOpen] = useState(false)
   const [desc, setDesc] = useState('')
   const [descBusy, setDescBusy] = useState(false)
   const [replicas, setReplicas] = useState<number | ''>('')
@@ -1202,7 +1255,8 @@ function ResourceModal({ info, onClose, act, onMsg }: {
     const c = logContainer || detail?.containers?.[0]?.name || ''
     getJSON<{ ok: boolean; log: string; error?: string }>(`/api/plugins/containers/k8s/pod/log?cluster=${info.cluster}&ns=${info.ns}&name=${info.name}&container=${encodeURIComponent(c)}&tail=200`)
       .then((d) => d.ok ? setLogOut(d.log || '(空)') : setLogOut('✗ ' + (d.error || '失败')))
-      .catch((e) => setLogOut('✗ ' + String(e))).finally(() => setLogBusy(false))
+      .catch((e) => setLogOut('✗ ' + String(e)))
+      .finally(() => setLogBusy(false))
   }
   const runExec = () => {
     if (!execCmd.trim()) return
@@ -1269,7 +1323,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'detail' ? 'btn-accent' : ''}`} onClick={() => setTab('detail')}>概览</button>
               <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setTab('yaml')}>YAML</button>
               <span style={{ marginLeft: 'auto' }} />
-              <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={fetchLog} disabled={logBusy}>{logBusy ? '日志加载中…' : '日志'}</button>
+              <button type="button" className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setLogModalOpen(true); fetchLog() }}>日志</button>
               <button type="button" className="btn-glass-soft btn-glass-soft-sm"
                 onClick={() => setLogStreamOpen(true)}>日志跟随</button>
               <button type="button" className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
@@ -1781,46 +1835,143 @@ function ResourceModal({ info, onClose, act, onMsg }: {
           containers={logContainers()}
           onClose={() => setLogStreamOpen(false)} />
       )}
+
+      {/* 日志(静态, 近200行)弹窗 */}
+      {logModalOpen && (
+        <div className="modal-overlay" onClick={() => setLogModalOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 800, width: '90vw', maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <h3>Pod 日志 — {info.ns ? `${info.ns}/` : ''}{info.name}{logContainer ? ` · ${logContainer}` : ''}</h3>
+            <div className="btn-row" style={{ marginTop: '0.5rem' }}>
+              <select className="input" value={logContainer} onChange={(e) => setLogContainer(e.target.value)} style={{ width: 160 }}>
+                <option value="">(默认容器)</option>
+                {(detail.containers || []).map((c: any) => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={fetchLog} disabled={logBusy}>{logBusy ? '加载中…' : '刷新'}</button>
+              <span className="dim" style={{ fontSize: '0.75rem', flex: 1 }}>近200行</span>
+              <button className="btn-glass-soft" onClick={() => setLogModalOpen(false)}>关闭</button>
+            </div>
+            {logOut ? (
+              <pre ref={logRef} className="code-block" style={{ flex: 1, overflow: 'auto', fontSize: '0.6875rem', whiteSpace: 'pre-wrap', marginTop: '0.5rem', minHeight: 200 }}>{logOut}</pre>
+            ) : (
+              <div className="loading" style={{ padding: '1rem' }}>{logBusy ? '加载中…' : ''}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── 右键上下文菜单 ──
-function K8sContextMenu({ x, y, res, ns, name, row, onAction, onViewDetail, onViewYaml, onDescribe, onClose }: {
+// 按资源类型差异化: 资源专属快捷操作(form=打开可视化表单→命令预览→确认; direct=直接执行)
+// label 由后端 /action-catalog 提供(权威), CTX_DEFS 只声明展示顺序/形式/确认语。
+type ActionType = { name: string; label?: string; category?: string }
+interface CtxAction { label: string; action: string; form?: boolean; direct?: boolean; danger?: boolean; confirm?: string; extra?: Record<string, any> }
+type CtxItem = CtxAction | { sep: boolean }
+
+const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
+  horizontalpodautoscalers: [
+    { label: '编辑扩缩规则', action: 'update-hpa', form: true },
+  ],
+  deployments: [
+    { label: '扩缩容', action: 'scale', form: true },
+    { label: '更新镜像', action: 'set-image', form: true },
+    { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '创建 HPA 自动扩缩', action: 'autoscale', form: true },
+    { label: '暴露为 Service', action: 'expose', form: true },
+    { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
+    { label: '暂停发布', action: 'pause', direct: true, confirm: '暂停发布 {name}?' },
+  ],
+  statefulsets: [
+    { label: '扩缩容', action: 'scale', form: true },
+    { label: '更新镜像', action: 'set-image', form: true },
+    { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '创建 HPA 自动扩缩', action: 'autoscale', form: true },
+    { label: '暴露为 Service', action: 'expose', form: true },
+    { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
+  ],
+  daemonsets: [
+    { label: '更新镜像', action: 'set-image', form: true },
+    { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
+  ],
+  jobs: [
+    { label: '重跑任务', action: 'rerun', direct: true, confirm: '重跑任务 {name}?' },
+  ],
+  cronjobs: [
+    { label: '立即触发', action: 'trigger', direct: true, confirm: '立即触发 {name}?' },
+    { label: '挂起 / 恢复', action: 'suspend', form: true },
+  ],
+  persistentvolumeclaims: [
+    { label: '扩容存储', action: 'expand', form: true },
+  ],
+  nodes: [
+    { label: '封锁调度 (Cordon)', action: 'cordon', direct: true, confirm: '封锁节点 {name}?' },
+    { label: '解除封锁 (Uncordon)', action: 'uncordon', direct: true, confirm: '解除封锁节点 {name}?' },
+    { label: 'Drain 排空', action: 'drain', form: true },
+    { label: '添加污点', action: 'taint-add', form: true },
+  ],
+  namespaces: [
+    { label: '创建 ResourceQuota', action: 'create-quota', form: true },
+    { label: '创建 LimitRange', action: 'create-limitrange', form: true },
+    { label: '创建 NetworkPolicy', action: 'create-networkpolicy', form: true },
+  ],
+}
+
+function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, onViewDetail, onDescribe, onClose }: {
   x: number; y: number
-  res: K8sRes; ns: string; name: string; row: any
+  res: K8sRes; ns: string; name: string; cluster: string
   onAction: (action: string, extra?: Record<string, any>) => void
+  onOpenForm: (action: string) => void
   onViewDetail: () => void
-  onViewYaml: () => void
   onDescribe: () => void
   onClose: () => void
 }) {
-  const items: { label: string; action: string; danger?: boolean; extra?: Record<string, any>; needsConfirm?: string; type?: string }[] = []
+  // catalog 驱动: 后端 action-label 为权威, CTX_DEFS 只声明展示顺序/行为
+  const [catalogLabels, setCatalogLabels] = useState<Record<string, string>>({})
+  useEffect(() => {
+    const cur = res as string
+    if (!cur) return
+    getJSON<{ ok: boolean; actions: ActionType[]; error?: string }>(
+      `/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(cur)}&t=${Date.now()}`
+    ).then((d) => {
+      if (!d.ok) return
+      const m: Record<string, string> = {}
+      for (const a of d.actions || []) m[a.name] = a.label || a.name
+      setCatalogLabels(m)
+    }).catch(() => {})
+  }, [res])
+
+  const items: (CtxItem & { label?: string; action?: string; danger?: boolean; confirm?: string; extra?: Record<string, any> })[] = []
+  const defs = CTX_DEFS[res] || []
+  for (const it of defs) {
+    if ('sep' in it) continue
+    items.push({
+      // 目录中已注册的 action 用后端 label, 未注册的降级为前端 label (并保留提示不隐藏)
+      label: catalogLabels[it.action] || it.label, action: it.action, danger: it.danger, extra: it.extra,
+      confirm: it.confirm ? it.confirm.replace('{name}', name).replace('{ns}', ns) : undefined,
+      form: it.form,
+    })
+  }
+  if (items.length) items.push({ sep: true } as any)
   items.push({ label: '查看详情', action: 'view-detail' })
-  if (res === 'pods') {
-    items.push({ label: '重启 Pod', action: 'delete', danger: true, extra: { grace: 0 }, needsConfirm: `重启 Pod ${name}?` })
-  }
-  if (res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') {
-    items.push({ label: '滚动重启', action: 'restart', needsConfirm: `滚动重启 ${name}?` })
-  }
-  items.push({ type: 'sep', label: '', action: '' })
   items.push({ label: 'Describe', action: 'describe' })
-  items.push({ label: '编辑 YAML', action: 'view-yaml' })
-  items.push({ type: 'sep', label: '', action: '' })
-  items.push({ label: '删除资源', action: 'delete', danger: true, needsConfirm: `删除 ${name}?` })
+  items.push({ sep: true } as any)
+  items.push({ label: '删除资源', action: 'delete', danger: true, confirm: `删除 ${name}?` })
   return (
     <div className="k8s-ctxmenu" style={{ left: x, top: y }} onClick={onClose}>
       {items.map((it, i) =>
-        it.type === 'sep'
+        (it as any).sep
           ? <div key={i} className="k8s-ctx-divider" />
           : <div key={i} className={`k8s-ctx-item ${it.danger ? 'k8s-ctx-danger' : ''}`}
               onClick={(e) => {
                 e.stopPropagation()
-                if (it.needsConfirm && !confirm(it.needsConfirm)) return
+                if (it.confirm && !confirm(it.confirm)) return
                 if (it.action === 'view-detail') { onViewDetail() }
                 else if (it.action === 'describe') { onDescribe() }
-                else if (it.action === 'view-yaml') { onViewYaml() }
-                else onAction(it.action, it.extra)
+                else if (it.form) { onOpenForm(it.action!) }
+                else onAction(it.action!, it.extra)
               }}>
             {it.label}
           </div>

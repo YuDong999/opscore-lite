@@ -209,7 +209,65 @@ type k8sResourceActionBody struct {
 	GraceSeconds      int64 `json:"graceSeconds,omitempty"`
 }
 
+// legacyActionMap 把 legacy 端点 action 名映射成 catalog action 名
+func legacyActionMap(action string) string {
+	if action == "setImage" {
+		return "set-image"
+	}
+	return action
+}
+
+// legacyParamsToCatalog 把 legacy body 字段按 catalog 参数名组装成 params。
+// legacy 字段名与 catalog 参数名设计时已对齐, 直接一对一转存。
+func legacyParamsToCatalog(b k8sResourceActionBody) map[string]any {
+	params := map[string]any{}
+	if b.Replicas != 0 {
+		params["replicas"] = b.Replicas
+	}
+	if b.Revision != 0 {
+		params["revision"] = b.Revision
+	}
+	if b.Suspend != nil {
+		params["suspend"] = *b.Suspend
+	}
+	if b.Storage != "" {
+		params["storage"] = b.Storage
+	}
+	if b.Image != "" {
+		params["image"] = b.Image
+	}
+	if b.Force {
+		params["force"] = b.Force
+	}
+	if b.Key != "" {
+		params["key"] = b.Key
+	}
+	if b.Value != "" {
+		params["value"] = b.Value
+	}
+	if b.Overwrite {
+		params["overwrite"] = b.Overwrite
+	}
+	if b.IgnoreDaemonsets {
+		params["ignoreDaemonsets"] = b.IgnoreDaemonsets
+	}
+	if b.DeleteEmptyDirData {
+		params["deleteEmptyDirData"] = b.DeleteEmptyDirData
+	}
+	if b.GraceSeconds != 0 {
+		params["graceSeconds"] = b.GraceSeconds
+	}
+	return params
+}
+
+// requireParams 按 catalog 的 Required/Pattern 元数据校验参数 (单一来源)
+func requireParams(spec *kubernetes.ActionSpec, params map[string]any) error {
+	return kubernetes.ValidateParams(spec, params)
+}
+
 // K8sResourceActionHandler POST {cluster,res,ns,name,action[,replicas]}
+// 薄代理: legacy 参数转 catalog RunCtx → 查表 spec.Run (能力/校验单一来源)。
+// 保留同名端点与字段, 方便存量调用；返回结构与旧版一致。
 func K8sResourceActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -225,163 +283,42 @@ func K8sResourceActionHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return
 	}
-	switch b.Action {
-	case "delete":
-	case "scale":
-		if b.Res != "deployments" && b.Res != "statefulsets" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 deployments/statefulsets 支持扩缩容"})
-			return
-		}
-		if b.Replicas < 0 || b.Replicas > 1000 {
-			WriteJSON(w, map[string]any{"ok": false, "error": "replicas 范围 0-1000"})
-			return
-		}
-	case "restart":
-		if b.Res != "deployments" && b.Res != "statefulsets" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 deployments/statefulsets 支持滚动重启"})
-			return
-		}
-	case "rollback":
-		if b.Res != "deployments" && b.Res != "statefulsets" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 deployments/statefulsets 支持回滚"})
-			return
-		}
-	case "pause", "resume":
-		if b.Res != "deployments" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 deployments 支持暂停/恢复发布"})
-			return
-		}
-	case "suspend":
-		if b.Res != "cronjobs" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 cronjobs 支持 suspend"})
-			return
-		}
-	case "trigger":
-		if b.Res != "cronjobs" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 cronjobs 支持立即触发"})
-			return
-		}
-	case "rerun":
-		if b.Res != "jobs" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 jobs 支持重跑"})
-			return
-		}
-	case "expand":
-		if b.Res != "persistentvolumeclaims" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 PVC 支持扩容"})
-			return
-		}
-		if b.Storage == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 storage 参数"})
-			return
-		}
-	case "cordon", "uncordon":
-		if b.Res != "nodes" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 nodes 支持 cordon/uncordon"})
-			return
-		}
-	case "drain":
-		if b.Res != "nodes" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 nodes 支持 drain"})
-			return
-		}
-	case "label":
-		if b.Res == "overview" || b.Res == "events" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "资源类型不支持 label"})
-			return
-		}
-		if b.Key == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 key 参数"})
-			return
-		}
-	case "delete-node":
-		if b.Res != "nodes" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 nodes 支持删除"})
-			return
-		}
-	case "setImage":
-		if b.Res != "deployments" && b.Res != "statefulsets" && b.Res != "daemonsets" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "仅 workload 支持镜像更新"})
-			return
-		}
-		if strings.TrimSpace(b.Image) == "" {
-			WriteJSON(w, map[string]any{"ok": false, "error": "缺少 image 参数"})
-			return
-		}
-	default:
+	catAction := legacyActionMap(b.Action)
+	spec, ok := kubernetes.ActionCatalog[catAction]
+	if !ok {
 		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action"})
 		return
 	}
-
+	if !spec.AllowsRes(b.Res) {
+		WriteJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf("资源 %s 不支持操作 %s", b.Res, b.Action)})
+		return
+	}
+	if spec.RequiresTTY {
+		WriteJSON(w, map[string]any{"ok": false, "error": "流式操作请走专属端点"})
+		return
+	}
+	// label 伪资源守卫: overview/events 不落集群 (保持 legacy 语义)
+	if catAction == "label" && (b.Res == "overview" || b.Res == "events") {
+		WriteJSON(w, map[string]any{"ok": false, "error": "资源类型不支持 label"})
+		return
+	}
+	// 保留 drain 弃用: k8s delete-node 的 drain 选项由 drain 字段组传入, 无需额外校验
+	params := legacyParamsToCatalog(b)
+	if err := requireParams(spec, params); err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	var err error
-	extra := ""
-	switch b.Action {
-	case "delete":
-		err = k8sMgr.DeleteResource(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Force)
-	case "scale":
-		err = k8sMgr.ScaleWorkload(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Replicas)
-	case "restart":
-		err = k8sMgr.RestartWorkload(ctx, b.Cluster, b.Res, b.Ns, b.Name)
-	case "rollback":
-		err = k8sMgr.RolloutUndo(ctx, b.Cluster, b.Ns, b.Name, b.Revision)
-	case "pause":
-		err = k8sMgr.RolloutPause(ctx, b.Cluster, "deployments", b.Ns, b.Name, true)
-	case "resume":
-		err = k8sMgr.RolloutPause(ctx, b.Cluster, "deployments", b.Ns, b.Name, false)
-	case "suspend":
-		sv := b.Suspend != nil && *b.Suspend
-		err = k8sMgr.SuspendCronJob(ctx, b.Cluster, b.Ns, b.Name, sv)
-		extra = fmt.Sprintf("suspend=%v", sv)
-	case "trigger":
-		var jn string
-		jn, err = k8sMgr.TriggerCronJob(ctx, b.Cluster, b.Ns, b.Name)
-		extra = "job=" + jn
-	case "rerun":
-		var jn string
-		jn, err = k8sMgr.RerunJob(ctx, b.Cluster, b.Ns, b.Name)
-		extra = "new=" + jn
-	case "expand":
-		err = k8sMgr.ExpandPVC(ctx, b.Cluster, b.Ns, b.Name, b.Storage)
-		extra = "storage=" + b.Storage
-	case "cordon":
-		err = k8sMgr.NodeCordon(ctx, b.Cluster, b.Name, true)
-	case "uncordon":
-		err = k8sMgr.NodeCordon(ctx, b.Cluster, b.Name, false)
-	case "drain":
-		var evicted, skipped int
-		opt := kubernetes.DrainOptions{
-			IgnoreDaemonsets: b.IgnoreDaemonsets,
-			DeleteEmptyDir:   b.DeleteEmptyDirData,
-			Force:            b.Force,
-			GraceSeconds:     b.GraceSeconds,
-		}
-		evicted, skipped, err = k8sMgr.NodeDrain(ctx, b.Cluster, b.Name, opt)
-		extra = fmt.Sprintf("evicted=%d skipped(daemonset/static)=%d", evicted, skipped)
-	case "label":
-		err = k8sMgr.LabelResource(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Key, b.Value, b.Overwrite)
-		extra = fmt.Sprintf("key=%s value=%q overwrite=%v", b.Key, b.Value, b.Overwrite)
-	case "delete-node":
-		opt := kubernetes.DrainOptions{
-			IgnoreDaemonsets: b.IgnoreDaemonsets,
-			DeleteEmptyDir:   b.DeleteEmptyDirData,
-			Force:            b.Force,
-			GraceSeconds:     b.GraceSeconds,
-		}
-		var evicted, skipped int
-		evicted, skipped, err = k8sMgr.NodeDelete(ctx, b.Cluster, b.Name, opt)
-		extra = fmt.Sprintf("evicted=%d skipped=%d node-deleted", evicted, skipped)
-	case "setImage":
-		err = k8sMgr.SetWorkloadImage(ctx, b.Cluster, b.Res, b.Ns, b.Name, b.Image)
-		extra = "image=" + b.Image
-	}
+	rc := kubernetes.RunCtx{Ctx: ctx, Cluster: b.Cluster, Res: b.Res, Ns: b.Ns, Name: b.Name, Params: params}
+	err := spec.Run(k8sMgr, rc)
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
-	log.Printf("[K8S-AUDIT] action=%s res=%s cluster=%s ns=%s name=%s replicas=%d %s err=%q",
-		b.Action, b.Res, b.Cluster, b.Ns, b.Name, b.Replicas, extra, msg)
+	plog := fmt.Sprintf("params=%v", params)
+	log.Printf("[K8S-AUDIT] action=%s res=%s cluster=%s ns=%s name=%s %s err=%q",
+		catAction, b.Res, b.Cluster, b.Ns, b.Name, plog, msg)
 	InvalidateRespCache("/api/plugins/containers/k8s")
 	WriteJSON(w, map[string]any{"ok": err == nil, "error": msg})
 }
@@ -486,7 +423,8 @@ type k8sBatchActionBody struct {
 }
 
 // K8sBatchActionHandler POST {cluster,res,targets,action[,replicas,force,image]}
-// 批量操作多个资源: 逐个执行单资源动作, 汇总结果
+// 批量操作多个资源: 逐 target 走 catalog spec.Run, 汇总结果。
+// 薄代理: 能力/校验取自 catalog, 与单资源端点一致。
 func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -498,9 +436,22 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 	var b k8sBatchActionBody
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil ||
 		!reK8sClusterID.MatchString(b.Cluster) || (!kubernetes.ValidResource(b.Res) && !kubernetes.IsCRDName(b.Res)) ||
-		!(b.Action == "delete" || b.Action == "restart" || b.Action == "rollback" || b.Action == "scale") ||
 		len(b.Targets) == 0 {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
+		return
+	}
+	catAction := legacyActionMap(b.Action)
+	spec, ok := kubernetes.ActionCatalog[catAction]
+	if !ok {
+		WriteJSON(w, map[string]any{"ok": false, "error": "未知 action"})
+		return
+	}
+	if !spec.AllowsRes(b.Res) {
+		WriteJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf("资源 %s 不支持批量操作 %s", b.Res, b.Action)})
+		return
+	}
+	if spec.RequiresTTY {
+		WriteJSON(w, map[string]any{"ok": false, "error": "流式操作不支持批量"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -518,30 +469,18 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 			failed++
 			continue
 		}
-		var err error
-		switch b.Action {
-		case "delete":
-			err = k8sMgr.DeleteResource(ctx, b.Cluster, b.Res, tns, name, b.Force)
-		case "restart":
-			if b.Res != "deployments" && b.Res != "statefulsets" {
-				failed++
-				continue
-			}
-			err = k8sMgr.RestartWorkload(ctx, b.Cluster, b.Res, tns, name)
-		case "rollback":
-			if b.Res != "deployments" && b.Res != "statefulsets" {
-				failed++
-				continue
-			}
-			err = k8sMgr.RolloutUndo(ctx, b.Cluster, tns, name, 0)
-		case "scale":
-			if b.Res != "deployments" && b.Res != "statefulsets" {
-				failed++
-				continue
-			}
-			err = k8sMgr.ScaleWorkload(ctx, b.Cluster, b.Res, tns, name, b.Replicas)
+		params := map[string]any{}
+		if b.Replicas != 0 {
+			params["replicas"] = b.Replicas
 		}
-		if err != nil {
+		if b.Force {
+			params["force"] = b.Force
+		}
+		if b.Image != "" {
+			params["image"] = b.Image
+		}
+		rc := kubernetes.RunCtx{Ctx: ctx, Cluster: b.Cluster, Res: b.Res, Ns: tns, Name: name, Params: params}
+		if err := spec.Run(k8sMgr, rc); err != nil {
 			failed++
 			errs = append(errs, fmt.Sprintf("%s: %s", name, err.Error()))
 		} else {
@@ -549,7 +488,7 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	log.Printf("[K8S-AUDIT] batch action=%s res=%s cluster=%s count=%d ok=%d fail=%d",
-		b.Action, b.Res, b.Cluster, len(b.Targets), succeeded, failed)
+		catAction, b.Res, b.Cluster, len(b.Targets), succeeded, failed)
 	InvalidateRespCache("/api/plugins/containers/k8s")
 	WriteJSON(w, map[string]any{
 		"ok": failed == 0,

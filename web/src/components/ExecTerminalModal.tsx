@@ -84,7 +84,6 @@ export default function ExecTerminalModal({
   const handleEnter = () => {
     if (exited) return
     sendStdin(inputBuf + '\n')
-    setLines((l) => [...l, inputBuf])
     setInputBuf('')
   }
 
@@ -129,21 +128,32 @@ export default function ExecTerminalModal({
   )
 }
 
-// 基础 ANSI 颜色解析, 其它控制字符(光标移动)忽略。
+// 基础 ANSI 颜色解析, 其它控制字符(光标移动/状态查询)忽略。
+// CSI 序列 = ESC '[' 数字/分号(参数) + 结尾字母。只有结尾 'm' 是颜色, 其余整体吞掉。
 function AnsiText({ text }: { text: string }) {
-  // 拆 token 序列: \x1b[...m
   const out: { t: string; c?: string }[] = []
   let i = 0
   while (i < text.length) {
     if (text[i] === '\x1b' && text[i + 1] === '[') {
-      const end = text.indexOf('m', i + 2)
-      if (end > 0) {
-        const code = text.slice(i + 2, end)
+      // 找到 CSI 结尾字母: 跳过参数(0x30-0x3F 数字)、中间字节(0x20-0x2F), 定位最终字节(0x40-0x7E)
+      let j = i + 2
+      let fin = -1
+      while (j < text.length) {
+        const ch = text.charCodeAt(j)
+        if (ch >= 0x40 && ch <= 0x7e) { fin = j; break }
+        if ((ch >= 0x20 && ch <= 0x2f) || (ch >= 0x30 && ch <= 0x3f)) { j++ } else { break }
+      }
+      if (fin >= 0 && text[fin] === 'm') {
+        const code = text.slice(i + 2, fin)
         const c = ansiColor(code)
-        i = end + 1
+        i = fin + 1
         if (c) out.push({ t: '', c })
         continue
       }
+      // 颜色之外的 CSI(光标移动/状态查询如 \x1b[6n): 整体跳过
+      if (fin < 0) break
+      i = fin + 1
+      continue
     }
     let j = i
     while (j < text.length && !(text[j] === '\x1b' && text[j + 1] === '[')) j++

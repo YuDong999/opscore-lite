@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -164,6 +163,12 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := central.K8sCluster{ID: id, Name: b.Name, APIServer: apiServer, Version: version, Status: status, CreatedAt: time.Now().Unix()}
+	// 注册即按 apiserver 地址反查 master 主机并落库(供证书等 master 本地操作走 SSH; 查不到留空=退本机)
+	if apiServer != "" {
+		if master := locateMasterHost(apiServer); master != "" {
+			rec.MasterHost = master
+		}
+	}
 	if uerr := k8sUpsertCluster(rec); uerr != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": "持久化失败: " + uerr.Error()})
 		return
@@ -370,71 +375,6 @@ func k8sOverviewBuild(r *http.Request) any {
 	return out
 }
 
-// ===== Pod 日志与容器枚举 (只读) =====
-
-// K8sPodLogsHandler GET ?cluster=&ns=&pod=&container=&tail=&previous=
-func K8sPodLogsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	q := r.URL.Query()
-	cluster, ns, pod := q.Get("cluster"), q.Get("ns"), q.Get("pod")
-	if !reK8sClusterID.MatchString(cluster) || !reK8sNamespace.MatchString(ns) ||
-		!reContainerName.MatchString(pod) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(cluster/ns/pod)"})
-		return
-	}
-	tail := int64(200)
-	if v, terr := strconv.ParseInt(q.Get("tail"), 10, 64); terr == nil && v > 0 {
-		tail = v
-	}
-	if tail > 500 {
-		tail = 500 // 上限防护对齐容器日志, 避免大日志拖垮响应
-	}
-	previous := q.Get("previous") == "1"
-	container := q.Get("container")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	logs, err := k8sMgr.PodLogs(ctx, cluster, ns, pod, container, tail, previous)
-	msg := ""
-	if err != nil {
-		msg = err.Error()
-	}
-	WriteJSON(w, map[string]any{
-		"ok": err == nil, "logs": logs, "pod": pod, "namespace": ns, "error": msg,
-	})
-}
-
-// K8sPodContainersHandler GET ?cluster=&ns=&pod= → 容器名列表(日志容器选择)
-func K8sPodContainersHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	q := r.URL.Query()
-	cluster, ns, pod := q.Get("cluster"), q.Get("ns"), q.Get("pod")
-	if !reK8sClusterID.MatchString(cluster) || !reK8sNamespace.MatchString(ns) ||
-		!reContainerName.MatchString(pod) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(cluster/ns/pod)"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	containers := k8sMgr.ListPodContainers(ctx, cluster, ns, pod)
-	if containers == nil {
-		containers = []string{}
-	}
-	WriteJSON(w, map[string]any{"ok": true, "containers": containers})
-}
-
 // ===== 内部辅助 =====
 
 func decodeKubeconfig(s string) ([]byte, error) {
@@ -481,6 +421,31 @@ func k8sFindCluster(cs []central.K8sCluster, id string) *central.K8sCluster {
 		}
 	}
 	return nil
+}
+
+// locateMasterHost 按 apiserver 地址(host)在主机清单反查主机 ID; 查不到返回空串(调用方决定降级)。
+// 供注册/证书解析复用: 同一主机关系只写一份, 避免两处各自实现。
+func locateMasterHost(apiServer string) string {
+	host := apiServer
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(host, prefix) {
+			host = strings.TrimPrefix(host, prefix)
+			break
+		}
+	}
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	if ansibleMgr == nil {
+		return ""
+	}
+	for _, h := range ansibleMgr.ListHosts() {
+		if strings.EqualFold(h.Addr, host) || strings.EqualFold(h.Hostname, host) ||
+			strings.EqualFold(h.Alias, host) || strings.EqualFold(h.ID, host) {
+			return h.ID
+		}
+	}
+	return ""
 }
 
 func k8sRemoveCluster(cs []central.K8sCluster, id string) []central.K8sCluster {
