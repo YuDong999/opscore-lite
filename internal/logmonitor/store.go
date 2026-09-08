@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,11 +29,156 @@ func NewStore(dbPath string) (*Store, error) {
 	db.SetMaxOpenConns(1) // SQLite 单写
 
 	s := &Store{db: db, dbPath: dbPath}
+	if err := s.Check(); err != nil {
+		// 库损坏且 salvage 失败：拒绝启动，避免带病写入扩大损坏
+		db.Close()
+		return nil, err
+	}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// Check 启动自检：PRAGMA integrity_check。损坏时尝试 salvage 重建（搬运转可读行到新库）
+// 并替换原库；已自动恢复返回 nil，salvage 也失败才报错（拒绝启动, 避免带病写入）。
+func (s *Store) Check() error {
+	result := "ok"
+	if err := s.db.QueryRow("PRAGMA integrity_check").Scan(&result); err != nil {
+		return s.salvage()
+	}
+	if result == "ok" {
+		return nil
+	}
+	log.Printf("[logmonitor] 数据库完整性异常: %s, 尝试自动恢复...", result)
+	return s.salvage()
+}
+
+// sqliteWalDSN 拼接 DSN：老库自动补列依赖写路径, 新库/替换库统一走 WAL。
+const writeDSN = "_journal_mode=WAL&_cache_size=-64000"
+
+// salvage 损坏库救援：坏库原文件改为 .corrupt-<ts> 备份, 可读行逐表搬进新库, 原子换回原路径。
+// 复刻 2026-09-09 人工恢复流程（逐行读取, 坏行跳过）。
+func (s *Store) salvage() error {
+	s.db.Close()
+
+	badPath := s.dbPath + ".corrupt-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(s.dbPath, badPath); err != nil {
+		return fmt.Errorf("salvage: 备份损坏库: %w", err)
+	}
+
+	src, err := sql.Open("sqlite", badPath+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("salvage: 打开损坏库: %w", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("salvage: priset busy: %w", err)
+	}
+
+	var tables []string
+	rows, err := src.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		return fmt.Errorf("salvage: 枚举表: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("salvage: 读表名: %w", err)
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+
+	dst, err := sql.Open("sqlite", s.dbPath+"?"+writeDSN)
+	if err != nil {
+		return fmt.Errorf("salvage: 打开恢复库: %w", err)
+	}
+
+	recovered := false
+	for _, t := range tables {
+		n, err := copyTable(src, dst, t)
+		if err != nil {
+			log.Printf("[logmonitor] salvage 表 %s 恢复失败: %v (可后续手工处理 %s)", t, err, badPath)
+			continue
+		}
+		log.Printf("[logmonitor] salvage 表 %s: 搬回 %d 行", t, n)
+		recovered = true
+	}
+	if !recovered {
+		dst.Close()
+		// 一无所获: 原路径恢复为损坏库的备份, 交给人工
+		_ = os.Rename(badPath, s.dbPath)
+		return fmt.Errorf("salvage: 未恢复任何数据, 请人工处理 %s", badPath)
+	}
+	// 恢复库就绪, 换上正式连接供后续 migrate 使用
+	dst.Close()
+	db, err := sql.Open("sqlite", s.dbPath+"?"+writeDSN)
+	if err != nil {
+		return fmt.Errorf("salvage: 重开恢复库: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	s.db = db
+	log.Printf("[logmonitor] 已自动恢复数据库, 损坏库备份于 %s", badPath)
+	return nil
+}
+
+// copyTable 从损坏库搬一张表：复制原 DDL 建表后逐行搬, 坏行跳过。
+// 先用定界查询拿列数拼 INSERT 占位符, 再全表搬。返回搬回行数。
+func copyTable(src, dst *sql.DB, table string) (int, error) {
+	var ddl string
+	if err := src.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&ddl); err != nil {
+		return 0, fmt.Errorf("读表 %s 结构: %w", table, err)
+	}
+	if _, err := dst.Exec(ddl); err != nil {
+		return 0, fmt.Errorf("建表 %s: %w", table, err)
+	}
+
+	probe, err := src.Query("SELECT * FROM " + table)
+	if err != nil {
+		return 0, fmt.Errorf("读表 %s 列: %w", table, err)
+	}
+	cols, err := probe.Columns()
+	probe.Close()
+	if err != nil {
+		return 0, fmt.Errorf("读表 %s 列名: %w", table, err)
+	}
+	holders := make([]string, len(cols))
+	for i := range holders {
+		holders[i] = "?"
+	}
+	stmt, err := dst.Prepare(fmt.Sprintf("INSERT INTO %q VALUES (%s)", table, strings.Join(holders, ",")))
+	if err != nil {
+		return 0, fmt.Errorf("prepare %s: %w", table, err)
+	}
+	defer stmt.Close()
+
+	rows, err := src.Query("SELECT * FROM " + table)
+	if err != nil {
+		return 0, nil // 表不可读: 骨架表保底, 不视为致命
+	}
+	defer rows.Close()
+	scanVals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range ptrs {
+		ptrs[i] = &scanVals[i]
+	}
+	ok := 0
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			continue
+		}
+		out := make([]interface{}, len(cols))
+		copy(out, scanVals)
+		if _, err := stmt.Exec(out...); err != nil {
+			continue
+		}
+		ok++
+	}
+	return ok, nil
 }
 
 func (s *Store) migrate() error {

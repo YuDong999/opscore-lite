@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,7 +42,38 @@ func NewService(store *Store, archiver *Archiver) *Service {
 // Start 启动后台持续采集：每 10s 对 log_sources 中 enabled+follow 的源做增量采集。
 func (s *Service) Start(dataDir string) {
 	s.dataDir = dataDir
+	s.ValidateCursors()
 	go s.pollLoop(10 * time.Second)
+}
+
+// cursorFuzzMs 游标漂移容忍度: 超过「当前时间+该值」的 last_ts 视为时钟错乱(集群/宿主机曾快进
+// 留下的未来时间戳), 会导致 poller 用 --since-time 永远抓不到新日志。启动时自动重置。
+const cursorFuzzMs = 2 * 60 * 60 * 1000 // 2h
+
+// ValidateCursors 启动自检: 将 all enabled+follow 源里明显未来的 last_ts 重置为当前时间。
+// 返回修正的源个数。
+func (s *Service) ValidateCursors() int {
+	sources, err := s.store.ListSources()
+	if err != nil {
+		log.Printf("[logmonitor] ValidateCursors 读取源失败: %v", err)
+		return 0
+	}
+	now := time.Now().UnixMilli()
+	fixed := 0
+	for _, src := range sources {
+		if !src.Enabled || !src.Follow {
+			continue
+		}
+		if src.LastTs > now+cursorFuzzMs {
+			_ = s.store.AdvanceSourceCursor(src.ID, now)
+			log.Printf("[logmonitor] 游标自检: %s last_ts=%d 超未来值, 重置为当前时间", src.ID, src.LastTs)
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Printf("[logmonitor] 游标自检完成: 修正 %d 个源", fixed)
+	}
+	return fixed
 }
 
 func (s *Service) Stop() {
