@@ -91,8 +91,9 @@ func TestValidateCursors(t *testing.T) {
 	if future == nil || off == nil {
 		t.Fatalf("missing sources")
 	}
-	if future.LastTs > now+cursorFuzzMs || future.LastTs <= now-cursorFuzzMs {
-		t.Fatalf("future source last_ts = %d, want ~now(%d)", future.LastTs, now)
+	want := now - 180000
+	if future.LastTs < want-1000 || future.LastTs > want+1000 {
+		t.Fatalf("future source last_ts = %d, want ~%d (now-3min)", future.LastTs, want)
 	}
 	if off.LastTs != offTs {
 		t.Fatalf("disabled source should be untouched: got %d want %d", off.LastTs, offTs)

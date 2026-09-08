@@ -65,7 +65,7 @@ func (s *Service) ValidateCursors() int {
 			continue
 		}
 		if src.LastTs > now+cursorFuzzMs {
-			_ = s.store.AdvanceSourceCursor(src.ID, now)
+			_ = s.store.AdvanceSourceCursor(src.ID, now-180000) // 落后3分钟, 避免与真实日志ts相等被去重吞掉
 			log.Printf("[logmonitor] 游标自检: %s last_ts=%d 超未来值, 重置为当前时间", src.ID, src.LastTs)
 			fixed++
 		}
