@@ -982,10 +982,14 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
                       </span>
                     </>)
                   }}
-                </RowList>
-              </Section>
-            </>
-          )}
+                 </RowList>
+               </Section>
+             </>
+           )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 'auto', paddingTop: '0.5rem' }}>
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+          同名资源存在时覆盖更新
         </div>
       </div>
 
@@ -1010,11 +1014,7 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
       </div>
 
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.625rem', alignItems: 'center' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', marginRight: 'auto' }}>
-          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-          同名资源存在时覆盖更新
-        </label>
-        <button className="btn-glass is-accent" disabled={busy || (!generated && !yamlText.trim())} onClick={submit}>
+        <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || (!generated && !yamlText.trim())} onClick={submit}>
           {busy ? '提交中…' : `创建 ${m.kind}`}
         </button>
       </div>

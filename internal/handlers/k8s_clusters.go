@@ -50,6 +50,53 @@ func InitK8s(mgr *kubernetes.Manager, kubeDir string, storeFn func() central.Cen
 	k8sStoreFn = storeFn
 	_ = os.MkdirAll(kubeDir, 0700)
 	k8sRestore()
+	startK8sClusterProber()
+}
+
+// startK8sClusterProber 后台每 15s 探测所有集群 API Server 连通性并持久化状态,
+// 使前端轮询列表即可自动反映集群在线/离线(绿/红), 无需手动刷新。
+func startK8sClusterProber() {
+	go func() {
+		tick := time.NewTicker(15 * time.Second)
+		defer tick.Stop()
+		for range tick.C {
+			probeOnce()
+		}
+	}()
+	log.Println("[K8S-CLUSTERS] 状态探测器已启动(15s/次)")
+}
+
+// probeOnce 遍历注册集群实时探测连通性; 状态有变化才写库, 避免无谓磁盘 IO。
+func probeOnce() {
+	cs := k8sListClusters()
+	if len(cs) == 0 {
+		return
+	}
+	dirty := false
+	for i := range cs {
+		c := &cs[i]
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		info, perr := k8sMgr.Probe(ctx, c.ID)
+		cancel()
+		if perr != nil {
+			if c.Status != "unreachable" {
+				c.Status = "unreachable"
+				dirty = true
+				log.Printf("[K8S-AUDIT] action=probe cluster=%s status=unreachable err=%v", c.ID, perr)
+			}
+			continue
+		}
+		if c.Status != "ready" || c.Version != info.Version || c.APIServer != info.APIServer {
+			c.Status, c.Version, c.APIServer = "ready", info.Version, info.APIServer
+			dirty = true
+			log.Printf("[K8S-AUDIT] action=probe cluster=%s status=ready", c.ID)
+		}
+	}
+	if dirty {
+		if err := k8sSaveClusters(cs); err != nil {
+			log.Printf("[K8S-CLUSTERS] 持久化探测状态失败: %v", err)
+		}
+	}
 }
 
 func k8sKubePath(id string) string { return filepath.Join(k8sKubeDir, id+".yaml") }

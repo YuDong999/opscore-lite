@@ -192,14 +192,14 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
         </div>
         {list?.note && <div className="banner banner-warn">{list.note}</div>}
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table ctable">
             <thead><tr>
-              <th style={{ width: '3%' }}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
-              <th style={{ width: '17%' }}>名称</th>
-              <th style={{ width: '20%' }}>镜像</th>
-              <th style={{ width: '6%' }}>状态</th>
-              <th style={{ width: '9%' }}>端口</th>
-              <th style={{ width: '45%' }}>操作</th>
+              <th><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
+              <th>名称</th>
+              <th>镜像</th>
+              <th>状态</th>
+              <th>端口</th>
+              <th>操作</th>
             </tr></thead>
             <tbody>
               {containers.length === 0 && (
