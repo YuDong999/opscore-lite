@@ -843,6 +843,15 @@ func (s *Store) AdvanceSourceCursor(id string, lastTs int64) error {
 	return err
 }
 
+// SetSourceEnabled 启停来源采集。仅翻 enabled, 不动 last_ts/其它字段, 避免 SaveSource 的 REPLACE 把游标归零导致全量重采。
+func (s *Store) SetSourceEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE log_sources SET enabled = ? WHERE id = ?", enabled, id)
+	return err
+}
+
 func (s *Store) Close() {
 	if s.db != nil {
 		s.db.Close()

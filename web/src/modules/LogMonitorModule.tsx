@@ -56,6 +56,8 @@ interface LogSource {
   service: string
   enabled: boolean
   follow: boolean
+  namespace?: string
+  cluster?: string
 }
 
 interface ContainerItem {
@@ -651,6 +653,15 @@ const [selCluster, setSelCluster] = useState('1')
       loadSources()
     } catch (e: any) {
       pushToast('err', '删除失败: ' + (e?.message || ''))
+    }
+  }
+
+  async function toggleSourceEnabled(s: LogSource) {
+    try {
+      await postJSON('/api/logmonitor/sources/enabled', { id: s.id, enabled: !s.enabled })
+      setSources((prev) => prev.map((x) => (x.id === s.id ? { ...x, enabled: !x.enabled } : x)))
+    } catch (e: any) {
+      pushToast('err', '切换失败: ' + (e?.message || ''))
     }
   }
 
@@ -1306,7 +1317,7 @@ function clearFilters() {
                   <th>路径/标识</th>
                   <th>服务</th>
                   <th>状态</th>
-                  <th style={{ width: 80 }}>操作</th>
+                  <th style={{ width: 170 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1320,6 +1331,13 @@ function clearFilters() {
                       <span className={`dot ${s.enabled ? 'dot-ok' : 'dot-off'}`} /> {s.enabled ? '启用' : '停用'}
                     </td>
                     <td>
+                      <span
+                        className={`kib-switch ${s.enabled ? 'on' : ''}`}
+                        title={s.enabled ? '停用采集(暂停接收日志)' : '启用采集'}
+                        onClick={() => toggleSourceEnabled(s)}
+                      >
+                        <i />
+                      </span>
                       <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" onClick={() => delSource(s.id, s.name)}>删除</button>
                     </td>
                   </tr>
@@ -1363,27 +1381,31 @@ function clearFilters() {
               <div className="kib-form-row" style={{ marginTop: 8 }}>
                 <h4 style={{ margin: 0, color: 'var(--text)' }}>本机容器 (docker/podman)</h4>
                 {discContainers.length > 0 && <span className="kib-badge">{discContainers.length} 个</span>}
-                {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" style={{ minWidth: '100px', padding: '4px 8px' }} onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
+                {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
               </div>
               {discContainers.length === 0 ? (
                 <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
               ) : (
                 <div className="kib-check-list">
-                  {discContainers.map((c) => (
-                    <label key={c.name} className="kib-check-item">
-                      <input type="checkbox" checked={selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
-                      <code>{c.name}</code>
-                      <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
-                      <span className={`dot ${c.state === 'running' ? 'dot-ok' : 'dot-off'}`} /> {c.state}
-                    </label>
-                  ))}
+                  {discContainers.map((c) => {
+                    const joined = sources.some((s) => s.type === 'container' && s.path === c.name)
+                    return (
+                      <label key={c.name} className="kib-check-item">
+                        <input type="checkbox" checked={selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
+                        <code>{c.name}</code>
+                        <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
+                        <span className={`dot ${c.state === 'running' ? 'dot-ok' : 'dot-off'}`} /> {c.state}
+                        {joined && <span className="kib-joined" title="已接入">✓</span>}
+                      </label>
+                    )
+                  })}
                 </div>
               )}
 <div className="kib-form-row" style={{ marginTop: 12 }}>
   <h4 style={{ margin: 0, color: 'var(--text)' }}>K8S Pod</h4>
   {discClusters.length > 0 && (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-      <button className="btn-glass-soft btn-glass-soft-sm" style={{ minWidth: '80px', padding: '4px 8px' }} onClick={() => {
+      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
         const filtered = discK8sPods.filter((p) => {
           if (!podSearch && !selNamespace) return true
           const hay = `${p.namespace}/${p.name}`.toLowerCase()
@@ -1432,12 +1454,14 @@ function clearFilters() {
         const key = `${p.namespace}/${p.name}`
         const containers = Array.isArray(p.containers) ? p.containers : (typeof p.containers === 'string' ? (p.containers as unknown as string).split(',').map((s) => s.trim()).filter(Boolean) : [])
         const cls = containers.length > 1 ? 'kib-multi' : ''
+        const joined = sources.some((s) => s.type === 'k8s' && s.path === p.name && s.namespace === p.namespace)
         return (
           <label key={key} className="kib-check-item">
             <input type="checkbox" checked={selPods.has(key)} onChange={() => togglePods(key)} />
             <code>{p.namespace}/{p.name}</code>
             {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
             <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
+            {joined && <span className="kib-joined" title="已接入">✓</span>}
           </label>
         )
       })}

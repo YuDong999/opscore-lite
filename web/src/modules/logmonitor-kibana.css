@@ -649,6 +649,41 @@
 }
 .kib-badge.kib-multi { background: #22a06b; }
 
+/* 已接入标记（绿✓） */
+.kib-joined {
+  margin-left: auto;
+  color: #22a06b;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 启停采集开关 */
+.kib-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 34px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--border, rgba(127,127,127,0.35));
+  cursor: pointer;
+  transition: background 0.15s ease;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.kib-switch i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.kib-switch.on { background: #22a06b; }
+.kib-switch.on i { transform: translateX(16px); }
+
 /* ── 合并工具栏：搜索框 + 查询/重置/Live/刷新 一行 ── */
 .kib-search-bar {
   display: flex;

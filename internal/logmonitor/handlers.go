@@ -43,6 +43,7 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 			{Path: "/api/logmonitor/sources", Handler: h.handleSources},
 			{Path: "/api/logmonitor/sources/save", Handler: h.handleSourceSave},
 			{Path: "/api/logmonitor/sources/delete", Handler: h.handleSourceDelete},
+			{Path: "/api/logmonitor/sources/enabled", Handler: h.handleSourceSetEnabled},
 			{Path: "/api/logmonitor/scan", Handler: h.handleScan},
 			{Path: "/api/logmonitor/raw", Handler: h.handleRaw},
 			{Path: "/api/logmonitor/delete", Handler: h.handleDelete},
@@ -300,6 +301,31 @@ func (h *Handlers) handleSourceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+// POST /api/logmonitor/sources/enabled  { "id": "...", "enabled": true }
+func (h *Handlers) handleSourceSetEnabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if body.ID == "" {
+		writeErr(w, http.StatusBadRequest, "id 不能为空")
+		return
+	}
+	if err := h.store.SetSourceEnabled(body.ID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
 }
 
 // POST /api/logmonitor/scan  { "path":"...", "service":"", "source":"", "tailOnly":false, "namespace":"", "cluster":"" }
