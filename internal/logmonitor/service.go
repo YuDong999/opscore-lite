@@ -201,8 +201,8 @@ var (
 	rePodHash = regexp.MustCompile(`-[a-z0-9]{5,10}-[a-z0-9]{4,6}$`)
 	// reLevel 提取级别
 	reLevel = regexp.MustCompile(`\b(ERROR|WARN|INFO|DEBUG|FATAL)\b`)
-	// reTimestamp 时间戳匹配（多种格式）
-	reTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)`)
+	// reTimestamp 时间戳匹配（多种格式）：末尾时区可选, 匹配到 +08:00 时 parseLogTime 会用带时区格式正确换算, 避免把本地时间当 UTC
+	reTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)`)
 )
 
 // ParseLine 解析一行日志为元数据

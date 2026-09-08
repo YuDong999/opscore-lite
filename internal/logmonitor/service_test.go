@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// TestParseLogTimeTimezone 带时区时间戳必须换算为正确 epoch, 而非把本地时间当 UTC。
+func TestParseLogTimeTimezone(t *testing.T) {
+	// 2026-09-09T01:27:54+08:00 == 2026-09-08T17:27:54Z
+	want := int64(1788888474000)
+	cases := []string{
+		"2026-09-09T01:27:54+08:00",
+		"2026-09-08T17:27:54Z",
+		"2026-09-09T01:27:54.608525861+08:00",
+	}
+	for _, s := range cases {
+		got, err := parseLogTime(s)
+		if err != nil {
+			t.Errorf("parseLogTime(%q): %v", s, err)
+			continue
+		}
+		if got != want && got != want+608 {
+			t.Errorf("parseLogTime(%q) = %d, want %d 或 %d", s, got, want, want+608)
+		}
+	}
+}
+
 func TestNormalizeSvcName(t *testing.T) {
 	cases := map[string]string{
 		"nginx-6d664c6d47-s7ljj":                 "nginx",
