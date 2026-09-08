@@ -233,19 +233,23 @@ export default function K8sCertsModal({ cluster, clusterName, onClose, onMsg }: 
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, width: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
         <div className="modal-head">
           <div className="modal-title">证书管理 — {clusterName}</div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {data?.master && (
-              <span className="dim" style={{ fontSize: '0.6875rem' }} title={data.master.reason}>
-                执行节点: {data.master.mode === 'ssh' ? `SSH → ${data.master.hostID}` : '本机(local)'}
-              </span>
-            )}
-            {data?.install && (
-              <span className="dim" style={{ fontSize: '0.6875rem' }}>
-                安装形态: <b>{data.install.flavor}</b> · 证书目录 <code className="mono">{data.install.certDir || '未检测到'}</code>
-              </span>
-            )}
-            <button className="btn-glass-soft" onClick={load} disabled={busy || planBusy}>{busy ? '加载中…' : '重新体检'}</button>
-            <button className="btn-glass-soft" onClick={onClose} disabled={busy || planBusy}>关闭</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
+              {data?.master && (
+                <span className="dim" style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap' }} title={data.master.reason}>
+                  执行节点: {data.master.mode === 'ssh' ? `SSH → ${data.master.hostID}` : '本机(local)'}
+                </span>
+              )}
+              {data?.install && (
+                <span className="dim" style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={data.install.certDir}>
+                  安装形态: <b>{data.install.flavor}</b> · 证书目录 <code className="mono">{data.install.certDir || '未检测到'}</code>
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button className="btn-glass-soft" onClick={load} disabled={busy || planBusy}>{busy ? '加载中…' : '重新体检'}</button>
+              <button className="btn-glass-soft" onClick={onClose} disabled={busy || planBusy}>关闭</button>
+            </div>
           </div>
         </div>
 
