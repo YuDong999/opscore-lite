@@ -1383,24 +1383,30 @@ function clearFilters() {
                 {discContainers.length > 0 && <span className="kib-badge">{discContainers.length} 个</span>}
                 {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
               </div>
-              {discContainers.length === 0 ? (
-                <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
-              ) : (
+              {(() => {
+                const ghosts = sources.filter((s) => s.type === 'container' && !discContainers.some((c) => c.name === s.path))
+                  .map((s) => ({ name: s.path, image: '已停止 / 不在当前 docker', state: 'ghost' as string }))
+                const all = [...discContainers, ...ghosts]
+                return (discContainers.length === 0 && ghosts.length === 0) ? (
+                  <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
+                ) : (
                 <div className="kib-check-list">
-                  {discContainers.map((c) => {
-                    const joined = sources.some((s) => s.type === 'container' && s.path === c.name)
+                  {all.map((c) => {
+                    const joined = sources.some((s) => s.type === 'container' && s.path === c.name && s.enabled)
+                    const ghost = c.state === 'ghost'
                     return (
-                      <label key={c.name} className="kib-check-item">
-                        <input type="checkbox" checked={selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
+                      <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
+                        <input type="checkbox" disabled={ghost} checked={!ghost && selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
                         <code>{c.name}</code>
                         <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
-                        <span className={`dot ${c.state === 'running' ? 'dot-ok' : 'dot-off'}`} /> {c.state}
+                        <span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}
                         {joined && <span className="kib-joined" title="已接入">✓</span>}
                       </label>
                     )
                   })}
                 </div>
-              )}
+                )
+              })()}
 <div className="kib-form-row" style={{ marginTop: 12 }}>
   <h4 style={{ margin: 0, color: 'var(--text)' }}>K8S Pod</h4>
   {discClusters.length > 0 && (
@@ -1435,38 +1441,45 @@ function clearFilters() {
     </div>
   )}
 </div>
-{discClusters.length === 0 ? (
-  <div className="log-empty">无已连接集群</div>
-) : discK8sPods.length === 0 ? (
-  <div className="log-empty">该集群未发现 pod</div>
-) : (
-  <div className="kib-check-list">
-    {discK8sPods
-      .filter((p) => {
-        if (!podSearch && !selNamespace) return true
-        const hay = `${p.namespace}/${p.name}`.toLowerCase()
-        const q = podSearch.toLowerCase()
-        const matchSearch = !podSearch || hay.includes(q) || p.namespace.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
-        const matchNs = !selNamespace || p.namespace === selNamespace
-        return matchNs && matchSearch
-      })
-      .map((p) => {
-        const key = `${p.namespace}/${p.name}`
-        const containers = Array.isArray(p.containers) ? p.containers : (typeof p.containers === 'string' ? (p.containers as unknown as string).split(',').map((s) => s.trim()).filter(Boolean) : [])
-        const cls = containers.length > 1 ? 'kib-multi' : ''
-        const joined = sources.some((s) => s.type === 'k8s' && s.path === p.name && s.namespace === p.namespace)
-        return (
-          <label key={key} className="kib-check-item">
-            <input type="checkbox" checked={selPods.has(key)} onChange={() => togglePods(key)} />
-            <code>{p.namespace}/{p.name}</code>
-            {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
-            <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
-            {joined && <span className="kib-joined" title="已接入">✓</span>}
-          </label>
-        )
-      })}
-  </div>
-)}
+{(() => {
+                const ghostPods = selCluster
+                  ? sources.filter((s) => s.type === 'k8s' && s.cluster === selCluster && !discK8sPods.some((p) => p.namespace === s.namespace && p.name === s.path))
+                    .map((s) => ({ name: s.path, namespace: s.namespace || '', containers: ['历史 pod'], ghost: true as boolean }))
+                  : []
+                const shown = [...discK8sPods
+                  .filter((p) => {
+                    if (!podSearch && !selNamespace) return true
+                    const hay = `${p.namespace}/${p.name}`.toLowerCase()
+                    const q = podSearch.toLowerCase()
+                    const matchSearch = !podSearch || hay.includes(q) || p.namespace.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
+                    const matchNs = !selNamespace || p.namespace === selNamespace
+                    return matchNs && matchSearch
+                  }), ...ghostPods]
+                return discClusters.length === 0 ? (
+                  <div className="log-empty">无已连接集群</div>
+                ) : shown.length === 0 ? (
+                  <div className="log-empty">该集群未发现 pod</div>
+                ) : (
+                  <div className="kib-check-list">
+                    {shown.map((p) => {
+                      const ghost = (p as { ghost?: boolean }).ghost === true
+                      const key = `${p.namespace}/${p.name}`
+                      const containers = Array.isArray(p.containers) ? p.containers : (typeof p.containers === 'string' ? (p.containers as unknown as string).split(',').map((s) => s.trim()).filter(Boolean) : [])
+                      const cls = containers.length > 1 ? 'kib-multi' : ''
+                      const joined = sources.some((s) => s.type === 'k8s' && s.path === p.name && s.namespace === p.namespace && s.enabled)
+                      return (
+                        <label key={key} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
+                          <input type="checkbox" disabled={ghost} checked={!ghost && selPods.has(key)} onChange={() => togglePods(key)} />
+                          <code>{p.namespace}/{p.name}</code>
+                          {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
+                          <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
+                          {joined && <span className="kib-joined" title="已接入">✓</span>}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
 <div className="log-filter-row" style={{ marginTop: 14 }}>
   <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
     已勾选 {selContainers.size} 容器 / {selPods.size} Pod

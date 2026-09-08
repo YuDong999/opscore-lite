@@ -434,10 +434,13 @@ func (h *Handlers) registerFollowSource(path, source, namespace, cluster, indexI
 	id := source + ":" + path
 	for _, s := range sources {
 		if s.ID == id {
-			// 已注册，仅更新索引归属与服务名（游标不变）
-			if s.IndexID != indexID {
-				s.IndexID = indexID
-				s.Service = svc
+			// 重新接入：被停用的源 → 重新启用（游标保留续采，不重扫尾部）
+			if !s.Enabled || s.IndexID != indexID {
+				s.Enabled = true
+				if s.IndexID != indexID {
+					s.IndexID = indexID
+					s.Service = svc
+				}
 				_ = h.store.SaveSource(s)
 			}
 			return

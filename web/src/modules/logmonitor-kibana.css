@@ -684,6 +684,10 @@
 .kib-switch.on { background: #22a06b; }
 .kib-switch.on i { transform: translateX(16px); }
 
+/* 已接入但不在当前发现列表的源（历史/已停止）灰显 */
+.kib-check-item.kib-ghost { opacity: 0.55; }
+.kib-check-item.kib-ghost .kib-joined { opacity: 1; }
+
 /* ── 合并工具栏：搜索框 + 查询/重置/Live/刷新 一行 ── */
 .kib-search-bar {
   display: flex;
