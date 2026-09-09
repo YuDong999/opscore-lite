@@ -3191,8 +3191,58 @@ body {
 .db-table-grid .db-th-type { display: block; font-size: 0.65rem; font-weight: 400; color: var(--text-dim); }
 
 /* 树: 行数徽标 + 对象类型彩色图标(dbx 配色) */
-.db-tree-rcount { margin-left: 0.4rem; font-size: 0.65rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.db-tree-rcount { min-width: 2.4rem; margin-left: -2.4rem; text-align: right; padding-right: 0.2rem; font-size: 0.65rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; flex-shrink: 0; line-height: 1; box-sizing: border-box; }
 .dbx-node-icon { flex-shrink: 0; }
 .icon-table { color: #16a34a; }
 .icon-view { color: #0ea5e9; }
 .icon-schema { color: #d97706; }
+
+/* V12: 查询/结果工具栏 收紧行高 + 单行不折行 + 结果区不越屏 */
+.db-query-editor { padding: 0.35rem; gap: 0.3rem; }
+.db-query-header { flex-wrap: nowrap; min-height: 0; }
+.db-query-controls, .db-query-samples { flex-wrap: nowrap; }
+.db-query-samples { gap: 0.2rem; overflow: hidden; }
+.db-query-controls .btn-glass-soft-sm, .db-query-samples .btn-glass-soft-sm { font-size: 0.72rem; padding: 0.12rem 0.45rem; line-height: 1.25; height: auto; }
+.db-result-head { padding: 0.2rem 0.55rem; }
+.db-result-head span { line-height: 1.2; }
+.db-result-head .btn-glass-soft-sm { font-size: 0.7rem; padding: 0.1rem 0.45rem; line-height: 1.25; height: auto; }
+.db-result-head .db-export-controls { gap: 0.2rem; }
+.db-edit-controls { gap: 0.3rem; }
+.db-edit-controls .btn-glass-soft-sm { font-size: 0.72rem; padding: 0.12rem 0.45rem; line-height: 1.25; height: auto; }
+.db-table-grid { max-height: calc(100vh - 460px); min-height: 160px; }
+/* 窄宽度(F12/devtools 挤占): 示例按钮整体隐藏, 历史下拉隐藏 — 保持一行 */
+@media (max-width: 1180px) { .db-query-samples { display: none; } }
+@media (max-width: 940px) { .db-query-controls select { display: none; } }
+
+/* V13: 表数据页(无编辑器)表格撑满剩余高度, 内部滚动 — 不再被 calc 限死成矮框 */
+.db-data-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 0.4rem; }
+.db-data-panel .db-table-grid { max-height: none; flex: 1; min-height: 0; }
+.db-page-size { height: 1.6rem; font-size: 0.72rem; padding: 0 0.3rem; }
+
+/* 表信息抽屉(dbx 表信息抽屉同构): 页签 + 紧凑元数据表 */
+.db-table-meta-drawer { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.db-table-meta-tabs { display: flex; gap: 0.25rem; flex-wrap: nowrap; }
+.db-table-meta-mini { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+.db-table-meta-mini th, .db-table-meta-mini td { padding: 0.2rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+.db-table-meta-mini th { color: var(--text-dim); font-weight: 600; }
+
+/* V14: 查询页高度链 — 整体锁进视口, 网格内部滚动, 编辑条(db-edit-controls)常驻可见 */
+.db-query-section { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; gap: 0.4rem; }
+.db-query-section .db-query-editor { flex: none; }
+.db-query-section .db-result { flex: 1 1 auto; min-height: 0; }
+.db-query-section .db-table-grid { max-height: none; flex: 1; min-height: 0; }
+.db-edit-controls { flex: none; display: flex; gap: 0.4rem; justify-content: flex-start; }
+
+/* V15: 按钮定高 + 容器贴合(消除"按钮变小留白不对称"缝隙) */
+.db-query-controls .btn-glass-soft-sm, .db-query-samples .btn-glass-soft-sm,
+.db-result-head .btn-glass-soft-sm, .db-edit-controls .btn-glass-soft-sm {
+  height: 1.4rem; line-height: 1.4rem; padding: 0 0.5rem; font-size: 0.72rem; min-height: 0;
+}
+.db-query-editor { padding: 0.25rem 0.35rem; gap: 0.25rem; }
+.db-query-header { gap: 0.25rem; margin-bottom: 0; }
+.db-result-head { padding: 0.15rem 0.55rem; min-height: 0; }
+.db-edit-controls { gap: 0.3rem; padding: 0; margin-top: 0; }
+
+/* V16: 查询结果卡片与编辑器卡片同规格贴合(结果 padding/gap 对齐编辑器, 两卡间距一致) */
+.db-query-section { gap: 0.25rem; }
+.db-query-section .db-result { padding: 0.25rem 0.35rem; gap: 0.25rem; }

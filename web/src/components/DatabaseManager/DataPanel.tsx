@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, type TableData, type ColumnInfo } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, type TableData, type ColumnInfo, type TableMeta } from './api'
 import DataGrid from './DataGrid'
 
 type ViewMode = 'table' | 'json' | 'text'
@@ -18,6 +18,9 @@ export default function DataPanel({
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
   const [colMeta, setColMeta] = useState<ColumnInfo[] | undefined>(undefined)
+  const [meta, setMeta] = useState<TableMeta | null>(null)
+  const [showMeta, setShowMeta] = useState(false)
+  const [metaTab, setMetaTab] = useState<'indexes' | 'fks' | 'triggers'>('indexes')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -131,6 +134,14 @@ export default function DataPanel({
         {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }} title={err}>⚠ {err.slice(0, 40)}</span>}
         <span className="db-data-spacer" />
 
+        {/* 表信息抽屉 */}
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
+          if (!meta) getTableMeta(conn.id, database, table).then(setMeta).catch(e => setMeta(null))
+          setShowMeta(!showMeta)
+        }} title="表信息: 索引 / 外键 / 触发器">
+          {showMeta ? '隐藏表信息' : '表信息'}
+        </button>
+
         {/* 视图切换 */}
         <div className="db-view-toggle">
           {([
@@ -232,8 +243,66 @@ export default function DataPanel({
             onClearFilters={() => { setFilters([]); setOrderBy('') }}
             onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}
           />
+          {showMeta && (
+            <div className="db-table-meta-drawer">
+              <div className="db-table-meta-tabs">
+                {([['indexes', `索引 (${meta?.indexes?.length ?? 0})`], ['fks', `外键 (${meta?.foreignKeys?.length ?? 0})`], ['triggers', `触发器 (${meta?.triggers?.length ?? 0})`]] as const).map(([k, label]) => (
+                  <button key={k} className={`btn-glass-soft btn-glass-soft-sm ${metaTab === k ? 'active' : ''}`} onClick={() => setMetaTab(k)}>{label}</button>
+                ))}
+              </div>
+              {!meta ? <div className="db-empty-sm">加载表信息失败(可能不含该元数据)</div> : metaTab === 'indexes' ? (
+                <table className="db-table db-table-meta-mini">
+                  <thead><tr><th>索引名</th><th>列</th><th>唯一</th><th>主键</th></tr></thead>
+                  <tbody>
+                    {meta.indexes.length === 0 && <tr><td colSpan={4} className="dim">无索引</td></tr>}
+                    {meta.indexes.map((ix, i) => (
+                      <tr key={i}>
+                        <td>{ix.name || '-'}</td>
+                        <td>{(ix.columns || []).join(', ')}</td>
+                        <td>{ix.unique ? '是' : '否'}</td>
+                        <td>{ix.primary ? '是' : '否'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : metaTab === 'fks' ? (
+                <table className="db-table db-table-meta-mini">
+                  <thead><tr><th>约束名</th><th>本表列</th><th>引用表</th><th>引用列</th></tr></thead>
+                  <tbody>
+                    {meta.foreignKeys.length === 0 && <tr><td colSpan={4} className="dim">无外键</td></tr>}
+                    {meta.foreignKeys.map((fk, i) => (
+                      <tr key={i}>
+                        <td>{fk.constraint || fk.name || '-'}</td>
+                        <td>{fk.column}</td>
+                        <td>{fk.refTable}</td>
+                        <td>{fk.refColumn}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="db-table db-table-meta-mini">
+                  <thead><tr><th>触发器</th><th>时机</th><th>事件</th></tr></thead>
+                  <tbody>
+                    {meta.triggers.length === 0 && <tr><td colSpan={3} className="dim">无触发器</td></tr>}
+                    {meta.triggers.map((tr, i) => (
+                      <tr key={i}>
+                        <td title={tr.statement}>{tr.name}</td>
+                        <td>{tr.timing}</td>
+                        <td>{tr.event}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
           <div className="db-data-pager">
             <span className="dim">共 {total} 行</span>
+            <select className="input db-page-size" title="每页行数" value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
+              {[10, 20, 50, 100, 200, 500, 1000].map(n => <option key={n} value={n}>{n} 行/页</option>)}
+            </select>
             <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(1)} title="首页"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg></button>
             <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(p => p - 1)} title="上一页"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg></button>
             <span>{page} / {totalPages}</span>

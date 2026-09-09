@@ -24,6 +24,8 @@ type DBService interface {
 	// ListSchemas 列出连接所属引擎的命名空间(模式)。仅 库→模式→表 三级引擎有值,
 	// 其余返回空 —— 前端据此动态决定是否渲染模式下拉(能力驱动, 非按引擎硬编码 UI)。
 	ListSchemas(ctx context.Context, connID string) ([]string, error)
+	// GetTableMeta 完整表信息(列/索引/外键/触发器/DDL)。
+	GetTableMeta(ctx context.Context, connID, database, table string) (*TableMetaDetail, error)
 	// ListTables 列出指定库下的表/视图。
 	ListTables(ctx context.Context, connID, database string) ([]TableInfo, error)
 	// DescribeTable 返回列/索引/DDL。
@@ -91,6 +93,32 @@ func (s *GonaviService) ListDatabases(ctx context.Context, connID string) ([]str
 	return db.GetDatabases()
 }
 
+// GetTableMeta 完整表信息: 列/索引/外键/触发器/DDL(供表信息抽屉页签)。
+func (s *GonaviService) GetTableMeta(ctx context.Context, connID, database, table string) (*TableMetaDetail, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	cols, idxs, ddl, err := s.DescribeTable(ctx, connID, database, table)
+	if err != nil {
+		return nil, err
+	}
+	meta := &TableMetaDetail{Columns: cols, Indexes: idxs, DDL: ddl, ForeignKeys: []FkInfo{}, Triggers: []TriggerInfo{}}
+	fkDefs, err := db.GetForeignKeys(database, table)
+	if err == nil {
+		for _, f := range fkDefs {
+			meta.ForeignKeys = append(meta.ForeignKeys, FkInfo{Name: f.Name, Column: f.ColumnName, RefTable: f.RefTableName, RefColumn: f.RefColumnName, Constraint: f.ConstraintName})
+		}
+	}
+	trgDefs, err := db.GetTriggers(database, table)
+	if err == nil {
+		for _, t := range trgDefs {
+			meta.Triggers = append(meta.Triggers, TriggerInfo{Name: t.Name, Timing: t.Timing, Event: t.Event, Statement: t.Statement})
+		}
+	}
+	return meta, nil
+}
+
 func (s *GonaviService) ListSchemas(ctx context.Context, connID string) ([]string, error) {
 	db, conn, err := s.pool.Acquire(connID)
 	if err != nil {
@@ -134,6 +162,30 @@ func (s *GonaviService) ListTables(ctx context.Context, connID, database string)
 		out = append(out, ti)
 	}
 	return out, nil
+}
+
+// 表信息定义: DescribeTable 附带外键/触发器(索引已含), 供前端表信息页签。
+type TableMetaDetail struct {
+	Columns     []ColumnInfo  `json:"columns"`
+	Indexes     []IndexInfo   `json:"indexes"`
+	ForeignKeys []FkInfo      `json:"foreignKeys"`
+	Triggers    []TriggerInfo `json:"triggers"`
+	DDL         string        `json:"ddl"`
+}
+
+type FkInfo struct {
+	Name       string `json:"name"`
+	Column     string `json:"column"`
+	RefTable   string `json:"refTable"`
+	RefColumn  string `json:"refColumn"`
+	Constraint string `json:"constraint"`
+}
+
+type TriggerInfo struct {
+	Name      string `json:"name"`
+	Timing    string `json:"timing"`
+	Event     string `json:"event"`
+	Statement string `json:"statement"`
 }
 
 func (s *GonaviService) DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error) {

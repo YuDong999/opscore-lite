@@ -47,6 +47,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/export", Handler: h.handleExport},
 			{Path: "/api/dbmanager/metadata", Handler: h.handleMetadata},
 			{Path: "/api/dbmanager/schemas", Handler: h.handleSchemas},
+			{Path: "/api/dbmanager/table-meta", Handler: h.handleTableMeta},
 			{Path: "/api/dbmanager/describe", Handler: h.handleDescribe},
 			{Path: "/api/dbmanager/write-unlock", Handler: h.handleWriteUnlock},
 			{Path: "/api/dbmanager/write-lock", Handler: h.handleWriteLock},
@@ -1289,6 +1290,26 @@ func (h *Handlers) handleTableCounts(w http.ResponseWriter, r *http.Request) {
 		counts[name] = cnt
 	}
 	writeJSON(w, map[string]any{"counts": counts})
+}
+
+// handleTableMeta GET ?id=&database=&table= -> 完整表信息(列/索引/外键/触发器/DDL)
+func (h *Handlers) handleTableMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database, table := q.Get("id"), q.Get("database"), q.Get("table")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) || !reTableName.MatchString(table) {
+		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+		return
+	}
+	meta, err := h.svc.GetTableMeta(r.Context(), id, database, table)
+	if err != nil {
+		writeErr(w, "获取表信息失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"meta": meta})
 }
 
 func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {

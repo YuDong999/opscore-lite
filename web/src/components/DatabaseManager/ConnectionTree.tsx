@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
+  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -257,6 +257,7 @@ export default function ConnectionTree({
       // ── 复制与导出 ──
       const copyItems: ContextMenuItem[] = [
         { label: '复制表名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!); notify(true, `已复制 ${node.table}`) } },
+        { label: '复制表路径', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(`${node.db}.${node.table}`); notify(true, `已复制 ${node.db}.${node.table}`) } },
         { label: '复制建表 DDL', icon: <ActionIcon kind="copy" />, onClick: async () => {
             try {
               const ddl = await fetchTableDDL(node.conn!.id, node.db!, node.table!)
@@ -278,9 +279,32 @@ export default function ConnectionTree({
         copyItems.push({ label: '导出 XLSX', icon: <ActionIcon kind="upload" />, onClick: () => onExportTable(node.conn!, node.db!, node.table!, 'xlsx') })
       }
       // ── 维护 ──
+      const bt = (name: string) => '`' + name.replace(/`/g, '``') + '`'
+      const qt = (name: string) => '"' + name.replace(/"/g, '""') + '"'
+      const quoteTable = () => {
+        const eng = node.conn!.engine
+        if (eng === 'mysql' || eng === 'mariadb' || eng === 'goldendb') return bt(node.db!) + '.' + bt(node.table!)
+        return node.table.includes('.') ? node.table.split('.').map(qt).join('.') : qt(node.table)
+      }
+      const runDanger = async (label: string, sqlText: string) => {
+        if (!confirm(`确认${label}表 ${node.table}? 该操作不可撤销。`)) return
+        try {
+          const r = await runQueryRaw(node.conn!.id, sqlText)
+          if (r.data.code === 'write_locked') { notify(false, '写操作被拦截: 请先解锁写模式'); return }
+          notify(true, `${label}完成: ${node.table}${r.data.affected != null ? ` (影响 ${r.data.affected} 行)` : ''}`)
+          loadTables(node.conn!.id, node.db!)
+        } catch (e: any) {
+          notify(false, `${label}失败: ${e.message || e}`)
+        }
+      }
       const maintainItems: ContextMenuItem[] = [
         { label: pinned ? '取消置顶' : '置顶表', icon: <ActionIcon kind="pin" />, onClick: () => togglePin(node.conn!.id, node.db!, node.table!) },
         { label: '刷新行数统计', icon: <ActionIcon kind="refresh" />, onClick: () => notify(true, `${node.table}: 统计已刷新`) },
+        ...(isTable ? [
+          { divider: 'heavy' as const },
+          { label: '清空表 (TRUNCATE)', icon: <ActionIcon kind="refresh" />, onClick: () => runDanger('清空', `TRUNCATE TABLE ${quoteTable()}`) },
+          { label: '删除表 (DROP)', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => runDanger('删除', `DROP TABLE ${quoteTable()}`) },
+        ] : []),
       ]
       return [
         ...dataItems,
@@ -527,12 +551,14 @@ export default function ConnectionTree({
                   const tblNode: TreeNode = { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true, sys: isSysObjName(t) }
                   return renderRow(tblNode, depth + 1, (
                     <>
+                      <span className="db-tree-rcount" title={rowNums[t] != null ? `约 ${rowNums[t]} 行` : undefined}>
+                        {rowNums[t] != null ? fmtCount(rowNums[t]) : ''}
+                      </span>
                       <span className="relative flex h-3.5 w-3.5 shrink-0">
                         {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
                       </span>
                       <span className="truncate">
                         {pfx ? t.slice(pfx.length) : t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
-                        {rowNums[t] != null && <span className="db-tree-rcount" title={`约 ${rowNums[t]} 行`}>{fmtCount(rowNums[t])}</span>}
                       </span>
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
                     </>

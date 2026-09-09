@@ -400,6 +400,22 @@ export async function describeTable(
   )
 }
 
+export interface TableMeta {
+  columns: ColumnInfo[]
+  indexes: IndexInfo[]
+  foreignKeys: Array<{ name: string; column: string; refTable: string; refColumn: string; constraint: string }>
+  triggers: Array<{ name: string; timing: string; event: string; statement: string }>
+  ddl: string
+}
+
+// 完整表信息(列/索引/外键/触发器/DDL), 表信息抽屉页签数据源
+export async function getTableMeta(id: string, database: string, table: string): Promise<TableMeta> {
+  const r = await getJSON<{ meta: TableMeta }>(
+    `/api/dbmanager/table-meta?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`,
+  )
+  return r.meta
+}
+
 export async function runQueryRaw(
   id: string,
   sql: string,
