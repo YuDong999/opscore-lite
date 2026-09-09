@@ -119,16 +119,6 @@ export default function K8sActionPanel({
   const run = async (action: ActionSpec, values: FormValues) => {
     if (action.requiresTTY) {
       if (action.name === 'port-forward' || action.name === 'cp') {
-        if (action.name === 'cp' && !values.container && res === 'pods') {
-          // 自动填充当前对象(pod)的第一个容器名, 可编辑
-          try {
-            const d = await getJSON<{ ok: boolean; detail: any }>(
-              `/api/plugins/containers/k8s/pod/detail?cluster=${encodeURIComponent(cluster)}&res=pods&ns=${encodeURIComponent(ns)}&name=${encodeURIComponent(name)}`)
-            if (d.ok && Array.isArray(d.detail?.containers) && d.detail.containers.length) {
-              values = { ...values, container: String(d.detail.containers[0].name || '') }
-            }
-          } catch { /* 保持空, 后端默认首个容器 */ }
-        }
         setStreamAction({ action, values })
         return
       }
@@ -214,12 +204,28 @@ function ActionModal({
   const [preview, setPreview] = useState<{ command: string; supported: boolean; loading: boolean }>({ command: '', supported: false, loading: false })
   // 是否已应用"当前值"回填 (避免每次编辑都覆盖用户手改)
   const filledRef = useRef(false)
+  const cpdRef = useRef(false)
 
-  // 首次打开: 请求命令预览 + 当前值回填
+  // 首次打开: 自动填充容器名(cp 走表单时) + 请求命令预览/当前值回填
   useEffect(() => {
     if (filledRef.current) return
     filledRef.current = true
     let stop = false
+    // cp: 预取当前对象(pod)的首个容器名, 可编辑
+    if (action.name === 'cp' && res === 'pods' && !values.container && !cpdRef.current) {
+      cpdRef.current = true
+      getJSON<{ ok: boolean; detail: any }>(
+        `/api/plugins/containers/k8s/pod/detail?cluster=${encodeURIComponent(cluster)}&res=pods&ns=${encodeURIComponent(ns)}&name=${encodeURIComponent(name)}`)
+        .then((d) => {
+          if (stop) return
+          if (d.ok && Array.isArray(d.detail?.containers) && d.detail.containers.length) {
+            setValues((prev) => prev.container
+              ? prev
+              : { ...prev, container: String(d.detail.containers[0].name || '') })
+          }
+        })
+        .catch(() => { /* 保持空, 后端默认首个容器 */ })
+    }
     setPreview((p) => ({ ...p, loading: true }))
     const qs = new URLSearchParams({
       cluster, res, ns: ns || '', name, action: action.name,
