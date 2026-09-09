@@ -530,9 +530,9 @@ export default function ConnectionTree({
                       <span className="relative flex h-3.5 w-3.5 shrink-0">
                         {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
                       </span>
-                      {rowNums[t] != null && <span className="db-tree-rcount" title={`约 ${rowNums[t]} 行`}>{fmtCount(rowNums[t])}</span>}
                       <span className="truncate">
                         {pfx ? t.slice(pfx.length) : t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
+                        {rowNums[t] != null && <span className="db-tree-rcount" title={`约 ${rowNums[t]} 行`}>{fmtCount(rowNums[t])}</span>}
                       </span>
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
                     </>
