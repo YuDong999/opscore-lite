@@ -2,7 +2,8 @@
 //    v3 布局: 流水线页改主从式 —— 左列清单选条目, 右栏单一详情区(运行记录/配置摘要),
 //    层级用面板切换表达而非表格+弹窗堆叠; 其余页签维持表格布局。
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { postJSON } from '../api/client'
 import { useToast } from '../components/Toast'
 import { ContextMenu, type CtxMenuItem } from './cicd/ContextMenu'
@@ -10,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -21,10 +23,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
   Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal, ChevronRight,
+  Star, Settings2, Filter,
 } from 'lucide-react'
 import {
   API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
-  fmtDur, fmtTime, fmtSize, TRIGGER_TEXT,
+  fmtDur, fmtTime, fmtSize, TRIGGER_TEXT, useTableSort, SortHead, statusWeight, useLocalJSON,
   type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
   type Credential, type Repo, type Registry, type Script,
   type StageRun, type ActionSpec,
@@ -266,7 +269,24 @@ const emptyPipeline = (): Pipeline => ({
 export default function CicdModule() {
   const [tab, setTab] = useState('pipelines')
   const [overview, setOverview] = useState<any>(null)
-  const [detailRunId, setDetailRunId] = useState('')
+  // 运行详情/步骤选中态进 URL(#/cicd?run=xxx&step=s2-1): 刷新与分享链接均可恢复
+  const [sp, setSp] = useSearchParams()
+  const detailRunId = sp.get('run') || ''
+  const openRun = useCallback((id: string, step?: string) => {
+    setSp(prev => {
+      const n = new URLSearchParams(prev)
+      n.set('run', id)
+      if (step) n.set('step', step); else n.delete('step')
+      return n
+    })
+  }, [setSp])
+  const closeRun = useCallback(() => {
+    setSp(prev => {
+      const n = new URLSearchParams(prev)
+      n.delete('run'); n.delete('step')
+      return n
+    })
+  }, [setSp])
 
   const loadOverview = useCallback(() => {
     fetch(API.overview).then(r => r.json()).then(setOverview).catch(() => {})
@@ -308,15 +328,19 @@ export default function CicdModule() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} /></TabsContent>
-        <TabsContent value="runs"><RunsTab onChanged={loadOverview} onOpenRun={setDetailRunId} /></TabsContent>
+        <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} onOpenRun={openRun} /></TabsContent>
+        <TabsContent value="runs"><RunsTab onChanged={loadOverview} onOpenRun={openRun} /></TabsContent>
         <TabsContent value="scripts"><ScriptsTab /></TabsContent>
         <TabsContent value="repos"><ReposTab /></TabsContent>
         <TabsContent value="creds"><CredentialsTab /></TabsContent>
-        <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={setDetailRunId} onMore={() => setTab('runs')} /></TabsContent>
+        <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={openRun} onMore={() => setTab('runs')} /></TabsContent>
       </Tabs>
 
-      {detailRunId && <RunDetail runId={detailRunId} onRerun={setDetailRunId} onChanged={loadOverview} onClose={() => setDetailRunId('')} />}
+      {detailRunId && (
+        <RunDetail runId={detailRunId} initialStep={sp.get('step') || ''}
+          onRerun={openRun} onStepSelect={(si, j) => openRun(detailRunId, `s${si + 1}-${j + 1}`)}
+          onChanged={loadOverview} onClose={closeRun} />
+      )}
     </div>
   )
 }
@@ -343,7 +367,8 @@ function HostSelect({ value, onChange }: { value: string; onChange: (v: string) 
   const hosts = useHosts()
   return (
     <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
-      <SelectTrigger><SelectValue /></SelectTrigger>
+      {/* w-full: trigger 默认 w-fit 在定宽父容器(inline-block 取 max-content 尺寸)会溢出压住后续字段 */}
+      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
       <SelectContent>
         {hosts.map(h => <SelectItem key={h.id || SELECT_NONE} value={h.id || SELECT_NONE}>{h.label}</SelectItem>)}
       </SelectContent>
@@ -352,6 +377,7 @@ function HostSelect({ value, onChange }: { value: string; onChange: (v: string) 
 }
 
 // 可选值下拉(空串语义统一走哨兵, 消灭 onChange 手动复位 hack · R4)
+// 选中非空值时触发器高亮: 过滤态/已配置态必须一眼可辨(否则用户看不出当前限定了什么)
 function OptSelect({ value, onChange, placeholder, items, className }: {
   value: string
   onChange: (v: string) => void
@@ -359,9 +385,12 @@ function OptSelect({ value, onChange, placeholder, items, className }: {
   items: { value: string; label: string }[]
   className?: string
 }) {
+  const set = value !== ''
   return (
     <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
-      <SelectTrigger className={className}><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectTrigger className={cn(className, set && 'border-accent/60 bg-accent/10 text-accent font-medium')}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value={SELECT_NONE}>{placeholder}</SelectItem>
         {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
@@ -385,18 +414,28 @@ function priorArtifactSteps(p: Pipeline, si: number, i: number): { value: string
 
 // ==================== 流水线 Tab(v3 主从布局: 左列表 + 右详情) ====================
 
-function PipelinesTab({ onChanged }: { onChanged: () => void }) {
+function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (id: string) => void }) {
   const { data, err, setErr, reload } = useResource<PipelineView[]>(API.pipelines)
   const pipes = data || []
   const [selId, setSelId] = useState('')
   const [editing, setEditing] = useState<Pipeline | null>(null)
   const [webhookOf, setWebhookOf] = useState<Pipeline | null>(null)
-  const [detailRun, setDetailRun] = useState('')
   const [busy, setBusy] = useState('')
   const [runSel, setRunSel] = useState<Pipeline | null>(null)
   const [tplOpen, setTplOpen] = useState(false)
   const [tick, setTick] = useState(0) // 右栏运行列表手动刷新信号
   const { confirm, confirmEl } = useConfirm()
+
+  // 收藏星标(B6): 本地偏好, 星标组置顶(组内保持原有顺序)
+  const [stars, setStars] = useLocalJSON<string[]>('cicd-stars', [])
+  const toggleStar = (id: string) => setStars(stars.includes(id) ? stars.filter(x => x !== id) : [...stars, id])
+  const ordered = useMemo(() =>
+    [...pipes].sort((a, b) => (stars.includes(b.id) ? 1 : 0) - (stars.includes(a.id) ? 1 : 0)), [pipes, stars])
+
+  // 详情弹窗由模块顶层按 URL 渲染; 关闭(参数消失)时刷新列表, 兜住运行状态已变的情况
+  const [sp] = useSearchParams()
+  const urlRun = sp.get('run') || ''
+  useEffect(() => { if (!urlRun) { reload(); setTick(t => t + 1) } }, [urlRun])
 
   // 选中项不存在(未加载/已被删)时回落到第一条
   const sel = pipes.find(p => p.id === selId) || pipes[0] || null
@@ -416,7 +455,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     setBusy(id)
     try {
       const d = await postJSON<{ run: Run }>(API.pipelineRun, { id, branch, params })
-      setErr(''); setDetailRun(d.run.id); setTick(t => t + 1); onChanged()
+      setErr(''); onOpenRun(d.run.id); setTick(t => t + 1); onChanged()
     } catch (e: any) { setErr(`触发失败: ${e.message}`) } finally { setBusy('') }
   }
   const remove = async (p: PipelineView) => {
@@ -457,6 +496,7 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
     { label: '复制流水线', icon: <Copy />, onSelect: () => copy(p) },
     { label: '导出此流水线 (JSON)', icon: <Download />, onSelect: () => exportOne(p) },
     { sep: true, label: '' },
+    { label: stars.includes(p.id) ? '取消收藏' : '收藏置顶', icon: <Star />, onSelect: () => toggleStar(p.id) },
     { label: '删除', icon: <Trash2 />, danger: true, disabled: !!busy, onSelect: () => remove(p) },
   ]
 
@@ -501,8 +541,9 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
               <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">暂无流水线, 点「新建」开始编排</div>
             )}
             <div className="flex flex-col gap-1">
-              {pipes.map(p => {
+              {ordered.map(p => {
                 const active = p.id === sel?.id
+                const starred = stars.includes(p.id)
                 return (
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
@@ -511,6 +552,12 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
                       <span className="font-medium text-sm truncate flex-1">{p.name}</span>
+                      <span role="button" tabIndex={-1} title={starred ? '取消收藏' : '收藏置顶'}
+                        onClick={e => { e.stopPropagation(); toggleStar(p.id) }}
+                        className={cn('shrink-0 rounded p-0.5 transition-colors hover:bg-muted',
+                          starred ? 'text-warn' : 'text-muted-foreground/40 hover:text-foreground')}>
+                        <Star className={cn('size-3.5', starred && 'fill-current')} />
+                      </span>
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
                       {p.lastRun ? (
@@ -531,10 +578,11 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
 
         {/* 右: 选中流水线详情(从) */}
         {sel && (
-          <PipelineDetail p={sel} busy={busy} tick={tick}
-            onRun={() => run(sel)} onEdit={() => loadOne(sel, setEditing)}
+          <PipelineDetail p={sel} busy={busy} tick={tick} starred={stars.includes(sel.id)} onToggleStar={() => toggleStar(sel.id)}
+            onRunDefault={() => doRun(sel.id, '', {})} onRunWithForm={() => run(sel)}
+            onEdit={() => loadOne(sel, setEditing)}
             onWebhook={() => loadOne(sel, setWebhookOf)} onCopy={() => copy(sel)}
-            onDelete={() => remove(sel)} onOpenRun={setDetailRun}
+            onDelete={() => remove(sel)} onOpenRun={onOpenRun}
             onRunsChanged={() => setTick(t => t + 1)} />
         )}
       </div>
@@ -561,7 +609,6 @@ function PipelinesTab({ onChanged }: { onChanged: () => void }) {
         <PipelineEditor value={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); onChanged() }} />
       )}
       {webhookOf && <WebhookDialog pipeline={webhookOf} onClose={() => setWebhookOf(null)} />}
-      {detailRun && <RunDetail runId={detailRun} onRerun={setDetailRun} onChanged={() => { reload(); setTick(t => t + 1); onChanged() }} onClose={() => { setDetailRun(''); reload(); setTick(t => t + 1); onChanged() }} />}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={pipelineMenu(ctx.p)} onClose={() => setCtx(null)} />}
     </div>
   )
@@ -579,11 +626,14 @@ function LastRunDot({ run }: { run?: Run }) {
 }
 
 // ── 右详情面板: 头部操作区 + 运行记录 / 配置摘要 两个子页签 ──
-function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDelete, onOpenRun, onRunsChanged }: {
+function PipelineDetail({ p, busy, tick, starred, onToggleStar, onRunDefault, onRunWithForm, onEdit, onWebhook, onCopy, onDelete, onOpenRun, onRunsChanged }: {
   p: PipelineView
   busy: string
   tick: number
-  onRun: () => void
+  starred: boolean
+  onToggleStar: () => void
+  onRunDefault: () => void
+  onRunWithForm: () => void
   onEdit: () => void
   onWebhook: () => void
   onCopy: () => void
@@ -598,6 +648,9 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [live, p.lastRun?.id])
+
+  // 分裂运行(B8, Jenkins 语义): 立即运行=默认分支/参数直接跑; 以参数运行=弹配置表单
+  const hasRunConfig = !!p.source.repoId || (p.params?.length ?? 0) > 0
 
   return (
     <Card className="gap-0 flex flex-col py-3 overflow-hidden lg:h-full min-h-0">
@@ -618,7 +671,20 @@ function PipelineDetail({ p, busy, tick, onRun, onEdit, onWebhook, onCopy, onDel
             </div>
           </div>
           <div className="flex gap-1 flex-wrap">
-            <Button size="sm" disabled={!!busy} title="运行" onClick={onRun}><Play />运行</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={!!busy} title="运行"><Play />运行</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onSelect={onRunDefault}><Play />立即运行</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onRunWithForm} disabled={!hasRunConfig}>
+                  <Settings2 />以参数运行…{!hasRunConfig && <span className="text-xs text-muted-foreground">(未配置参数/代码源)</span>}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="outline" size="icon" className="size-8" title={starred ? '取消收藏' : '收藏置顶'} onClick={onToggleStar}>
+              <Star className={cn('size-4', starred && 'fill-current text-warn')} />
+            </Button>
             <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="编辑" onClick={onEdit}><Pencil /></Button>
             <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="Webhook" onClick={onWebhook}><Link2 /></Button>
             <Button variant="outline" size="icon" className="size-8" disabled={!!busy} title="复制" onClick={onCopy}><Copy /></Button>
@@ -714,22 +780,32 @@ function PipelineRunsList({ pipelineId, tick, onOpenRun, onChanged }: { pipeline
     ] : []),
   ]
 
+  // 列头排序(B1): 状态按运维关注度, 时间/耗时自然序
+  const { sorted, sort, toggle } = useTableSort(runs, useMemo(() => ({
+    status: (r: Run) => statusWeight(r.status),
+    startedAt: (r: Run) => r.startedAt || '',
+    durationMs: (r: Run) => r.durationMs || 0,
+  }), []))
+
   return (
     <div>
       {confirmEl}
       <Table className={STICKY_THEAD}>
         <TableHeader>
           <TableRow>
-            <TableHead>状态</TableHead><TableHead>触发</TableHead>
-            <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
-            <TableHead>耗时</TableHead><TableHead className="w-20">操作</TableHead>
+            <SortHead label="状态" k="status" sort={sort} onToggle={toggle} />
+            <TableHead>触发</TableHead>
+            <TableHead className="min-w-24">进度</TableHead>
+            <SortHead label="开始时间" k="startedAt" sort={sort} onToggle={toggle} />
+            <SortHead label="耗时" k="durationMs" sort={sort} onToggle={toggle} />
+            <TableHead className="w-20">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {runs.length === 0 && (
+          {sorted.length === 0 && (
             <TableRow><TableCell colSpan={6} className="h-16 text-center text-muted-foreground">该流水线还没有运行记录</TableCell></TableRow>
           )}
-          {runs.map(r => (
+          {sorted.map(r => (
             <TableRow key={r.id}
               onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, r }) }}>
               <TableCell>
@@ -1276,10 +1352,34 @@ function WebhookDialog({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
 // ==================== 运行历史 Tab ====================
 
 function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (id: string) => void }) {
-  const [filter, setFilter] = useState('')
-  const { data, err, setErr, reload } = useResource<Run[]>(`${API.runs}?limit=100${filter ? `&pipeline=${filter}` : ''}`)
   const pipes = useResource<PipelineView[]>(API.pipelines)
-  const runs = data || []
+  const [filter, setFilter] = useState('')
+
+  // B4 无限滚动: limit 递增重拉(后端 cap 500), 滚到底部附近加载更多; 5s 轮询仅刷当前窗口
+  const [limit, setLimit] = useState(50)
+  const PAGE = 50
+  const { data, err, setErr, reload } = useResource<Run[]>(`${API.runs}?limit=${limit}${filter ? `&pipeline=${filter}` : ''}`)
+  const rawRuns = data || []
+  const hasMore = rawRuns.length >= limit && limit < 500
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const loadingMore = useRef(false)
+  const onScrollMore = () => {
+    const el = scrollRef.current
+    if (!el || !hasMore || loadingMore.current) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 240) return
+    loadingMore.current = true
+    const next = Math.min(limit + PAGE, 500)
+    fetch(`${API.runs}?limit=${next}${filter ? `&pipeline=${filter}` : ''}`)
+      .then(r => r.json())
+      .then((d: Run[]) => {
+        if (Array.isArray(d) && d.length > rawRuns.length) setLimit(next)
+        else setLimit(500) // 没有更多了, 封顶不再请求
+      })
+      .catch(() => {})
+      .finally(() => { loadingMore.current = false })
+  }
+
+  const runs = rawRuns
   const [busy, setBusy] = useState('')
   const { confirm, confirmEl } = useConfirm()
 
@@ -1290,6 +1390,13 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
     catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
 
+  const { sorted, sort, toggle } = useTableSort(runs, useMemo(() => ({
+    pipeline: (r: Run) => r.pipeline || '',
+    status: (r: Run) => statusWeight(r.status),
+    startedAt: (r: Run) => r.startedAt || '',
+    durationMs: (r: Run) => r.durationMs || 0,
+  }), []))
+
   return (
     <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
       {confirmEl}
@@ -1297,27 +1404,41 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
       <Card className="gap-0 flex-1 min-h-0 flex flex-col py-3 overflow-hidden">
         <CardHeader className="gap-0 mb-0 grid-rows-[auto] pb-3 shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle className="tabular-nums">运行历史 ({runs.length})</CardTitle>
-            <OptSelect className="w-52" value={filter} onChange={setFilter} placeholder="全部流水线"
-              items={(pipes.data || []).map(p => ({ value: p.id, label: p.name }))} />
+            <CardTitle className="tabular-nums">运行历史 ({runs.length}{hasMore ? '+' : ''})</CardTitle>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <OptSelect className="w-52" value={filter} onChange={v => { setFilter(v); setLimit(50) }} placeholder="全部流水线"
+                items={(pipes.data || []).map(p => ({ value: p.id, label: p.name }))} />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 hover-scroll">
+          <div ref={scrollRef} onScroll={onScrollMore} className="min-h-0">
           <Table className={STICKY_THEAD}>
             <TableHeader>
               <TableRow>
-                <TableHead>流水线</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead>
-                <TableHead className="min-w-24">进度</TableHead><TableHead>开始时间</TableHead>
-                <TableHead>耗时</TableHead><TableHead className="w-32">操作</TableHead>
+                <SortHead label="流水线" k="pipeline" sort={sort} onToggle={toggle} />
+                <TableHead>触发</TableHead>
+                <SortHead label="状态" k="status" sort={sort} onToggle={toggle} />
+                <TableHead className="min-w-24">进度</TableHead>
+                <SortHead label="开始时间" k="startedAt" sort={sort} onToggle={toggle} />
+                <SortHead label="耗时" k="durationMs" sort={sort} onToggle={toggle} />
+                <TableHead className="w-32">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {runs.length === 0 && (
+              {sorted.length === 0 && (
                 <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无运行记录</TableCell></TableRow>
               )}
-              {runs.map(r => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-semibold">{r.pipeline}</TableCell>
+              {sorted.map(r => (
+                <TableRow key={r.id} className={cn('cursor-pointer', filter === r.pipelineId && 'bg-accent/5 hover:bg-accent/10')}
+                  title={filter === r.pipelineId ? '本列表已只看该流水线, 再次点击取消过滤' : '点击: 只看该流水线的运行记录'}
+                  onClick={() => { setFilter(filter === r.pipelineId ? '' : r.pipelineId); setLimit(50) }}>
+                  <TableCell className="font-semibold">
+                    <span className="inline-flex items-center gap-1.5">
+                      {filter === r.pipelineId && <Filter className="size-3 shrink-0 text-accent" />}
+                      {r.pipeline}
+                    </span>
+                  </TableCell>
                   <TableCell><Badge variant="secondary">{TRIGGER_TEXT[r.trigger] || r.trigger}</Badge></TableCell>
                   <TableCell>
                     <StatusBadge status={r.status} suffix={r.status === 'running' && r.canceling ? '(取消中)' : undefined} />
@@ -1351,6 +1472,8 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
               ))}
             </TableBody>
           </Table>
+          {hasMore && <div className="text-center text-xs text-muted-foreground py-2">向下滚动加载更多…</div>}
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -1359,7 +1482,14 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
 
 // ==================== 运行详情(SSE 实时日志) ====================
 
-function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onClose: () => void; onChanged?: () => void; onRerun?: (newRunId: string) => void }) {
+function RunDetail({ runId, initialStep, onStepSelect, onClose, onChanged, onRerun }: {
+  runId: string
+  initialStep?: string
+  onStepSelect?: (si: number, j: number) => void
+  onClose: () => void
+  onChanged?: () => void
+  onRerun?: (newRunId: string) => void
+}) {
   const [run, setRun] = useState<Run | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [busy, setBusy] = useState('')
@@ -1369,6 +1499,35 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
   const logRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
   const [now, setNow] = useState(Date.now())
+  const [hl, setHl] = useState('') // 高亮的步骤 key "si-j"(点击节点流/深链定位时短暂高亮)
+  const toast = useToast()
+  // 同流水线最近运行(B7 面包屑下拉数据源)
+  const [recentRuns, setRecentRuns] = useState<Run[]>([])
+  useEffect(() => {
+    if (!run?.pipelineId) return
+    fetch(`${API.runs}?limit=12&pipeline=${encodeURIComponent(run.pipelineId)}`)
+      .then(r => r.json()).then(d => setRecentRuns(Array.isArray(d) ? d : [])).catch(() => {})
+  }, [run?.pipelineId])
+
+  // 深链消费(B2): ?step=s2-1 → 日志定位到对应步骤(日志分阶段标识是流式追加的, 轮试直到找到)
+  const stepSeenRef = useRef('')
+  useEffect(() => {
+    if (!run || !initialStep || stepSeenRef.current === runId + initialStep) return
+    const m = initialStep.match(/^s(\d+)-(\d+)$/)
+    if (!m) return
+    const st = run.stages[+m[1] - 1]
+    const j = +m[2] - 1
+    if (!st?.steps[j]) return
+    const si = +m[1] - 1
+    stepSeenRef.current = runId + initialStep
+    setHl(`${si}-${j}`)
+    setTimeout(() => setHl(''), 4000)
+    let tries = 12
+    const timer = setInterval(() => {
+      if (scrollToStep(si, j, st.steps[j].name) || --tries <= 0) clearInterval(timer)
+    }, 400)
+    return () => clearInterval(timer)
+  }, [run, initialStep, runId])
 
   // 运行中每秒跳表, 驱动节点流上的实时耗时
   useEffect(() => {
@@ -1476,20 +1635,23 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
     } catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
 
-  // 点击节点流中的步骤 → 日志滚动到该步骤的起始位置
-  const scrollToStep = (si: number, j: number, name: string) => {
+  // 点击节点流中的步骤 → 日志滚动到该步骤的起始位置(返回是否找到; 深链场景日志流式追加需轮试)
+  const scrollToStep = (si: number, j: number, name: string): boolean => {
     const el = logRef.current
-    if (!el) return
+    if (!el) return false
     const lineEls = el.querySelectorAll('.log-line')
     let curStage = 0
     let found: Element | null = null
     for (const l of Array.from(lineEls)) {
-      const t = l.textContent || ''
+      // 行内容在 .log-msg 子节点(行号/复制钮不参与匹配)
+      const t = (l.querySelector('.log-msg')?.textContent) || ''
       const m = t.match(/\[阶段 (\d+)\/\d+\]/)
       if (m) curStage = parseInt(m[1])
       if (curStage === si + 1 && t.includes(`[步骤 ${j + 1}/`) && t.includes(name)) found = l
     }
-    found?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (!found) return false
+    found.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return true
   }
 
   if (!run) return null
@@ -1506,7 +1668,26 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
                 <StatusBadge status={run.status} suffix={run.status === 'running' && run.canceling ? '(取消中)' : undefined} />
               </DialogTitle>
               <div className="text-xs text-muted-foreground font-normal tabular-nums mt-0.5">
-                {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)}{run.branch ? ` · ${run.branch}` : ''} · {run.id}
+                {TRIGGER_TEXT[run.trigger] || run.trigger} · {fmtDur(run.durationMs)}{run.branch ? ` · ${run.branch}` : ''} ·
+                {/* 面包屑下拉(B7, Jenkins 语法): run id 可下拉切换同流水线其他运行 / 复制本页链接 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center gap-0.5 mx-1 hover:text-accent underline decoration-dotted underline-offset-2"
+                      title="切换到该流水线的其他运行 / 复制链接">{run.id}</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="max-h-72">
+                    <DropdownMenuItem onSelect={() => { navigator.clipboard?.writeText(location.href).then(() => toast.success('已复制本页链接')).catch(() => {}) }}>
+                      <Link2 />复制本页链接
+                    </DropdownMenuItem>
+                    {recentRuns.filter(x => x.id !== runId).slice(0, 10).map(x => (
+                      <DropdownMenuItem key={x.id} onSelect={() => onRerun?.(x.id)}>
+                        <span className={cn('size-2 rounded-full shrink-0')} style={{ background: STAGE_COLOR[x.status] || 'var(--border)' }} />
+                        <span className="tabular-nums text-xs">{fmtTime(x.startedAt)}</span>
+                        <span className="text-xs text-muted-foreground">{TRIGGER_TEXT[x.trigger] || x.trigger} · {fmtDur(x.durationMs)}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {run.runParams && Object.keys(run.runParams).length > 0 && (
                   <span className="font-mono"> · {Object.entries(run.runParams).map(([k, v]) => `${k}=${v}`).join(' ')}</span>
                 )}
@@ -1536,7 +1717,11 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
         <div className="rounded-lg border bg-background/60 px-4 py-2">
           <StageFlow stages={run.stages} now={now} onStepClick={(si, j) => {
             const st = run.stages[si]
-            if (st && st.steps[j]) scrollToStep(si, j, st.steps[j].name)
+            if (!st?.steps[j]) return
+            onStepSelect?.(si, j) // 选中态进 URL(B2): ?step=sN-M 可刷新/分享
+            setHl(`${si}-${j}`)
+            setTimeout(() => setHl(''), 4000)
+            scrollToStep(si, j, st.steps[j].name)
           }} />
         </div>
         {run.commit && (
@@ -1572,7 +1757,8 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
             </div>
             <div className="px-3 py-1">
               {st.steps.map((sp, j) => (
-                <div key={j} className="flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap">
+                <div key={j} className={cn('flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap rounded transition-shadow',
+                  hl === `${i}-${j}` && 'ring-1 ring-accent bg-accent/5')}>
                   <span className="min-w-36">
                     <span className="font-mono text-xs text-muted-foreground tabular-nums">{String(j + 1).padStart(2, '0')}</span>{' '}
                     <span className="font-medium">{sp.name}</span>
@@ -1609,7 +1795,16 @@ function RunDetail({ runId, onClose, onChanged, onRerun }: { runId: string; onCl
         {/* 终端样式保留 legacy 主题适配类; 定高+悬停滚动条与其他滚动容器同规范 */}
         <div className="log-text max-h-80 hover-scroll" ref={logRef} onScroll={onScroll}>
           {lines.length === 0 && <div className="log-loading">暂无日志输出</div>}
-          {lines.map((l, i) => <div key={i} className="log-line">{l}</div>)}
+          {lines.map((l, i) => (
+            <div key={i} className="log-line group">
+              <span className="w-8 shrink-0 text-right text-[10px] leading-5 text-muted-foreground/50 tabular-nums select-none opacity-0 group-hover:opacity-100 transition-opacity">{i + 1}</span>
+              <span className="log-msg flex-1 min-w-0">{l || ' '}</span>
+              <button title="复制此行" className="shrink-0 text-muted-foreground/50 hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => navigator.clipboard?.writeText(l).then(() => toast.success(`已复制第 ${i + 1} 行`)).catch(() => {})}>
+                <Copy className="size-3" />
+              </button>
+            </div>
+          ))}
         </div>
 
         </div>
