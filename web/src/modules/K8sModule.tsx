@@ -109,6 +109,19 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
 
 const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings', 'priorityclasses'])
 
+// events 聚合行 object:"Kind/Name" → 关联对象定位(kind→详情类型 / 资源类型)
+const EVENT_MODAL: Record<string, 'pod' | 'workload' | 'yaml' | 'node'> = {
+  Pod: 'pod', Deployment: 'workload', StatefulSet: 'workload', Node: 'node',
+}
+const EVENT_RES: Record<string, string> = {
+  Pod: 'pods', Deployment: 'deployments', StatefulSet: 'statefulsets', DaemonSet: 'daemonsets',
+  ReplicaSet: 'replicasets', Job: 'jobs', CronJob: 'cronjobs', Service: 'services',
+  Ingress: 'ingresses', ConfigMap: 'configmaps', Secret: 'secrets',
+  PersistentVolumeClaim: 'persistentvolumeclaims', PersistentVolume: 'persistentvolumes',
+  StorageClass: 'storageclasses', Node: 'nodes', Namespace: 'namespaces',
+  HorizontalPodAutoscaler: 'horizontalpodautoscalers',
+}
+
 type Col = [string, string, number, ('mono' | 'dim' | 'status')?]
 const COLS: Partial<Record<K8sRes, Col[]>> = {
   pods: [
@@ -295,7 +308,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [certModalOpen, setCertModalOpen] = useState(false)
   const [createKind, setCreateKind] = useState('Deployment')
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: any } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: any; res?: string } | null>(null)
   const [clusterMenu, setClusterMenu] = useState<{ x: number; y: number; cluster: any } | null>(null)
   const [folded, setFolded] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}') } catch { return {} }
@@ -306,13 +319,28 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   // 加入节点弹层: 生成 kubeadm join 命令
   const [joinNode, setJoinNode] = useState(false)
 
-  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe', r: any) => {
+  // events 聚合行 → 关联对象(双击/右键/操作按钮共用); object:"Kind/Name"
+  const eventTarget = (r: any): { res: string; modal: 'pod' | 'workload' | 'yaml' | 'node'; name: string; ns: string } | null => {
+    const [kind, name] = String(r?.object || '').split('/')
+    if (!kind || !name) return null
+    const targetRes = EVENT_RES[kind] || kind.toLowerCase()
+    return {
+      res: targetRes,
+      modal: EVENT_MODAL[kind] || 'yaml',
+      name,
+      ns: NSLESS.has(targetRes as K8sRes) ? '' : r.namespace || '',
+    }
+  }
+
+  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe', r: any, resOf?: string) => {
     if (!clusterID || !r?.name) return
     // 命名空间作用域解析: 集群级资源忽略 ns; 列表为"全部命名空间"时用行内自带的 namespace
-    const effNs = NSLESS.has(res as K8sRes)
+    const effRes = resOf || (res as string)
+    const effNs = NSLESS.has(effRes as K8sRes)
       ? ''
+      : resOf ? String(r.namespace || '')
       : ns === 'all' ? String(r.namespace || '') : ns
-    setModal({ kind, res: res as K8sRes, ns: effNs, name: String(r.name) })
+    setModal({ kind, res: effRes as K8sRes, ns: effNs, name: String(r.name) })
   }
   // 表头排序: 点新列=降序, 再点=升序, 三点=取消(借鉴 kubevision 交互)
   const toggleSort = (k: string) => {
@@ -366,7 +394,11 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   }
 
   const dblRow = (r: any) => {
-    if (res === 'events') return
+    if (res === 'events') {
+      const t = eventTarget(r)
+      if (t) openModal(t.modal, { name: t.name, namespace: t.ns }, t.res)
+      return
+    }
     if (res === 'pods') openModal('pod', r)
     else if (res === 'deployments' || res === 'statefulsets') openModal('workload', r)
     else if (res === 'nodes') openModal('node', r)
@@ -477,9 +509,14 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const cluster = clusters?.find((c) => c.id === clusterID)
 
   const onRowContext = (e: React.MouseEvent, r: any) => {
-    if (res === 'events') return
     e.preventDefault()
     e.stopPropagation()
+    if (res === 'events') {
+      const t = eventTarget(r)
+      if (!t) return
+      setCtxMenu({ x: e.clientX, y: e.clientY, row: { ...r, name: t.name, namespace: t.ns }, res: t.res })
+      return
+    }
     setCtxMenu({ x: e.clientX, y: e.clientY, row: r })
   }
 
@@ -707,7 +744,16 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                         <div className="k8s-row-actions" style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                             title="基于资源类型动态展示可用操作 (kubectl 等价)"
-                            onClick={(e) => { e.stopPropagation(); setActionPanel({ res, name: r.name, ns: r.namespace || ns }) }}>操作</button>
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (res === 'events') {
+                                const t = eventTarget(r)
+                                if (!t) return
+                                setActionPanel({ res: t.res, name: t.name, ns: t.ns })
+                                return
+                              }
+                              setActionPanel({ res, name: r.name, ns: r.namespace || ns })
+                            }}>操作</button>
                           {res === 'pods' && (
                             <>
                             <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
@@ -753,14 +799,16 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
         <K8sContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
-          res={res as K8sRes}
-          ns={ns === 'all' ? ctxMenu.row.namespace || '' : ns}
+          res={(ctxMenu.res || res) as K8sRes}
+          ns={ctxMenu.res ? ctxMenu.row.namespace || '' : ns === 'all' ? ctxMenu.row.namespace || '' : ns}
           name={ctxMenu.row.name}
           cluster={clusterID}
           onAction={(action, extra) => {
+            const mres = ctxMenu.res || res
             postJSON('/api/plugins/containers/k8s/action', {
               cluster: clusterID,
-              res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns,
+              res: mres,
+              ns: NSLESS.has(mres as K8sRes) ? '' : ctxMenu.res ? ctxMenu.row.namespace : ns === 'all' ? ctxMenu.row.namespace : ns,
               name: ctxMenu.row.name, action, params: extra || {},
             }).then((d: any) => {
               onMsg?.(d.ok ? `✓ ${action} ${ctxMenu.row.name} 完成` : '✗ ' + (d.error || '失败'))
@@ -768,18 +816,20 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             }).catch((e) => onMsg?.('✗ ' + String(e)))
           }}
           onOpenForm={(action) => {
+            const mres = ctxMenu.res || res
             setActionPanel({
-              res, ns: NSLESS.has(res as K8sRes) ? '' : ns === 'all' ? ctxMenu.row.namespace : ns,
+              res: mres, ns: NSLESS.has(mres as K8sRes) ? '' : ctxMenu.res ? ctxMenu.row.namespace : ns === 'all' ? ctxMenu.row.namespace : ns,
               name: ctxMenu.row.name, autoOpen: action,
             })
             setCtxMenu(null)
           }}
           onViewDetail={() => {
-            openModal(res === 'pods' ? 'pod' : res === 'deployments' || res === 'statefulsets' ? 'workload' : res === 'nodes' ? 'node' : 'yaml', ctxMenu.row)
+            const mres = ctxMenu.res || res
+            openModal(mres === 'pods' ? 'pod' : mres === 'deployments' || mres === 'statefulsets' ? 'workload' : mres === 'nodes' ? 'node' : 'yaml', ctxMenu.row, ctxMenu.res)
             setCtxMenu(null)
           }}
           onDescribe={() => {
-            openModal('describe', ctxMenu.row)
+            openModal('describe', ctxMenu.row, ctxMenu.res)
             setCtxMenu(null)
           }}
           onClose={() => setCtxMenu(null)}
