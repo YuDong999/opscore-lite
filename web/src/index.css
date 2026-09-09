@@ -2231,6 +2231,9 @@ body {
 .db-tree-header { display: flex; gap: 0.3rem; align-items: center; }
 .db-tree-search { flex: 1; min-width: 0; font-size: 0.75rem; padding: 0.32rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-solid); color: var(--text); }
 .db-tree-search:focus { outline: none; border-color: var(--accent); }
+.db-tree-tool { width: 1.7rem; height: 1.7rem; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); cursor: pointer; line-height: 1; }
+.db-tree-tool:hover { background: var(--row-hover); color: var(--text); border-color: var(--border); }
+.db-tree-header-actions { display: flex; gap: 0.2rem; align-items: center; }
 .db-tree-add { width: 1.7rem; height: 1.7rem; flex-shrink: 0; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-tint); color: var(--accent); font-size: 1rem; font-weight: 700; cursor: pointer; line-height: 1; }
 .db-tree-add:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .db-tree-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 0.08rem; padding: 0.1rem; }
@@ -3188,7 +3191,7 @@ body {
 .db-table-grid .db-th-type { display: block; font-size: 0.65rem; font-weight: 400; color: var(--text-dim); }
 
 /* 树: 行数徽标 + 对象类型彩色图标(dbx 配色) */
-.db-tree-rcount { margin-left: auto; font-size: 0.65rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.db-tree-rcount { margin-left: 0.4rem; font-size: 0.65rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .dbx-node-icon { flex-shrink: 0; }
 .icon-table { color: #16a34a; }
 .icon-view { color: #0ea5e9; }
