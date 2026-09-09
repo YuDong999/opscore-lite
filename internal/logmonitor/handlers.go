@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,9 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 			{Path: "/api/logmonitor/parsers", Handler: h.handleParsers},
 			{Path: "/api/logmonitor/parsers/save", Handler: h.handleParsersSave},
 			{Path: "/api/logmonitor/parsers/test", Handler: h.handleParsersTest},
+			{Path: "/api/logmonitor/shards", Handler: h.handleShards},
+			{Path: "/api/logmonitor/shards/save", Handler: h.handleShardsSave},
+			{Path: "/api/logmonitor/shards/delete", Handler: h.handleShardsDelete},
 			{Path: "/api/logmonitor/discover/containers", Handler: h.handleDiscoverContainers},
 			{Path: "/api/logmonitor/discover/k8s", Handler: h.handleDiscoverK8s},
 			{Path: "/api/logmonitor/discover/clusters", Handler: h.handleDiscoverClusters},
@@ -688,6 +692,65 @@ func (h *Handlers) handleParsersTest(w http.ResponseWriter, r *http.Request) {
 	}
 	results := h.service.ParserTest(body.Rule, body.Lines)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+}
+
+// GET /api/logmonitor/shards → 分片配置 + 分片状态列表
+func (h *Handlers) handleShards(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config": h.store.shardCfg,
+		"shards": h.store.ListShards(h.store.shardCfg),
+	})
+}
+
+// POST /api/logmonitor/shards/save { "config": {...} } → 写 shards.json + 生效
+func (h *Handlers) handleShardsSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Config ShardConfig `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	path := filepath.Join(filepath.Dir(h.dataDir), "shards.json")
+	if err := saveShardConfig(path, body.Config); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.store.shardCfg = loadShardConfig(path)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "config": h.store.shardCfg})
+}
+
+// POST /api/logmonitor/shards/delete { "shard": "202607" } → 删除过期分片
+func (h *Handlers) handleShardsDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Shard string `json:"shard"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if body.Shard == "" {
+		writeErr(w, http.StatusBadRequest, "shard 不能为空")
+		return
+	}
+	n, err := h.store.DropShard(body.Shard, h.store.shardCfg)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": n})
 }
 
 // readLogContent 按 metadata 读取日志内容。

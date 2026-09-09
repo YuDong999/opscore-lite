@@ -64,12 +64,16 @@ func (a *Alerter) evaluateRule(r *AlertRule) {
 	now := time.Now().UnixMilli()
 	start := now - windowMs
 
-	// 查询窗口内匹配数
+	// 查询窗口内匹配数(跨分片累加, 窗口近 → 通常只命中热表)
 	var cnt int64
-	a.store.db.QueryRow(
-		fmt.Sprintf("SELECT COUNT(*) FROM log_meta WHERE %s AND ts >= ? AND ts <= ?", whereClause),
-		arg, start, now,
-	).Scan(&cnt)
+	for _, t := range a.store.tablesForRange(start, now) {
+		var c int64
+		a.store.db.QueryRow(
+			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s AND ts >= ? AND ts <= ?", t, whereClause),
+			arg, start, now,
+		).Scan(&c)
+		cnt += c
+	}
 
 	// 判断是否触发
 	if cnt >= int64(r.CountThresh) && r.CountThresh > 0 {

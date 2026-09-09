@@ -340,6 +340,10 @@ const [selCluster, setSelCluster] = useState('1')
   const [parserResults, setParserResults] = useState<ParserTestResult[] | null>(null)
   const [parserBusy, setParserBusy] = useState(false)
 
+  // 分片存储(shards.json)
+  const [shardCfg, setShardCfg] = useState<{ shardBy: string; hotShards: number; defaultRetentionDays: number } | null>(null)
+  const [shards, setShards] = useState<Array<{ shard: string; startTs: number; endTs: number; rows: number; dropAllowed: boolean }>>([])
+
   const latestHist = useRef<HistogramBucket[]>([])
 
   function pushToast(kind: ToastKind, text: string) {
@@ -866,8 +870,46 @@ const [selCluster, setSelCluster] = useState('1')
       pushToast('ok', `ILM 清理完成: ${r.deleted} 条(归档索引) / ${r.deletedUnassigned} 条(未归属)`)
       runSearch()
       loadIndexes()
+      loadShards()
     } catch (e: any) {
       pushToast('err', 'ILM 执行失败: ' + (e?.message || ''))
+    }
+  }
+
+  // ── 分片存储(shards.json) ──
+  async function loadShards() {
+    try {
+      const r = await getJSON<{ config: typeof shardCfg; shards: typeof shards }>('/api/logmonitor/shards')
+      setShardCfg(r.config)
+      setShards(r.shards)
+    } catch (e: any) {
+      pushToast('err', '加载分片状态失败: ' + (e?.message || ''))
+    }
+  }
+
+  async function saveShardCfg() {
+    if (!shardCfg) return
+    if (shardCfg.defaultRetentionDays < 1) {
+      pushToast('err', '全局保留天数必须 ≥ 1')
+      return
+    }
+    try {
+      const r = await postJSON('/api/logmonitor/shards/save', { config: shardCfg })
+      pushToast('ok', `分片配置已保存: 按${r.config.shardBy === 'day' ? '天' : r.config.shardBy === 'week' ? '周' : '月'}分片, 全局保留 ${r.config.defaultRetentionDays} 天`)
+      setShardCfg(r.config)
+      loadShards()
+    } catch (e: any) {
+      pushToast('err', '保存分片配置失败: ' + (e?.message || ''))
+    }
+  }
+
+  async function delShard(key: string) {
+    try {
+      const r = await postJSON('/api/logmonitor/shards/delete', { shard: key })
+      pushToast('ok', `分片 ${key} 已删除 ${r.deleted?.toLocaleString() ?? ''} 行`)
+      loadShards()
+    } catch (e: any) {
+      pushToast('err', '删除分片失败: ' + (e?.message || ''))
     }
   }
 
@@ -910,7 +952,7 @@ const [selCluster, setSelCluster] = useState('1')
   useEffect(() => {
     if (tab === 'stats') loadStats('')
     if (tab === 'sources') loadSources()
-    if (tab === 'indexes') loadIndexes()
+    if (tab === 'indexes') { loadIndexes(); loadShards() }
   }, [tab])
 
   // Live: stats/sources/indexes 每 3s 轮询（避免手动刷新才看到新采集数据）
@@ -921,7 +963,7 @@ const [selCluster, setSelCluster] = useState('1')
     const t = setInterval(() => {
       if (tab === 'stats') loadStats(statsService)
       if (tab === 'sources') loadSources()
-      if (tab === 'indexes') loadIndexes()
+if (tab === 'indexes') { loadIndexes(); loadShards() }
     }, intervalMs)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1761,6 +1803,69 @@ function clearFilters() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {tab === 'indexes' && !editing && shardCfg && (
+        <div className="glass log-card" style={{ marginTop: 14 }}>
+          <div className="log-filter-row">
+            <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>分片存储 (shards.json)</span>
+            <span className="kib-badge" style={{ background: '#8b5cf6' }}>按月分片 · 自动归档</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+            数据按月切片, 新周期自动归档上一片; 过期分片整体删除(秒级), 取代逐行 DELETE。保存即写底层 shards.json。
+          </div>
+          <div className="kib-inline-form">
+            <div className="kib-form-row">
+              <label>分片粒度</label>
+              <select value={shardCfg.shardBy} onChange={(e) => setShardCfg({ ...shardCfg, shardBy: e.target.value })}>
+                <option value="month">月 (month)</option>
+                <option value="week">周 (week)</option>
+                <option value="day">天 (day)</option>
+              </select>
+            </div>
+            <div className="kib-form-row">
+              <label>热片数(不参与保留)</label>
+              <input type="number" min={0} value={shardCfg.hotShards} onChange={(e) => setShardCfg({ ...shardCfg, hotShards: Number(e.target.value) })} style={{ width: 70 }} />
+            </div>
+            <div className="kib-form-row">
+              <label>全局保留(天, 未归属/未设索引)</label>
+              <input type="number" min={1} value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 70 }} />
+            </div>
+            <div className="kib-form-row">
+              <button className="btn-glass btn-sm" onClick={saveShardCfg}>保存配置</button>
+            </div>
+          </div>
+          <table className="log-table" style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>分片</th>
+                <th>起止时间</th>
+                <th>行数</th>
+                <th>状态</th>
+                <th style={{ width: 180 }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shards.map((s) => (
+                <tr key={s.shard}>
+                  <td className="log-mono"><strong>{s.shard === '__hot__' ? '热表 log_meta (当前周期)' : s.shard}</strong></td>
+                  <td className="log-mono">
+                    {s.startTs ? `${new Date(s.startTs).toLocaleDateString('zh-CN')} ~ ${new Date(s.endTs).toLocaleDateString('zh-CN')}` : '—'}
+                  </td>
+                  <td>{s.rows.toLocaleString()}</td>
+                  <td>
+                    {s.shard === '__hot__' ? <span className="kib-badge" style={{ background: '#22a06b' }}>热</span> : s.dropAllowed ? <span className="kib-badge" style={{ background: '#e5484d' }}>可清理</span> : <span className="kib-badge">保留中</span>}
+                  </td>
+                  <td>
+                    <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" disabled={!s.dropAllowed} onClick={() => delShard(s.shard)} title={s.dropAllowed ? '删除此分片与数据' : '分片仍在保留期内, 不可删除'}>
+                      删除分片
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

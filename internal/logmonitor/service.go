@@ -47,6 +47,25 @@ func (s *Service) Start(dataDir string) {
 	s.parsers = NewParserRuleSet(filepath.Join(filepath.Dir(dataDir), "parsers.json"))
 	s.ValidateCursors()
 	go s.pollLoop(10 * time.Second)
+	go s.ilmAutoLoop()
+}
+
+// ilmAutoLoop 每小时自动执行一次 ILM 淘汰(按各索引 delete_after + 全局保留), 定时清数据
+func (s *Service) ilmAutoLoop() {
+	ticker := time.NewTicker(time.Hour)
+	for {
+		select {
+		case <-s.cancel:
+			return
+		case <-ticker.C:
+			if _, _, err := s.store.ApplyIlm(); err != nil {
+				log.Printf("[logmonitor] 自动 ILM 失败: %v", err)
+			}
+			if _, err := s.store.ApplyIlmAll(); err != nil {
+				log.Printf("[logmonitor] 自动 ILM(unassigned) 失败: %v", err)
+			}
+		}
+	}
 }
 
 // cursorFuzzMs 游标漂移容忍度: 超过「当前时间+该值」的 last_ts 视为时钟错乱(集群/宿主机曾快进
