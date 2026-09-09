@@ -11,6 +11,8 @@ import K8sActionPanel from '../components/K8sActionPanel'
 import ExecTerminalModal from '../components/ExecTerminalModal'
 import K8sCertsModal from '../components/K8sCertsModal'
 import LogStreamModal from '../components/LogStreamModal'
+import PortForwardModal from '../components/PortForwardModal'
+import CpModal from '../components/CpModal'
 import { useTheme } from '../theme'
 import jsYaml from 'js-yaml'
 
@@ -51,8 +53,8 @@ interface K8sCluster {
 type K8sRes =
   | 'overview'
   | 'helm'
-  | 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs'
-  | 'services' | 'ingresses'
+  | 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'replicasets' | 'jobs' | 'cronjobs'
+  | 'services' | 'ingresses' | 'ingressclasses'
   | 'configmaps' | 'secrets'
   | 'persistentvolumes' | 'persistentvolumeclaims' | 'storageclasses'
   | 'nodes' | 'namespaces' | 'events'
@@ -66,6 +68,7 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
     { res: 'deployments', title: 'Deployments' },
     { res: 'statefulsets', title: 'StatefulSets' },
     { res: 'daemonsets', title: 'DaemonSets' },
+    { res: 'replicasets', title: 'ReplicaSets' },
     { res: 'jobs', title: 'Jobs' },
     { res: 'cronjobs', title: 'CronJobs' },
   ]},
@@ -75,6 +78,7 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
   { key: 'network', label: '网络', icon: <SideIcon paths={ICON_NETWORK} />, defaultOpen: true, items: [
     { res: 'services', title: 'Services' },
     { res: 'ingresses', title: 'Ingresses' },
+    { res: 'ingressclasses', title: 'IngressClasses' },
   ]},
   { key: 'config', label: '配置', icon: <SideIcon paths={ICON_CONFIG} />, defaultOpen: false, items: [
     { res: 'configmaps', title: 'ConfigMaps' },
@@ -107,7 +111,7 @@ const RES_GROUPS: { key: string; label: string; icon: React.ReactNode; defaultOp
   ]},
 ]
 
-const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings', 'priorityclasses'])
+const NSLESS = new Set<K8sRes>(['nodes', 'namespaces', 'events', 'persistentvolumes', 'storageclasses', 'clusterroles', 'clusterrolebindings', 'priorityclasses', 'ingressclasses'])
 
 // events 聚合行 object:"Kind/Name" → 关联对象定位(kind→详情类型 / 资源类型)
 const EVENT_MODAL: Record<string, 'pod' | 'workload' | 'yaml' | 'node'> = {
@@ -832,6 +836,20 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             openModal('describe', ctxMenu.row, ctxMenu.res)
             setCtxMenu(null)
           }}
+          onStream={(type) => {
+            const mres = ctxMenu.res || res
+            const tns = NSLESS.has(mres as K8sRes) ? '' : ctxMenu.res ? ctxMenu.row.namespace : ns === 'all' ? ctxMenu.row.namespace : ns
+            const name = ctxMenu.row.name
+            setCtxMenu(null)
+            const open = (containers: string[]) => setPodTools({ kind: type, cluster: clusterID, ns: tns, pod: name, containers })
+            if (type === 'exec' || type === 'logs') {
+              getJSON<{ ok: boolean; detail: any }>(`/api/plugins/containers/k8s/pod/detail?cluster=${clusterID}&res=pods&ns=${encodeURIComponent(tns)}&name=${encodeURIComponent(name)}`)
+                .then((d) => open(d.ok ? (d.detail?.containers || []).map((c: any) => c.name).filter(Boolean) : []))
+                .catch(() => open([]))
+            } else {
+              open([])
+            }
+          }}
           onClose={() => setCtxMenu(null)}
         />
       )}
@@ -1257,6 +1275,7 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [execOpen, setExecOpen] = useState(false)
   const [logStreamOpen, setLogStreamOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
+  const [podTools, setPodTools] = useState<{ kind: string; cluster: string; ns: string; pod: string; containers: string[] } | null>(null)
   const [desc, setDesc] = useState('')
   const [descBusy, setDescBusy] = useState(false)
   const [replicas, setReplicas] = useState<number | ''>('')
@@ -1886,6 +1905,30 @@ function ResourceModal({ info, onClose, act, onMsg }: {
           onClose={() => setLogStreamOpen(false)} />
       )}
 
+      {/* 右键菜单流式操作: 终端 / 日志 / 端口转发 / 文件互拷 */}
+      {podTools?.kind === 'exec' && (
+        <ExecTerminalModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          containers={podTools.containers}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'logs' && (
+        <LogStreamModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          containers={podTools.containers}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'port-forward' && (
+        <PortForwardModal
+          cluster={podTools.cluster} ns={podTools.ns} name={podTools.pod}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'cp' && (
+        <CpModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          onClose={() => setPodTools(null)} />
+      )}
+
       {/* 日志(静态, 近200行)弹窗 */}
       {logModalOpen && (
         <div className="modal-overlay" onClick={() => setLogModalOpen(false)}>
@@ -1917,10 +1960,17 @@ function ResourceModal({ info, onClose, act, onMsg }: {
 // 按资源类型差异化: 资源专属快捷操作(form=打开可视化表单→命令预览→确认; direct=直接执行)
 // label 由后端 /action-catalog 提供(权威), CTX_DEFS 只声明展示顺序/形式/确认语。
 type ActionType = { name: string; label?: string; category?: string }
-interface CtxAction { label: string; action: string; form?: boolean; direct?: boolean; danger?: boolean; confirm?: string; extra?: Record<string, any> }
+interface CtxAction { label: string; action: string; form?: boolean; direct?: boolean; danger?: boolean; confirm?: string; extra?: Record<string, any>; stream?: string }
 type CtxItem = CtxAction | { sep: boolean }
 
 const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
+  pods: [
+    { label: '进入终端', action: 'exec', stream: 'exec' },
+    { label: '日志跟随', action: 'logs', stream: 'logs' },
+    { label: '端口转发', action: 'port-forward', stream: 'port-forward' },
+    { label: '文件互拷', action: 'cp', stream: 'cp' },
+    { label: '等待条件就绪', action: 'wait', form: true },
+  ],
   horizontalpodautoscalers: [
     { label: '编辑扩缩规则', action: 'update-hpa', form: true },
   ],
@@ -1928,26 +1978,39 @@ const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
     { label: '扩缩容', action: 'scale', form: true },
     { label: '更新镜像', action: 'set-image', form: true },
     { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '设置资源限制', action: 'set-resources', form: true },
+    { label: '设置 ServiceAccount', action: 'set-sa', form: true },
     { label: '创建 HPA 自动扩缩', action: 'autoscale', form: true },
     { label: '暴露为 Service', action: 'expose', form: true },
+    { label: '等待条件就绪', action: 'wait', form: true },
     { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
     { label: '暂停发布', action: 'pause', direct: true, confirm: '暂停发布 {name}?' },
+    { label: '恢复发布', action: 'resume', direct: true, confirm: '恢复发布 {name}?' },
+    { label: '回滚', action: 'rollback', form: true },
   ],
   statefulsets: [
     { label: '扩缩容', action: 'scale', form: true },
     { label: '更新镜像', action: 'set-image', form: true },
     { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '设置资源限制', action: 'set-resources', form: true },
+    { label: '设置 ServiceAccount', action: 'set-sa', form: true },
     { label: '创建 HPA 自动扩缩', action: 'autoscale', form: true },
     { label: '暴露为 Service', action: 'expose', form: true },
+    { label: '等待条件就绪', action: 'wait', form: true },
     { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
+    { label: '回滚', action: 'rollback', form: true },
   ],
   daemonsets: [
     { label: '更新镜像', action: 'set-image', form: true },
     { label: '设置环境变量', action: 'set-env', form: true },
+    { label: '设置资源限制', action: 'set-resources', form: true },
+    { label: '设置 ServiceAccount', action: 'set-sa', form: true },
+    { label: '等待条件就绪', action: 'wait', form: true },
     { label: '滚动重启', action: 'restart', direct: true, confirm: '滚动重启 {name}?' },
   ],
   jobs: [
     { label: '重跑任务', action: 'rerun', direct: true, confirm: '重跑任务 {name}?' },
+    { label: '等待条件就绪', action: 'wait', form: true },
   ],
   cronjobs: [
     { label: '立即触发', action: 'trigger', direct: true, confirm: '立即触发 {name}?' },
@@ -1961,6 +2024,8 @@ const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
     { label: '解除封锁 (Uncordon)', action: 'uncordon', direct: true, confirm: '解除封锁节点 {name}?' },
     { label: 'Drain 排空', action: 'drain', form: true },
     { label: '添加污点', action: 'taint-add', form: true },
+    { label: '移除污点', action: 'taint-remove', form: true },
+    { label: '删除节点', action: 'delete-node', form: true, danger: true, confirm: '删除节点 {name}?' },
   ],
   namespaces: [
     { label: '创建 ResourceQuota', action: 'create-quota', form: true },
@@ -1969,13 +2034,14 @@ const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
   ],
 }
 
-function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, onViewDetail, onDescribe, onClose }: {
+function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, onViewDetail, onDescribe, onStream, onClose }: {
   x: number; y: number
   res: K8sRes; ns: string; name: string; cluster: string
   onAction: (action: string, extra?: Record<string, any>) => void
   onOpenForm: (action: string) => void
   onViewDetail: () => void
   onDescribe: () => void
+  onStream: (type: string) => void
   onClose: () => void
 }) {
   // catalog 驱动: 后端 action-label 为权威, CTX_DEFS 只声明展示顺序/行为
@@ -2001,10 +2067,12 @@ function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, on
       // 目录中已注册的 action 用后端 label, 未注册的降级为前端 label (并保留提示不隐藏)
       label: catalogLabels[it.action] || it.label, action: it.action, danger: it.danger, extra: it.extra,
       confirm: it.confirm ? it.confirm.replace('{name}', name).replace('{ns}', ns) : undefined,
-      form: it.form,
+      form: it.form, stream: (it as any).stream,
     })
   }
   if (items.length) items.push({ sep: true } as any)
+  items.push({ label: '打标签', action: 'label', form: true })
+  items.push({ label: '打注解', action: 'annotate', form: true })
   items.push({ label: '查看详情', action: 'view-detail' })
   items.push({ label: 'Describe', action: 'describe' })
   items.push({ sep: true } as any)
@@ -2020,6 +2088,7 @@ function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, on
                 if (it.confirm && !confirm(it.confirm)) return
                 if (it.action === 'view-detail') { onViewDetail() }
                 else if (it.action === 'describe') { onDescribe() }
+                else if (it.stream) { onStream(it.stream) }
                 else if (it.form) { onOpenForm(it.action!) }
                 else onAction(it.action!, it.extra)
               }}>

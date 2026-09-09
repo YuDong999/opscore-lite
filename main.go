@@ -491,6 +491,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/logs", Handler: handlers.ContainerLogsHandler},
 			{Path: "/api/plugins/containers/flows", Handler: handlers.ContainerFlowsHandler},
 			{Path: "/api/plugins/containers/docker/image/action", Handler: handlers.DockerImageActionHandler},
+			{Path: "/api/plugins/containers/docker/tool/action", Handler: handlers.DockerToolActionHandler},
 			{Path: "/api/plugins/containers/docker/registries", Handler: handlers.DockerRegistriesHandler},
 			{Path: "/api/plugins/containers/docker/build", Handler: handlers.DockerBuildHandler},
 			{Path: "/api/plugins/containers/docker/pull/async", Handler: handlers.DockerPullAsyncHandler},

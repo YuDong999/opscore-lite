@@ -61,7 +61,7 @@ var (
 // ValidResource 校验资源名白名单。
 func ValidResource(res string) bool {
 	switch res {
-	case "pods", "deployments", "statefulsets", "daemonsets", "jobs", "cronjobs",
+	case "pods", "deployments", "statefulsets", "daemonsets", "replicasets", "jobs", "cronjobs",
 		"services", "ingresses", "configmaps", "secrets",
 		"persistentvolumes", "persistentvolumeclaims", "storageclasses",
 		"nodes", "namespaces", "events",
@@ -83,6 +83,8 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrStatefulSets
 	case "daemonsets":
 		return gvrDaemonSets
+	case "replicasets":
+		return gvrReplicaSets
 	case "jobs":
 		return gvrJobs
 	case "cronjobs":
