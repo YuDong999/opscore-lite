@@ -24,8 +24,10 @@ type Store struct {
 	mu       sync.RWMutex
 	agg      *aggCache // 聚合结果缓存(Stats/Histogram/Terms), 3s 轮询直接命中
 	shardCfg ShardConfig
-	// 分钟级物化桶表状态(直方图查询走它, 与数据量解耦)
+	// 分钟级物化桶表状态(直方图/统计卡片查询走它, 与数据量解耦)
 	histReady atomic.Bool
+	// 存量混合片是否已拆入索引分片 (迁移期间查询附带旧表)
+	migrated atomic.Bool
 }
 
 // aggCache 简单的 TTL 缓存, 泛型 getOrBuild(带单飞去重), 供高频聚合查询使用。
@@ -101,7 +103,7 @@ func (c *aggCache) clear() {
 }
 
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_cache_size=-64000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_cache_size=-64000&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("open logmeta db: %w", err)
 	}
@@ -125,46 +127,179 @@ func NewStore(dbPath string) (*Store, error) {
 	return s, nil
 }
 
-// shardsInit 读分片配置 + 建 log_shards + 迁移存量热表记录
+// shardsInit 读分片配置 + 建路由/物化表 + 老库兼容
 func (s *Store) shardsInit() error {
 	s.shardCfg = loadShardConfig(filepath.Join(filepath.Dir(s.dbPath), "shards.json"))
+	// 预热 索引id→显示名 映射, 保证写入/迁移全程用可读 slug(而非 hash)
+	if idxs, err := s.ListIndexes(); err == nil {
+		_ = idxs
+	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS log_shards (
 		shard    TEXT PRIMARY KEY,
+		index_id TEXT NOT NULL DEFAULT '',
 		start_ts INTEGER NOT NULL DEFAULT 0,
 		end_ts   INTEGER NOT NULL DEFAULT 0
-	);
-
-	CREATE TABLE IF NOT EXISTS log_meta_minute (
+	)`); err != nil {
+		return fmt.Errorf("create log_shards: %w", err)
+	}
+	if err := s.ensureColumn("log_shards", "index_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS log_meta_minute (
 		minute INTEGER NOT NULL,
 		level  TEXT    NOT NULL DEFAULT 'INFO',
 		cnt    INTEGER NOT NULL DEFAULT 0,
+		bytes  INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (minute, level)
 	);
-	CREATE INDEX IF NOT EXISTS idx_minute_ts ON log_meta_minute(minute);`); err != nil {
+	CREATE INDEX IF NOT EXISTS idx_minute_ts ON log_meta_minute(minute);
+	CREATE TABLE IF NOT EXISTS log_meta_minute_svc (
+		minute  INTEGER NOT NULL,
+		service TEXT    NOT NULL DEFAULT '',
+		cnt     INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (minute, service)
+	);
+	CREATE INDEX IF NOT EXISTS idx_minute_svc_ts ON log_meta_minute_svc(minute);`); err != nil {
 		return fmt.Errorf("migrate shard tables: %w", err)
 	}
-	var rec int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM log_shards").Scan(&rec); err != nil {
+	if err := s.ensureColumn("log_meta_minute", "bytes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if rec > 0 {
-		return nil
-	}
-	var cnt int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM log_meta").Scan(&cnt); err != nil {
-		return err
-	}
-	if cnt > 0 {
-		var mn, mx int64
-		if err := s.db.QueryRow("SELECT MIN(ts), MAX(ts) FROM log_meta").Scan(&mn, &mx); err != nil {
-			return err
-		}
-		key := shardKeyOf(mn, s.shardCfg.ShardBy)
-		if _, err := s.db.Exec("INSERT OR IGNORE INTO log_shards (shard, start_ts, end_ts) VALUES (?, ?, ?)", key, mn, mx); err != nil {
-			return err
-		}
-	}
+	go s.EnsureIndexShardMigration()
 	return nil
+}
+
+// EnsureIndexShardMigration 存量混合片(log_meta + 旧纯时间片)后台拆入 (索引,期) 新片, 完成后关掉旧表兼容。
+func (s *Store) EnsureIndexShardMigration() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[logmonitor] 分片迁移 panic: %v", r)
+		}
+	}()
+
+	// 已见新格式记录(任意 index_id 非空片)则跳过
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM log_shards WHERE index_id != ''").Scan(&n); err == nil && n > 0 {
+		// 幂等: 主机已在跑新格式, 但旧片可能仍残留 → 检查旧表
+	}
+	legacy := []string{"log_meta"}
+	rows, err := s.db.Query("SELECT shard FROM log_shards WHERE index_id = '' AND shard NOT LIKE '%\\_%' ESCAPE '\\'")
+	if err == nil {
+		for rows.Next() {
+			var k string
+			rows.Scan(&k)
+			legacy = append(legacy, shardTableName(k))
+		}
+		rows.Close()
+	}
+	moved := int64(0)
+	for _, tbl := range legacy {
+		var cnt int64
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM " + tbl).Scan(&cnt); err != nil || cnt == 0 {
+			continue
+		}
+		// 按 (index_id) 分组搬移
+		idxRows, err := s.db.Query("SELECT DISTINCT index_id FROM " + tbl)
+		if err != nil {
+			continue
+		}
+		var ids []string
+		for idxRows.Next() {
+			var id string
+			idxRows.Scan(&id)
+			ids = append(ids, id)
+		}
+		idxRows.Close()
+
+		var mn, mx int64
+		s.db.QueryRow("SELECT MIN(ts), MAX(ts) FROM " + tbl).Scan(&mn, &mx)
+		for _, id := range ids {
+			slug := indexSlug(id)
+			period := shardKeyOf(mn, s.shardCfg.ShardBy)
+			if mx > 0 {
+				period = shardKeyOf((mn+mx)/2, s.shardCfg.ShardBy)
+			}
+			key := slug + "_" + period
+			name := shardTableName(key)
+			var exists int
+			s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&exists)
+			if exists == 0 {
+				if err := s.ensureShardTable(id, key); err != nil {
+					log.Printf("[logmonitor] 迁移建片失败 %s: %v", key, err)
+					continue
+				}
+			} else if id != "" {
+				// 目标片已存在(可能迁过一轮): 用 INSERT OR IGNORE 吸取剩余
+			}
+			if _, err := s.db.Exec("INSERT OR IGNORE INTO "+name+" SELECT * FROM "+tbl+" WHERE index_id = ?", id); err != nil {
+				log.Printf("[logmonitor] 迁移搬移失败 %s→%s: %v", tbl, key, err)
+				continue
+			}
+			moved++
+			// 记录/更新路由并刷新边界
+			s.db.Exec("INSERT OR REPLACE INTO log_shards (shard, index_id, start_ts, end_ts) VALUES (?, ?, ?, ?) ",
+				key, id,
+				func() int64 {
+					if id == "" {
+						return 0
+					}
+					var m0, m1 int64
+					s.db.QueryRow("SELECT MIN(ts), MAX(ts) FROM "+name).Scan(&m0, &m1)
+					return m0
+				}(),
+				func() int64 {
+					var m1 int64
+					s.db.QueryRow("SELECT COALESCE(MAX(ts),0) FROM "+name).Scan(&m1)
+					return m1
+				}())
+			s.updateShardBounds(key)
+		}
+		// 旧表拆空后删除
+		var remain int64
+		s.db.QueryRow("SELECT COUNT(*) FROM " + tbl).Scan(&remain)
+		if remain == 0 {
+			if tbl != "log_meta" {
+				s.db.Exec("DROP TABLE " + tbl)
+			}
+		}
+	}
+	// 旧纯时间片记录清理
+	s.db.Exec("DELETE FROM log_shards WHERE index_id = '' AND shard NOT LIKE '%\\_%' ESCAPE '\\'")
+	// 阶段2: hash slug 片 → 可读名字 slug 片(幂等改名; 目标已存在则跳过, 查询路由两者都会返回)
+	hashRows, err := s.db.Query("SELECT shard, index_id FROM log_shards WHERE shard LIKE 'idx\\_%' ESCAPE '\\'")
+	if err == nil {
+		var renames []struct{ old, new string }
+		for hashRows.Next() {
+			var k, idxID string
+			hashRows.Scan(&k, &idxID)
+			sep := strings.LastIndexByte(k, '_')
+			if sep < 0 {
+				continue
+			}
+			want := indexSlug(idxID) + k[sep:]
+			if want != k {
+				renames = append(renames, struct{ old, new string }{k, want})
+			}
+		}
+		hashRows.Close()
+		for _, r := range renames {
+			var exists int
+			s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", shardTableName(r.new)).Scan(&exists)
+			if exists > 0 {
+				continue // 名字片已存在, 保留两片(路由都覆盖), 不冒险合并
+			}
+			if _, err := s.db.Exec("ALTER TABLE " + shardTableName(r.old) + " RENAME TO " + shardTableName(r.new)); err == nil {
+				s.db.Exec("UPDATE log_shards SET shard=? WHERE shard=?", r.new, r.old)
+			}
+		}
+		if len(renames) > 0 {
+			log.Printf("[logmonitor] 分片 hash→名字 slug 改名 %d 个", len(renames))
+		}
+	}
+	if moved > 0 {
+		log.Printf("[logmonitor] 分片迁移完成: %d 组索引数据已拆入新片", moved)
+	}
+	s.migrated.Store(true)
 }
 
 // Check 启动自检：PRAGMA integrity_check。损坏时尝试 salvage 重建（搬运转可读行到新库）
@@ -452,87 +587,75 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 分片: 按 ts 归属分组 (当前周期 → 热表; 过去周期 → 历史片表)
-	curKey := shardKeyOf(time.Now().UnixMilli(), s.shardCfg.ShardBy)
-	hot := []*LogEntry{}
-	groups := map[string][]*LogEntry{}
-	for _, e := range entries {
-		k := shardKeyOf(e.Ts, s.shardCfg.ShardBy)
-		if k == curKey || e.Ts > time.Now().UnixMilli() {
-			hot = append(hot, e)
-		} else {
-			groups[k] = append(groups[k], e)
-		}
+	// 双层分片: (索引, 期) 落片
+	type shardBatch struct {
+		key, indexID string
+		entries      []*LogEntry
 	}
-
-	// 热表跨周期处理: 热表已含旧周期数据且本次是新年份 → 先归档
-	if len(hot) > 0 {
-		var mn int64
-		if err := s.db.QueryRow("SELECT COALESCE(MIN(ts),0) FROM log_meta").Scan(&mn); err != nil {
-			return nil, err
-		}
-		if mn > 0 && shardKeyOf(mn, s.shardCfg.ShardBy) != curKey && shardKeyOf(mn, s.shardCfg.ShardBy) < curKey {
-			if err := s.rollShardLocked(shardKeyOf(mn, s.shardCfg.ShardBy)); err != nil {
-				return nil, err
-			}
+	groups := map[string]*shardBatch{}
+	for _, e := range entries {
+		key := s.shardKeyFor(e.IndexID, e.Ts)
+		if g, ok := groups[key]; ok {
+			g.entries = append(g.entries, e)
+		} else {
+			groups[key] = &shardBatch{key: key, indexID: e.IndexID, entries: []*LogEntry{e}}
 		}
 	}
 
 	ids := make([]int64, 0, len(entries))
-	insertGroup := func(table string, group []*LogEntry) error {
+	for _, g := range groups {
+		if err := s.ensureShardTable(g.indexID, g.key); err != nil {
+			return nil, err
+		}
 		tx, err := s.db.Begin()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		stmt, err := tx.Prepare(`INSERT INTO ` + table + ` (ts, level, service, source, file_path, offset, size, summary, index_id)
+		stmt, err := tx.Prepare(`INSERT INTO ` + shardTableName(g.key) + ` (ts, level, service, source, file_path, offset, size, summary, index_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			tx.Rollback()
-			return err
+			return nil, err
 		}
-		defer stmt.Close()
-		for _, e := range group {
+		for _, e := range g.entries {
 			res, err := stmt.Exec(e.Ts, e.Level, e.Service, e.Source, e.FilePath, e.Offset, e.Size, e.Summary, e.IndexID)
 			if err != nil {
+				stmt.Close()
 				tx.Rollback()
-				return fmt.Errorf("insert %s: %w", table, err)
+				return nil, fmt.Errorf("insert %s: %w", g.key, err)
 			}
 			id, _ := res.LastInsertId()
 			e.ID = id
 			ids = append(ids, id)
 		}
-		return tx.Commit()
-	}
-	if len(hot) > 0 {
-		if err := insertGroup("log_meta", hot); err != nil {
+		stmt.Close()
+		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
+		s.updateShardBounds(g.key)
 	}
-	// 历史片(过去周期补写/迁移): 按片建表并写入
-	for k, g := range groups {
-		if err := s.ensureShardTable(k); err != nil {
-			return nil, err
-		}
-		if err := insertGroup(shardTableName(k), g); err != nil {
-			return nil, err
-		}
-	}
-	// 分钟物化桶(直方图加速): 失败仅记日志, 不阻断主写入; 回填可补齐
+	// 分钟物化桶(直方图/统计卡片加速): 失败仅记日志, 不阻断主写入; 回填可补齐
 	if err := s.upsertMinute(entries); err != nil {
 		log.Printf("[logmonitor] 物化分钟桶写入失败(可回填): %v", err)
 	}
 	return ids, nil
 }
 
-// upsertMinute 把批次日志增量累加进 log_meta_minute(分钟,级别,cnt); 调用方需已持 s.mu 写锁
+// upsertMinute 把批次日志增量累加进物化表(分钟,级别,字节,服务); 调用方需已持 s.mu 写锁
 func (s *Store) upsertMinute(entries []*LogEntry) error {
-	m := map[int64]map[string]int64{}
+	m := map[int64]map[string][2]int64{}         // minute → level → [cnt, bytes]
+	svc := map[int64]map[string]int64{}          // minute → service → cnt
 	for _, e := range entries {
 		min := e.Ts / 60000
 		if m[min] == nil {
-			m[min] = map[string]int64{}
+			m[min] = map[string][2]int64{}
 		}
-		m[min][e.Level]++
+		v := m[min][e.Level]
+		m[min][e.Level] = [2]int64{v[0] + 1, v[1] + int64(e.Size)}
+		if svc[min] == nil {
+			svc[min] = map[string]int64{}
+		}
+		svc[min][e.Service]++
 	}
 	if len(m) == 0 {
 		return nil
@@ -541,23 +664,35 @@ func (s *Store) upsertMinute(entries []*LogEntry) error {
 	if err != nil {
 		return err
 	}
+	commit := func() error {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		s.histReady.CompareAndSwap(false, true)
+		return nil
+	}
 	for min, lv := range m {
-		for l, c := range lv {
-			if _, err := tx.Exec(`INSERT INTO log_meta_minute (minute, level, cnt) VALUES (?, ?, ?)
-				ON CONFLICT(minute, level) DO UPDATE SET cnt = cnt + excluded.cnt`, min, l, c); err != nil {
+		for l, v := range lv {
+			if _, err := tx.Exec(`INSERT INTO log_meta_minute (minute, level, cnt, bytes) VALUES (?, ?, ?, ?)
+				ON CONFLICT(minute, level) DO UPDATE SET cnt = cnt + excluded.cnt, bytes = bytes + excluded.bytes`, min, l, v[0], v[1]); err != nil {
 				tx.Rollback()
 				return err
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
+	for min, sv := range svc {
+		for s2, c := range sv {
+			if _, err := tx.Exec(`INSERT INTO log_meta_minute_svc (minute, service, cnt) VALUES (?, ?, ?)
+				ON CONFLICT(minute, service) DO UPDATE SET cnt = cnt + excluded.cnt`, min, s2, c); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
 	}
-	s.histReady.CompareAndSwap(false, true)
-	return nil
+	return commit()
 }
 
-// EnsureHistBackfill 后台一次性回填物化分钟桶(存量, 幂等); 完成后 histReady=true
+// EnsureHistBackfill 后台一次性回填物化表(存量, 幂等); 完成后 histReady=true
 func (s *Store) EnsureHistBackfill() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -569,9 +704,16 @@ func (s *Store) EnsureHistBackfill() {
 		s.histReady.Store(true) // 已有数据(重启场景): 先行启用, 回填继续补全
 	}
 	for _, t := range s.allDataTables() {
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute (minute, level, cnt)
-			SELECT ts/60000, level, COUNT(*) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
+		if t == "log_meta" && s.migrated.Load() {
+			continue
+		}
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute (minute, level, cnt, bytes)
+			SELECT ts/60000, level, COUNT(*), COALESCE(SUM(size),0) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
 			log.Printf("[logmonitor] 分钟物化回填失败(%s): %v", t, err)
+		}
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute_svc (minute, service, cnt)
+			SELECT ts/60000, service, COUNT(*) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
+			log.Printf("[logmonitor] 服务物化回填失败(%s): %v", t, err)
 		}
 	}
 	s.histReady.Store(true)
@@ -643,7 +785,7 @@ func (s *Store) Query(q *LogQuery) (*LogQueryResult, error) {
 	need := offset + int64(pageSize)
 
 	// 分片路由: 时间窗命中片集(历史片+热表)
-	tables := s.tablesForRange(q.StartTs, q.EndTs)
+	tables := s.tablesForRange(q.StartTs, q.EndTs, q.IndexID)
 	var total int64
 	var all []*LogEntry
 	for _, t := range tables {
@@ -700,9 +842,79 @@ func (s *Store) Stats(q *LogStatsQuery) (*LogStats, error) {
 	})
 }
 
+// statsFromMaterialized 从分钟物化表出全部统计(总数/字节/级别/服务Top/最早最晚)
+func (s *Store) statsFromMaterialized(q *LogStatsQuery) (*LogStats, error) {
+	where := ""
+	args := []interface{}{}
+	if q != nil && q.StartTs > 0 {
+		where = " WHERE minute >= ?"
+		args = append(args, q.StartTs/60000)
+	}
+	if q != nil && q.EndTs > 0 {
+		if where == "" {
+			where = " WHERE minute <= ?"
+		} else {
+			where += " AND minute <= ?"
+		}
+		args = append(args, q.EndTs/60000)
+	}
+
+	stats := &LogStats{LevelCounts: make(map[string]int64)}
+	if err := s.db.QueryRow("SELECT COALESCE(SUM(cnt),0), COALESCE(SUM(bytes),0) FROM log_meta_minute"+where, args...).
+		Scan(&stats.TotalCount, &stats.TotalBytes); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.Query("SELECT level, SUM(cnt) FROM log_meta_minute"+where+" GROUP BY level", args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var lvl string
+		var c int64
+		rows.Scan(&lvl, &c)
+		stats.LevelCounts[lvl] = c
+	}
+	rows.Close()
+
+	rows2, err := s.db.Query("SELECT service, SUM(cnt) FROM log_meta_minute_svc"+where+" GROUP BY service ORDER BY 2 DESC LIMIT 50", args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows2.Next() {
+		var svc string
+		var c int64
+		rows2.Scan(&svc, &c)
+		stats.Services = append(stats.Services, ServiceStat{Service: svc, Count: c})
+	}
+	rows2.Close()
+	if stats.Services == nil {
+		stats.Services = []ServiceStat{}
+	}
+
+	var mn, mx int64
+	if err := s.db.QueryRow("SELECT COALESCE(MIN(minute),0), COALESCE(MAX(minute),0) FROM log_meta_minute"+where, args...).Scan(&mn, &mx); err != nil {
+		return nil, err
+	}
+	if mn > 0 {
+		minTs := mn * 60000
+		maxTs := mx * 60000
+		stats.Oldest = &minTs
+		stats.Newest = &maxTs
+	}
+	return stats, nil
+}
+
 func (s *Store) statsUncached(q *LogStatsQuery) (*LogStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// ── 物化路径: 无服务过滤且物化可用 → 全部统计毫秒级(与数据量解耦) ──
+	if (q == nil || q.Service == "") && s.histReady.Load() {
+		if st, err := s.statsFromMaterialized(q); err == nil {
+			return st, nil
+		}
+	}
 
 	where := []string{}
 	args := []interface{}{}
@@ -736,7 +948,7 @@ func (s *Store) statsUncached(q *LogStatsQuery) (*LogStats, error) {
 		startTs, endTs = q.StartTs, q.EndTs
 	}
 
-	tables := s.tablesForRange(startTs, endTs)
+	tables := s.tablesForRange(startTs, endTs, "")
 
 	// 分片路由: 4 组查询并行执行(读并发, 墙钟 = 最慢组), 各组内按片累加
 	var gErr error
@@ -922,7 +1134,7 @@ func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]Histogram
 		s, e int64
 	}{}
 	if simple {
-		for _, t := range s.tablesForRange(rStart, rEnd) {
+		for _, t := range s.tablesForRange(rStart, rEnd, "") {
 			if rStart > 0 && rEnd > rStart+1 {
 				mid := (rStart + rEnd) / 2
 				tasks = append(tasks, struct {
@@ -940,7 +1152,7 @@ func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]Histogram
 			}
 		}
 	} else {
-		for _, t := range s.tablesForRange(rStart, rEnd) {
+		for _, t := range s.tablesForRange(rStart, rEnd, "") {
 			tasks = append(tasks, struct {
 				t    string
 				s, e int64
@@ -1144,10 +1356,12 @@ func (s *Store) termsUncached(q *LogTermsQuery) (*TermsResult, error) {
 	start := time.Now()
 	agg := map[string]int64{}
 	var rStart, rEnd int64
+	idxID := ""
 	if q != nil {
 		rStart, rEnd = q.StartTs, q.EndTs
+		idxID = q.IndexID
 	}
-	for _, t := range s.tablesForRange(rStart, rEnd) {
+	for _, t := range s.tablesForRange(rStart, rEnd, idxID) {
 		query := fmt.Sprintf(`
 			SELECT %s, COUNT(*) as cnt
 			FROM %s %s
@@ -1411,6 +1625,7 @@ func (s *Store) ListIndexes() ([]*LogIndex, error) {
 	defer rows.Close()
 
 	indexes := []*LogIndex{}
+	slugNames := map[string]string{} // 刷新 索引id→显示名 映射(分片 slug 用)
 	for rows.Next() {
 		idx := &LogIndex{}
 		var fields, ilm string
@@ -1419,8 +1634,10 @@ func (s *Store) ListIndexes() ([]*LogIndex, error) {
 		}
 		json.Unmarshal([]byte(fields), &idx.Fields)
 		json.Unmarshal([]byte(ilm), &idx.Ilm)
+		slugNames[idx.ID] = idx.Name
 		indexes = append(indexes, idx)
 	}
+	setSlugNames(slugNames)
 	if indexes == nil {
 		indexes = []*LogIndex{}
 	}
@@ -1489,7 +1706,7 @@ func (s *Store) IndexStatsFor(id string) (*IndexStats, error) {
 
 	st := &IndexStats{}
 	var minTs, maxTs int64
-	for _, t := range s.allDataTables() {
+	for _, t := range s.tablesForRange(0, 0, id) {
 		var c, b, mn, mx int64
 		if err := s.db.QueryRow("SELECT COUNT(*), COALESCE(SUM(size),0), COALESCE(MIN(ts),0), COALESCE(MAX(ts),0) FROM "+t+" WHERE index_id = ?", id).
 			Scan(&c, &b, &mn, &mx); err != nil {
@@ -1522,14 +1739,14 @@ type IlmCleanup struct {
 	Rows      int64  `json:"rows"`        // 被删除的元数据行数
 }
 
-// ApplyIlm 执行 ILM 冷热归档淘汰：
-//   1) 按各索引保留期算出截止日期
-//   2) 删除该日及之前的 SQLite 元数据行
-//   3) 返回每个索引的 (indexID, cutoffDate, rows) 计划, 由上层联动删除归档文件
+// ApplyIlm 执行 ILM 淘汰 —— 按索引整片 DROP(秒级), 取代逐行 DELETE:
+//   1) 按各索引保留期(delete_after/ilm 配置)算出截止时间
+//   2) 该索引所有 end_ts < 截止的片 → DROP TABLE + 删路由 + 清理物化
+//   3) 返回 (indexID, cutoffDate, rows) 计划, 由上层联动删除归档文件
 func (s *Store) ApplyIlm() ([]IlmCleanup, int64, error) {
-	s.mu.RLock()
+	s.mu.Lock()
 	indexes, err := s.ListIndexes()
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1537,6 +1754,19 @@ func (s *Store) ApplyIlm() ([]IlmCleanup, int64, error) {
 	beyondNow := time.Now().Add(-24 * time.Hour).UnixMilli()
 	cleanups := []IlmCleanup{}
 	totalRows := int64(0)
+	dropShard := func(key, idx string) int64 {
+		var cnt int64
+		s.db.QueryRow("SELECT COUNT(*) FROM " + shardTableName(key)).Scan(&cnt)
+		var st, et int64
+		s.db.QueryRow("SELECT start_ts, end_ts FROM log_shards WHERE shard=?", key).Scan(&st, &et)
+		if _, err := s.db.Exec("DROP TABLE " + shardTableName(key)); err != nil {
+			return 0
+		}
+		s.db.Exec("DELETE FROM log_shards WHERE shard=?", key)
+		s.db.Exec("DELETE FROM log_meta_minute WHERE minute >= ? AND minute <= ?", st/60000, et/60000)
+		s.db.Exec("DELETE FROM log_meta_minute_svc WHERE minute >= ? AND minute <= ?", st/60000, et/60000)
+		return cnt
+	}
 	for _, idx := range indexes {
 		days := idx.DeleteAfter
 		if days <= 0 {
@@ -1549,60 +1779,88 @@ func (s *Store) ApplyIlm() ([]IlmCleanup, int64, error) {
 		if days <= 0 {
 			continue
 		}
-		beyond := beyondNow - int64(days)*24*3600*1000
+		cutoff := beyondNow - int64(days)*24*3600*1000
+		slug := indexSlug(idx.ID)
+		rows, err := s.db.Query("SELECT shard, end_ts FROM log_shards WHERE index_id = ?", idx.ID)
+		if err != nil {
+			return cleanups, totalRows, err
+		}
 		perIndex := int64(0)
-		for _, t := range s.allDataTables() {
-			res, err := s.db.Exec("DELETE FROM "+t+" WHERE index_id = ? AND ts < ?", idx.ID, beyond)
-			if err != nil {
-				return cleanups, totalRows, err
+		cutDate := ""
+		for rows.Next() {
+			var k string
+			var et int64
+			rows.Scan(&k, &et)
+			if et <= 0 || et >= cutoff {
+				continue
 			}
-			n, _ := res.RowsAffected()
-			perIndex += n
+			perIndex += dropShard(k, idx.ID)
+		}
+		rows.Close()
+		// 兜底: 残留逐行清(片边界缺失/样本外的行)
+		if perIndex > 0 || slug != "" {
+			for _, t := range s.tablesForRange(0, 0, idx.ID) {
+				res, err := s.db.Exec("DELETE FROM "+t+" WHERE index_id = ? AND ts < ?", idx.ID, cutoff)
+				if err != nil {
+					return cleanups, totalRows, err
+				}
+				n, _ := res.RowsAffected()
+				perIndex += n
+			}
 		}
 		if perIndex > 0 {
 			totalRows += perIndex
-			cutoff := time.UnixMilli(beyond).Format("2006-01-02")
-			cleanups = append(cleanups, IlmCleanup{IndexID: idx.ID, CutoffDate: cutoff, Rows: perIndex})
+			cutDate = time.UnixMilli(cutoff).Format("2006-01-02")
+			cleanups = append(cleanups, IlmCleanup{IndexID: idx.ID, CutoffDate: cutDate, Rows: perIndex})
 		}
+	}
+	if totalRows > 0 {
+		s.agg.clear()
 	}
 	return cleanups, totalRows, nil
 }
 
-// ApplyIlmAll 无索引归属的日志按分片保留配置清理(默认7天, 可 shards.json 调整)
+// ApplyIlmAll 无索引归属(unassigned)日志按全局保留清理 —— 整片 DROP 优先, 残留逐行兜底
 func (s *Store) ApplyIlmAll() (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	cfg := s.shardCfg
 	if cfg.DefaultRetentionDays <= 0 {
 		cfg.DefaultRetentionDays = 7
 	}
 	cutoff := time.Now().Add(-time.Duration(cfg.DefaultRetentionDays) * 24 * time.Hour).UnixMilli()
-	// 整片删除优先: 片 end_ts 早于保留线且为纯 unassigned 数据
-	rows, err := s.db.Query("SELECT shard, end_ts FROM log_shards")
+	dropped := int64(0)
+
+	// unassigned 整片删除
+	rows, err := s.db.Query("SELECT shard, start_ts, end_ts FROM log_shards WHERE index_id = ''")
 	if err != nil {
 		return 0, err
 	}
-	var dropKeys []string
+	var dropKeys []struct{ k string; st, et int64 }
 	for rows.Next() {
 		var k string
-		var et int64
-		rows.Scan(&k, &et)
+		var st, et int64
+		rows.Scan(&k, &st, &et)
 		if et > 0 && et < cutoff {
-			dropKeys = append(dropKeys, k)
+			dropKeys = append(dropKeys, struct {
+				k  string
+				st, et int64
+			}{k, st, et})
 		}
 	}
 	rows.Close()
-	dropped := int64(0)
-	for _, k := range dropKeys {
+	for _, dk := range dropKeys {
 		var n int64
-		s.db.QueryRow("SELECT COUNT(*) FROM " + shardTableName(k)).Scan(&n)
-		if _, err := s.db.Exec("DROP TABLE " + shardTableName(k)); err == nil {
-			s.db.Exec("DELETE FROM log_shards WHERE shard=?", k)
+		s.db.QueryRow("SELECT COUNT(*) FROM " + shardTableName(dk.k)).Scan(&n)
+		if _, err := s.db.Exec("DROP TABLE " + shardTableName(dk.k)); err == nil {
+			s.db.Exec("DELETE FROM log_shards WHERE shard=?", dk.k)
+			s.db.Exec("DELETE FROM log_meta_minute WHERE minute >= ? AND minute <= ?", dk.st/60000, dk.et/60000)
+			s.db.Exec("DELETE FROM log_meta_minute_svc WHERE minute >= ? AND minute <= ?", dk.st/60000, dk.et/60000)
 			dropped += n
 		}
 	}
-	// 热表 + 未整片 drop 的历史片逐行清理 unassigned
-	for _, t := range s.allDataTables() {
+	// 热表/未删片逐行清理 unassigned
+	for _, t := range s.tablesForRange(0, 0, "") {
 		res, err := s.db.Exec("DELETE FROM "+t+" WHERE ts < ? AND index_id = ''", cutoff)
 		if err != nil {
 			return dropped, err
@@ -1610,8 +1868,11 @@ func (s *Store) ApplyIlmAll() (int64, error) {
 		n, _ := res.RowsAffected()
 		dropped += n
 	}
-	// 物化分钟桶联动清理
+	// 物化表联动清理
 	if _, err := s.db.Exec("DELETE FROM log_meta_minute WHERE minute < ?", cutoff/60000); err != nil {
+		return dropped, err
+	}
+	if _, err := s.db.Exec("DELETE FROM log_meta_minute_svc WHERE minute < ?", cutoff/60000); err != nil {
 		return dropped, err
 	}
 	if dropped > 0 {

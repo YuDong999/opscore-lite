@@ -66,7 +66,7 @@ func (a *Alerter) evaluateRule(r *AlertRule) {
 
 	// 查询窗口内匹配数(跨分片累加, 窗口近 → 通常只命中热表)
 	var cnt int64
-	for _, t := range a.store.tablesForRange(start, now) {
+	for _, t := range a.store.tablesForRange(start, now, "") {
 		var c int64
 		a.store.db.QueryRow(
 			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s AND ts >= ? AND ts <= ?", t, whereClause),

@@ -342,7 +342,7 @@ const [selCluster, setSelCluster] = useState('1')
 
   // 分片存储(shards.json)
   const [shardCfg, setShardCfg] = useState<{ shardBy: string; hotShards: number; defaultRetentionDays: number } | null>(null)
-  const [shards, setShards] = useState<Array<{ shard: string; startTs: number; endTs: number; rows: number; dropAllowed: boolean }>>([])
+  const [shards, setShards] = useState<Array<{ shard: string; indexId: string; startTs: number; endTs: number; rows: number; dropAllowed: boolean }>>([])
 
   const latestHist = useRef<HistogramBucket[]>([])
 
@@ -1840,6 +1840,7 @@ function clearFilters() {
             <thead>
               <tr>
                 <th>分片</th>
+                <th>归属索引</th>
                 <th>起止时间</th>
                 <th>行数</th>
                 <th>状态</th>
@@ -1847,15 +1848,18 @@ function clearFilters() {
               </tr>
             </thead>
             <tbody>
-              {shards.map((s) => (
+              {shards.map((s) => {
+                const idxName = s.indexId ? (indexes.find((ix) => ix.id === s.indexId)?.name || s.indexId) : '未归属'
+                return (
                 <tr key={s.shard}>
-                  <td className="log-mono"><strong>{s.shard === '__hot__' ? '热表 log_meta (当前周期)' : s.shard}</strong></td>
+                  <td className="log-mono"><strong>{s.shard}</strong></td>
+                  <td>{idxName}</td>
                   <td className="log-mono">
                     {s.startTs ? `${new Date(s.startTs).toLocaleDateString('zh-CN')} ~ ${new Date(s.endTs).toLocaleDateString('zh-CN')}` : '—'}
                   </td>
                   <td>{s.rows.toLocaleString()}</td>
                   <td>
-                    {s.shard === '__hot__' ? <span className="kib-badge" style={{ background: '#22a06b' }}>热</span> : s.dropAllowed ? <span className="kib-badge" style={{ background: '#e5484d' }}>可清理</span> : <span className="kib-badge">保留中</span>}
+                    {s.dropAllowed ? <span className="kib-badge" style={{ background: '#e5484d' }}>可清理</span> : <span className="kib-badge" style={{ background: '#22a06b' }}>保留中</span>}
                   </td>
                   <td>
                     <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" disabled={!s.dropAllowed} onClick={() => delShard(s.shard)} title={s.dropAllowed ? '删除此分片与数据' : '分片仍在保留期内, 不可删除'}>
@@ -1863,7 +1867,8 @@ function clearFilters() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
