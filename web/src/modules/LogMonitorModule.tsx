@@ -1389,6 +1389,7 @@ function clearFilters() {
                 const ghosts = sources.filter((s) => s.type === 'container' && !discContainers.some((c) => c.name === s.path))
                   .map((s) => ({ name: s.path, image: '已停止 / 不在当前 docker', state: 'ghost' as string }))
                 const all = [...discContainers, ...ghosts]
+                const maxName = Math.max(...all.map((c) => c.name.length))
                 return (discContainers.length === 0 && ghosts.length === 0) ? (
                   <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
                 ) : (
@@ -1400,9 +1401,9 @@ function clearFilters() {
                       <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
                         <input type="checkbox" disabled={ghost} checked={!ghost && selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
                         <code>{c.name}</code>
+                        {joined && <span className="kib-joined" style={{ marginLeft: `${maxName - c.name.length + 1}ch` }} title="已接入">✓</span>}
                         <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
                         <span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}
-                        {joined && <span className="kib-joined" title="已接入">✓</span>}
                       </label>
                     )
                   })}
@@ -1457,6 +1458,7 @@ function clearFilters() {
                     const matchNs = !selNamespace || p.namespace === selNamespace
                     return matchNs && matchSearch
                   }), ...ghostPods]
+                const maxName = Math.max(...shown.map((p) => (p.namespace + '/' + p.name).length))
                 return discClusters.length === 0 ? (
                   <div className="log-empty">无已连接集群</div>
                 ) : shown.length === 0 ? (
@@ -1473,9 +1475,9 @@ function clearFilters() {
                         <label key={key} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
                           <input type="checkbox" disabled={ghost} checked={!ghost && selPods.has(key)} onChange={() => togglePods(key)} />
                           <code>{p.namespace}/{p.name}</code>
+                          {joined && <span className="kib-joined" style={{ marginLeft: `${maxName - (p.namespace + '/' + p.name).length + 1}ch` }} title="已接入">✓</span>}
                           {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
                           <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
-                          {joined && <span className="kib-joined" title="已接入">✓</span>}
                         </label>
                       )
                     })}
