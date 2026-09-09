@@ -287,6 +287,8 @@ func (s *Store) DropShard(key string, cfg ShardConfig) (int64, error) {
 		return 0, err
 	}
 	s.db.Exec("DELETE FROM log_shards WHERE shard=?", key)
+	// 物化分钟桶联动清理(该片时间范围)
+	s.db.Exec("DELETE FROM log_meta_minute WHERE minute >= ? AND minute <= ?", st/60000, et/60000)
 	return n, nil
 }
 

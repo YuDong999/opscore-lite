@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -23,6 +24,8 @@ type Store struct {
 	mu       sync.RWMutex
 	agg      *aggCache // 聚合结果缓存(Stats/Histogram/Terms), 3s 轮询直接命中
 	shardCfg ShardConfig
+	// 分钟级物化桶表状态(直方图查询走它, 与数据量解耦)
+	histReady atomic.Bool
 }
 
 // aggCache 简单的 TTL 缓存, 泛型 getOrBuild(带单飞去重), 供高频聚合查询使用。
@@ -118,6 +121,7 @@ func NewStore(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	go s.EnsureHistBackfill() // 后台回填存量分钟桶(不阻塞启动)
 	return s, nil
 }
 
@@ -128,8 +132,16 @@ func (s *Store) shardsInit() error {
 		shard    TEXT PRIMARY KEY,
 		start_ts INTEGER NOT NULL DEFAULT 0,
 		end_ts   INTEGER NOT NULL DEFAULT 0
-	)`); err != nil {
-		return fmt.Errorf("create log_shards: %w", err)
+	);
+
+	CREATE TABLE IF NOT EXISTS log_meta_minute (
+		minute INTEGER NOT NULL,
+		level  TEXT    NOT NULL DEFAULT 'INFO',
+		cnt    INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (minute, level)
+	);
+	CREATE INDEX IF NOT EXISTS idx_minute_ts ON log_meta_minute(minute);`); err != nil {
+		return fmt.Errorf("migrate shard tables: %w", err)
 	}
 	var rec int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM log_shards").Scan(&rec); err != nil {
@@ -505,10 +517,65 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 			return nil, err
 		}
 	}
+	// 分钟物化桶(直方图加速): 失败仅记日志, 不阻断主写入; 回填可补齐
+	if err := s.upsertMinute(entries); err != nil {
+		log.Printf("[logmonitor] 物化分钟桶写入失败(可回填): %v", err)
+	}
 	return ids, nil
 }
 
-// Query 多条件查询（走复合索引）
+// upsertMinute 把批次日志增量累加进 log_meta_minute(分钟,级别,cnt); 调用方需已持 s.mu 写锁
+func (s *Store) upsertMinute(entries []*LogEntry) error {
+	m := map[int64]map[string]int64{}
+	for _, e := range entries {
+		min := e.Ts / 60000
+		if m[min] == nil {
+			m[min] = map[string]int64{}
+		}
+		m[min][e.Level]++
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for min, lv := range m {
+		for l, c := range lv {
+			if _, err := tx.Exec(`INSERT INTO log_meta_minute (minute, level, cnt) VALUES (?, ?, ?)
+				ON CONFLICT(minute, level) DO UPDATE SET cnt = cnt + excluded.cnt`, min, l, c); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.histReady.CompareAndSwap(false, true)
+	return nil
+}
+
+// EnsureHistBackfill 后台一次性回填物化分钟桶(存量, 幂等); 完成后 histReady=true
+func (s *Store) EnsureHistBackfill() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[logmonitor] 分钟物化回填 panic: %v", r)
+		}
+	}()
+	var n int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM log_meta_minute").Scan(&n); err == nil && n > 0 {
+		s.histReady.Store(true) // 已有数据(重启场景): 先行启用, 回填继续补全
+	}
+	for _, t := range s.allDataTables() {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute (minute, level, cnt)
+			SELECT ts/60000, level, COUNT(*) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
+			log.Printf("[logmonitor] 分钟物化回填失败(%s): %v", t, err)
+		}
+	}
+	s.histReady.Store(true)
+}
 // inClause 把逗号分隔的多值拼成 IN (...), 单值退化为 =?
 func inClause(col, csv string, args *[]interface{}) string {
 	vals := strings.Split(csv, ",")
@@ -658,56 +725,104 @@ func (s *Store) statsUncached(q *LogStatsQuery) (*LogStats, error) {
 	}
 
 	stats := &LogStats{LevelCounts: make(map[string]int64)}
+	if q != nil {
+		stats.TotalCount = 0
+	}
 	svcAgg := map[string]int64{}
 	var startTs, endTs int64
 	var minTs, maxTs int64
+	var aggMu sync.Mutex
 	if q != nil {
 		startTs, endTs = q.StartTs, q.EndTs
 	}
 
-	// 分片路由: 各片独立聚合后合并
-	for _, t := range s.tablesForRange(startTs, endTs) {
-		var cnt, bytes int64
-		if err := s.db.QueryRow("SELECT COUNT(*), COALESCE(SUM(size),0) FROM "+t+" "+wc, args...).Scan(&cnt, &bytes); err != nil {
-			return nil, err
-		}
-		stats.TotalCount += cnt
-		stats.TotalBytes += bytes
+	tables := s.tablesForRange(startTs, endTs)
 
-		rows, err := s.db.Query("SELECT level, COUNT(*) FROM "+t+" "+wc+" GROUP BY level", args...)
-		if err != nil {
-			return nil, err
+	// 分片路由: 4 组查询并行执行(读并发, 墙钟 = 最慢组), 各组内按片累加
+	var gErr error
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() { // 组1: 总数+字节
+		defer wg.Done()
+		for _, t := range tables {
+			var cnt, bytes int64
+			if err := s.db.QueryRow("SELECT COUNT(*), COALESCE(SUM(size),0) FROM "+t+" "+wc, args...).Scan(&cnt, &bytes); err != nil {
+				gErr = err
+				return
+			}
+			aggMu.Lock()
+			stats.TotalCount += cnt
+			stats.TotalBytes += bytes
+			aggMu.Unlock()
 		}
-		for rows.Next() {
-			var lvl string
-			var c int64
-			rows.Scan(&lvl, &c)
-			stats.LevelCounts[lvl] += c
+	}()
+	go func() { // 组2: 级别计数
+		defer wg.Done()
+		levelMap := map[string]int64{}
+		for _, t := range tables {
+			rows, err := s.db.Query("SELECT level, COUNT(*) FROM "+t+" "+wc+" GROUP BY level", args...)
+			if err != nil {
+				gErr = err
+				return
+			}
+			for rows.Next() {
+				var lvl string
+				var c int64
+				rows.Scan(&lvl, &c)
+				levelMap[lvl] += c
+			}
+			rows.Close()
 		}
-		rows.Close()
-
-		rows2, err := s.db.Query("SELECT service, COUNT(*) FROM "+t+" "+wc+" GROUP BY service", args...)
-		if err != nil {
-			return nil, err
+		aggMu.Lock()
+		for l, c := range levelMap {
+			stats.LevelCounts[l] += c
 		}
-		for rows2.Next() {
-			var svc string
-			var c int64
-			rows2.Scan(&svc, &c)
-			svcAgg[svc] += c
+		aggMu.Unlock()
+	}()
+	go func() { // 组3: 服务 Top50
+		defer wg.Done()
+		svc := map[string]int64{}
+		for _, t := range tables {
+			rows, err := s.db.Query("SELECT service, COUNT(*) FROM "+t+" "+wc+" GROUP BY service", args...)
+			if err != nil {
+				gErr = err
+				return
+			}
+			for rows.Next() {
+				var sv string
+				var c int64
+				rows.Scan(&sv, &c)
+				svc[sv] += c
+			}
+			rows.Close()
 		}
-		rows2.Close()
-
-		var mn, mx int64
-		if err := s.db.QueryRow("SELECT COALESCE(MIN(ts),0), COALESCE(MAX(ts),0) FROM "+t+" "+wc, args...).Scan(&mn, &mx); err != nil {
-			return nil, err
+		aggMu.Lock()
+		for sv, c := range svc {
+			svcAgg[sv] += c
 		}
-		if mn > 0 && (minTs == 0 || mn < minTs) {
-			minTs = mn
+		aggMu.Unlock()
+	}()
+	go func() { // 组4: 最早/最晚
+		defer wg.Done()
+		for _, t := range tables {
+			var mn, mx int64
+			if err := s.db.QueryRow("SELECT COALESCE(MIN(ts),0), COALESCE(MAX(ts),0) FROM "+t+" "+wc, args...).Scan(&mn, &mx); err != nil {
+				gErr = err
+				return
+			}
+			aggMu.Lock()
+			if mn > 0 && (minTs == 0 || mn < minTs) {
+				minTs = mn
+			}
+			if mx > maxTs {
+				maxTs = mx
+			}
+			aggMu.Unlock()
 		}
-		if mx > maxTs {
-			maxTs = mx
-		}
+	}()
+	wg.Wait()
+	if gErr != nil {
+		return nil, gErr
 	}
 	if minTs > 0 {
 		stats.Oldest = &minTs
@@ -789,18 +904,75 @@ func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]Histogram
 	if q != nil {
 		rStart, rEnd = q.StartTs, q.EndTs
 	}
-	for _, t := range s.tablesForRange(rStart, rEnd) {
+
+	// ── 物化路径: 无服务过滤且分钟桶可用 → 直查物化表(与数据量解耦, 毫秒级) ──
+	if (q == nil || q.Service == "") && s.histReady.Load() {
+		if result, err := s.histFromMinute(rStart, rEnd, bucketMs, q); err == nil {
+			return result, nil
+		}
+	}
+
+	// ── 常规路径: 无其他过滤时按时间对半拆段并行(读并发), 否则串行 ──
+	simple := q == nil || q.Service == ""
+	var wg sync.WaitGroup
+	var gErr error
+	var gMu sync.Mutex
+	tasks := []struct {
+		t    string
+		s, e int64
+	}{}
+	if simple {
+		for _, t := range s.tablesForRange(rStart, rEnd) {
+			if rStart > 0 && rEnd > rStart+1 {
+				mid := (rStart + rEnd) / 2
+				tasks = append(tasks, struct {
+					t    string
+					s, e int64
+				}{t, rStart, mid}, struct {
+					t    string
+					s, e int64
+				}{t, mid + 1, rEnd})
+			} else {
+				tasks = append(tasks, struct {
+					t    string
+					s, e int64
+				}{t, rStart, rEnd})
+			}
+		}
+	} else {
+		for _, t := range s.tablesForRange(rStart, rEnd) {
+			tasks = append(tasks, struct {
+				t    string
+				s, e int64
+			}{t, rStart, rEnd})
+		}
+	}
+	runTask := func(tt struct {
+		t    string
+		s, e int64
+	}) {
+		defer wg.Done()
+		where := wc
+		targs := args
+		if simple && rStart > 0 {
+			// 拆段任务: 用任务自身 ts 范围构建 where
+			where = "WHERE ts >= ? AND ts <= ?"
+			targs = []interface{}{tt.s, tt.e}
+		}
 		histoQuery := fmt.Sprintf(`
 			SELECT (ts / %d) * %d AS bucket, level, COUNT(*)
 			FROM %s %s
 			GROUP BY bucket, level
 			ORDER BY bucket
-		`, bucketMs, bucketMs, t, wc)
+		`, bucketMs, bucketMs, tt.t, where)
 
-		rows, err := s.db.Query(histoQuery, args...)
+		rows, err := s.db.Query(histoQuery, targs...)
 		if err != nil {
-			return nil, err
+			gErr = err
+			return
 		}
+		gMu.Lock()
+		defer gMu.Unlock()
 		for rows.Next() {
 			var bucket int64
 			var lvl string
@@ -814,6 +986,14 @@ func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]Histogram
 		}
 		rows.Close()
 	}
+	wg.Add(len(tasks))
+	for _, tt := range tasks {
+		go runTask(tt)
+	}
+	wg.Wait()
+	if gErr != nil {
+		return nil, gErr
+	}
 
 	var result []HistogramBucket
 	for _, b := range bucketOrder {
@@ -823,6 +1003,63 @@ func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]Histogram
 	// 若指定了时间范围, 把窗口内所有空桶补齐, 使 x 轴连续覆盖整个选中区间(对齐 Kibana 行为)。
 	result = fillEmptyBuckets(result, q, bucketMs)
 
+	return result, nil
+}
+
+// histFromMinute 从分钟物化表聚合直方图(桶宽 = bucketMs 的整数分钟倍数)
+func (s *Store) histFromMinute(startTs, endTs, bucketMs int64, q *LogStatsQuery) ([]HistogramBucket, error) {
+	div := bucketMs / 60000
+	if div < 1 {
+		div = 1
+	}
+	where := ""
+	args := []interface{}{}
+	if startTs > 0 {
+		where = " WHERE minute >= ?"
+		args = append(args, startTs/60000)
+	}
+	if endTs > 0 {
+		if where == "" {
+			where = " WHERE minute <= ?"
+		} else {
+			where += " AND minute <= ?"
+		}
+		args = append(args, endTs/60000)
+	}
+	sqlStr := "SELECT (minute/" + strconv.FormatInt(div, 10) + ")*" + strconv.FormatInt(div, 10) +
+		" AS bm, level, SUM(cnt) FROM log_meta_minute" + where + " GROUP BY bm, level ORDER BY bm"
+
+	rows, err := s.db.Query(sqlStr, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bucketMap := make(map[int64]map[string]int64)
+	var bucketOrder []int64
+	for rows.Next() {
+		var bm int64
+		var lvl string
+		var c int64
+		if err := rows.Scan(&bm, &lvl, &c); err != nil {
+			return nil, err
+		}
+		bucket := bm * 60000
+		if bucketMap[bucket] == nil {
+			bucketMap[bucket] = make(map[string]int64)
+			bucketOrder = append(bucketOrder, bucket)
+		}
+		bucketMap[bucket][lvl] += c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var result []HistogramBucket
+	for _, b := range bucketOrder {
+		result = append(result, HistogramBucket{Ts: b, Count: bucketMap[b]})
+	}
+	result = fillEmptyBuckets(result, q, bucketMs)
 	return result, nil
 }
 
@@ -1372,6 +1609,10 @@ func (s *Store) ApplyIlmAll() (int64, error) {
 		}
 		n, _ := res.RowsAffected()
 		dropped += n
+	}
+	// 物化分钟桶联动清理
+	if _, err := s.db.Exec("DELETE FROM log_meta_minute WHERE minute < ?", cutoff/60000); err != nil {
+		return dropped, err
 	}
 	if dropped > 0 {
 		s.agg.clear()
