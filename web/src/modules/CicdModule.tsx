@@ -548,7 +548,7 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
                     className={cn('text-left rounded-lg px-2.5 py-1.5 border transition-colors',
-                      active ? 'border-accent bg-accent/15 font-semibold' : 'border-transparent hover:bg-muted')}>
+                      active ? 'border-accent bg-accent/25 font-semibold shadow-sm' : 'border-transparent hover:bg-muted/60')}>
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
                       <span className="font-medium text-sm truncate flex-1">{p.name}</span>
