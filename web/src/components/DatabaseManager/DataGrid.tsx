@@ -281,8 +281,8 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
         </div>
       )}
 
-      <div className="table-wrap">
-        <table className="db-table db-table-result">
+      <div className="db-table-grid">
+        <table className="db-table-result">
           <thead>
             <tr>
               <th className="db-col-num">#</th>

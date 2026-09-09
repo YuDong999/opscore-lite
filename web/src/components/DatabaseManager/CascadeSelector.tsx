@@ -158,7 +158,7 @@ export default function CascadeSelector({
                   className="db-system-toggle"
                   onClick={() => setSystemOpen(!systemOpen)}
                 >
-                  <span className="db-system-arrow">{systemOpen ? '▾' : '▸'}</span>
+                  <span className="db-system-arrow"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ transform: systemOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}><path d="m9 18 6-6-6-6" /></svg></span>
                   <span className="db-system-label">系统库</span>
                   <span className="db-system-count">{systemDbs.length}</span>
                 </button>

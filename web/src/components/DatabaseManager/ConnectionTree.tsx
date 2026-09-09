@@ -4,10 +4,28 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
+  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+
+// 系统库/系统对象判定: 灰色置底便于识别
+function isSysDbName(name: string): boolean {
+  return name === 'information_schema' || name === 'performance_schema' || name === 'mysql' || name === 'sys'
+    || name.startsWith('pg_') || name.startsWith('__')
+}
+function isSysObjName(name: string): boolean {
+  const dot = name.indexOf('.')
+  const sch = dot > 0 ? name.slice(0, dot) : ''
+  const base = dot > 0 ? name.slice(dot + 1) : name
+  return sch === 'information_schema' || sch === 'pg_catalog' || /^(pg_|sql_)/.test(base)
+}
+function fmtCount(n: number): string {
+  if (n < 0) return '~'
+  if (n < 1000) return String(n)
+  if (n < 1000000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+  return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+}
 
 interface TreeNode {
   key: string
@@ -20,6 +38,7 @@ interface TreeNode {
   schema?: string
   leaf?: boolean
   group?: string
+  sys?: boolean
 }
 
 export default function ConnectionTree({
@@ -99,11 +118,13 @@ export default function ConnectionTree({
           views: ts.filter(t => t.type === 'VIEW').map(t => t.name),
         },
       }))
+      getTableCounts(connId, db).then(counts => setRowCounts(prev => ({ ...prev, [ck]: counts }))).catch(() => {})
     } catch { setTablesCache(prev => ({ ...prev, [ck]: { tables: [], views: [] } })) }
   }
 
   // 模式能力探测(dbx loadSchemas 同构): 列模式非空 → 库下渲染模式层级; 空/失败 → 平铺对象
   const [schemaCache, setSchemaCache] = useState<Record<string, string[]>>({})
+  const [rowCounts, setRowCounts] = useState<Record<string, Record<string, number>>>({})
   const probeSchemas = (connId: string) => {
     listSchemas(connId)
       .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
@@ -141,7 +162,7 @@ export default function ConnectionTree({
     return (
       <div
         className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
-        style={{ paddingLeft: `${8 + depth * 16}px`, contain: 'layout style' }}
+        style={{ paddingLeft: `${8 + depth * 16}px`, contain: 'layout style', ...(node.sys ? { opacity: 0.6 } : {}) }}
         onClick={() => onNodeClick(node)}
         onContextMenu={e => {
           e.preventDefault()
@@ -152,10 +173,11 @@ export default function ConnectionTree({
       >
         {canExpand ? (
           <button
-            className="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground"
             onClick={e => { e.stopPropagation(); onNodeClick(node) }}
+            aria-label={isOpen ? '收起' : '展开'}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
               <path d="m9 18 6-6-6-6" />
             </svg>
           </button>
@@ -367,10 +389,12 @@ export default function ConnectionTree({
     const isConnOpen = expanded.has(ckey)
     rows.push({ key: ckey, level: 'conn', label: c.name, conn: c, group: groupName })
     if (!isConnOpen) return
-    const dbs = dbCache[c.id] || []
+    const dbs = [...(dbCache[c.id] || [])].sort((a, b) => Number(isSysDbName(a)) - Number(isSysDbName(b)))
+    const sysPrefix = dbs.filter(d => isSysDbName(d)).length
     for (const db of dbs) {
+      const sys = isSysDbName(db)
       const dkey = `${ckey}|db:${db}`
-      rows.push({ key: dkey, level: 'db', label: db, conn: c, db })
+      rows.push({ key: dkey, level: 'db', label: db, conn: c, db, sys })
       if (!expanded.has(dkey)) continue
       const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
       const ck2 = `${c.id}|${db}`
@@ -476,10 +500,11 @@ export default function ConnectionTree({
             const isTableGroup = node.label.startsWith('表')
             const allItems = isTableGroup ? tables : views
             const items = [...allItems].sort((a, b) => {
-              const pa = isPinned(node.conn!.id, node.db!, a) ? 0 : 1
-              const pb = isPinned(node.conn!.id, node.db!, b) ? 0 : 1
+              const pa = (isPinned(node.conn!.id, node.db!, a) ? 0 : 1) + (isSysObjName(a) ? 2 : 0)
+              const pb = (isPinned(node.conn!.id, node.db!, b) ? 0 : 1) + (isSysObjName(b) ? 2 : 0)
               return pa - pb
             })
+            const rowNums = rowCounts[`${node.conn.id}|${node.db}`] || {}
             const itemLevel = isTableGroup ? 'table' : 'view'
 
             return (
@@ -495,7 +520,7 @@ export default function ConnectionTree({
                 ))}
                 {expanded.has(node.key) && items.map(t => {
                   const tblKey = `${node.key}|${t}`
-                  const tblNode: TreeNode = { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true }
+                  const tblNode: TreeNode = { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true, sys: isSysObjName(t) }
                   return renderRow(tblNode, depth + 1, (
                     <>
                       <span className="relative flex h-3.5 w-3.5 shrink-0">
@@ -503,6 +528,7 @@ export default function ConnectionTree({
                       </span>
                       <span className="truncate">
                         {pfx ? t.slice(pfx.length) : t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
+                        {rowNums[t] != null && <span className="db-tree-rcount" title={`约 ${rowNums[t]} 行`}>{fmtCount(rowNums[t])}</span>}
                       </span>
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
                     </>

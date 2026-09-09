@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
 			{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
 			{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
+			{Path: "/api/dbmanager/table-counts", Handler: h.handleTableCounts},
 			{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
 			{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
 			{Path: "/api/dbmanager/sync/engines", Handler: h.handleSyncEngines},
@@ -1142,6 +1144,79 @@ func (h *Handlers) handleSyncCancel(w http.ResponseWriter, r *http.Request) {
 
 // ===== /api/dbmanager/table-status =====
 // GET ?id=...&database=...&table=... -> 表属性 (SHOW TABLE STATUS / information_schema)
+
+// handleTableCounts GET ?id=&database= -> 整库各表行数(估算, 供树徽标; 与 dbx/gonavi 一致用 information_schema/pg_class)
+// 返回 {counts: {表名: 行数}}; 表名与 listTables 一致(PG=限定名 schema.table, MySQL=裸名)。
+func (h *Handlers) handleTableCounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database := q.Get("id"), q.Get("database")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) {
+		writeErr(w, "id/database 格式非法", http.StatusBadRequest)
+		return
+	}
+	db, conn, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	var sqlText string
+	switch string(conn.Info.Engine) {
+	case "mysql", "mariadb", "goldendb":
+		sqlText = "SELECT table_name AS n, table_rows AS c FROM information_schema.TABLES WHERE table_schema = '" + esc(database) + "'"
+	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+		sqlText = `SELECT (n.nspname || '.' || c.relname) AS n, c.reltuples::bigint AS c ` +
+			`FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace ` +
+			`WHERE c.relkind IN ('r','p','v','m') AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg|_%' ESCAPE '|'`
+	default:
+		writeJSON(w, map[string]any{"counts": map[string]int64{}})
+		return
+	}
+	rows, _, err := syncpkg.QueryRows(r.Context(), db, sqlText)
+	if err != nil {
+		writeErr(w, "统计行数失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		// 驱动间值类型不一致(MySQL 常返回 []byte, PG 返回 string), 统一兼容
+		var name string
+		switch v := row["n"].(type) {
+		case string:
+			name = v
+		case []byte:
+			name = string(v)
+		}
+		if name == "" {
+			continue
+		}
+		var cnt int64
+		switch v := row["c"].(type) {
+		case int64:
+			cnt = v
+		case int32:
+			cnt = int64(v)
+		case float64:
+			cnt = int64(v)
+		case string:
+			if n, e := strconv.ParseInt(v, 10, 64); e == nil {
+				cnt = n
+			}
+		case []byte:
+			if n, e := strconv.ParseInt(string(v), 10, 64); e == nil {
+				cnt = n
+			}
+		}
+		counts[name] = cnt
+	}
+	writeJSON(w, map[string]any{"counts": counts})
+}
 
 func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

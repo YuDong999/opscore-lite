@@ -123,7 +123,11 @@ export default function QueryEditor({
       <div className="db-query-header">
         <div className="db-query-controls">
           <button onClick={() => run()} disabled={busy} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">
-            {busy ? '执行中...' : '▶ 执行'}
+            {busy ? '执行中...' : (
+              <>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ verticalAlign: -1 }}><path d="M8 5v14l11-7z" /></svg>执行
+              </>
+            )}
           </button>
           <button onClick={() => run(true)} disabled={busy} className="btn-glass-soft btn-glass-soft-sm" title="高危语句二次确认执行">
             确认执行

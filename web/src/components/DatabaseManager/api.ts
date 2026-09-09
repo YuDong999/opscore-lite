@@ -375,6 +375,14 @@ export async function listSchemas(id: string): Promise<string[]> {
   return r.schemas || []
 }
 
+// 整库各表行数估算(信息库统计, 与 dbx/gonavi 树徽标一致); key 与 listTables 一致(PG=限定名)
+export async function getTableCounts(id: string, database: string): Promise<Record<string, number>> {
+  const r = await getJSON<{ counts: Record<string, number> }>(
+    `/api/dbmanager/table-counts?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.counts || {}
+}
+
 export async function listTables(id: string, database: string): Promise<TableInfo[]> {
   const r = await getJSON<{ tables: TableInfo[] }>(
     `/api/dbmanager/metadata?type=tables&id=${id}&database=${encodeURIComponent(database)}`,
