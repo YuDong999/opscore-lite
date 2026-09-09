@@ -17,6 +17,7 @@ export interface ActionParam {
   min?: number
   max?: number
   pattern?: string
+  useObjName?: boolean
 }
 
 export interface ActionSpec {
@@ -206,6 +207,7 @@ function ActionModal({
     for (const p of action.params) {
       if (p.default !== undefined) v[p.name] = p.default
       else if (p.type === 'bool') v[p.name] = false
+      else if (p.useObjName) v[p.name] = name
     }
     return v
   })

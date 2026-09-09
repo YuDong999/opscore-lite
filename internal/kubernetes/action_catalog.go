@@ -44,6 +44,7 @@ type Param struct {
 	Min      *float64         `json:"min,omitempty"`
 	Max      *float64         `json:"max,omitempty"`
 	Pattern  string           `json:"pattern,omitempty"` // 简单正则
+	UseObjName bool           `json:"useObjName,omitempty"` // 默认值 = 操作对象名 (前端打开表单时预填, 可编辑)
 }
 
 type SelectOption struct {
@@ -757,7 +758,7 @@ func catalogAutoscale() *ActionSpec {
 		Name: "autoscale", Label: "HPA 自动扩缩", Category: "scale",
 		AllowedRes: []string{"deployments", "statefulsets"},
 		Params: []Param{
-			{Name: "name", Label: "HPA 名称", Type: ParamString, Required: true},
+			{Name: "name", Label: "HPA 名称", Type: ParamString, Required: true, UseObjName: true},
 			{Name: "min", Label: "最小副本", Type: ParamNumber, Required: true, Default: 1,
 				Min: floatPtr(0), Max: floatPtr(1000)},
 			{Name: "max", Label: "最大副本", Type: ParamNumber, Required: true, Default: 10,
@@ -782,7 +783,7 @@ func catalogCreatePDB() *ActionSpec {
 		Name: "create-pdb", Label: "创建 PDB", Category: "lifecycle",
 		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
 		Params: []Param{
-			{Name: "pdbName", Label: "PDB 名称", Type: ParamString, Required: true},
+			{Name: "pdbName", Label: "PDB 名称", Type: ParamString, Required: true, UseObjName: true},
 			{Name: "minAvailable", Label: "最小可用数 (与 maxUnavailable 二选一)", Type: ParamString, Default: "",
 				Help: "如 1 或 50%; 与 maxUnavailable 互斥, 只填其中一个"},
 			{Name: "maxUnavailable", Label: "最大不可用数", Type: ParamString, Default: "",
@@ -803,7 +804,7 @@ func catalogCreateQuota() *ActionSpec {
 		Name: "create-quota", Label: "创建 ResourceQuota", Category: "edit",
 		AllowedRes: []string{"namespaces"},
 		Params: []Param{
-			{Name: "quotaName", Label: "Quota 名称", Type: ParamString, Required: true},
+			{Name: "quotaName", Label: "Quota 名称", Type: ParamString, Required: true, UseObjName: true},
 			{Name: "cpu", Label: "CPU 总量 (如 4)", Type: ParamString, Default: "",
 				Help: "同时限制 requests.cpu 和 limits.cpu; 留空则不限"},
 			{Name: "mem", Label: "内存 总量 (如 8Gi)", Type: ParamString, Default: ""},
@@ -827,7 +828,7 @@ func catalogCreateLimitRange() *ActionSpec {
 		Name: "create-limitrange", Label: "创建 LimitRange", Category: "edit",
 		AllowedRes: []string{"namespaces"},
 		Params: []Param{
-			{Name: "lrName", Label: "LimitRange 名称", Type: ParamString, Required: true},
+			{Name: "lrName", Label: "LimitRange 名称", Type: ParamString, Required: true, UseObjName: true},
 			{Name: "defaultCpu", Label: "默认 CPU 上限", Type: ParamString, Default: "",
 				Help: "未设置 limits 的容器自动获得此值; 留空则不限"},
 			{Name: "defaultReqCpu", Label: "默认 CPU 请求", Type: ParamString, Default: ""},
@@ -855,7 +856,7 @@ func catalogCreateNP() *ActionSpec {
 		Name: "create-networkpolicy", Label: "创建 NetworkPolicy", Category: "network",
 		AllowedRes: []string{"namespaces", "networkpolicies"},
 		Params: []Param{
-			{Name: "npName", Label: "策略名称", Type: ParamString, Required: true},
+			{Name: "npName", Label: "策略名称", Type: ParamString, Required: true, UseObjName: true},
 			{Name: "podSelKey", Label: "目标 Pod 标签键 (留空=全部 Pod)", Type: ParamString, Default: "",
 				Help: "如 app; 留空则选择该命名空间全部 Pod"},
 			{Name: "podSelValue", Label: "目标 Pod 标签值", Type: ParamString, Default: ""},
@@ -996,7 +997,7 @@ func catalogExpose() *ActionSpec {
 		Name: "expose", Label: "暴露为 Service", Category: "network",
 		AllowedRes: []string{"deployments", "statefulsets", "daemonsets"},
 		Params: []Param{
-			{Name: "svcName", Label: "Service 名称 (留空=同名)", Type: ParamString, Default: ""},
+			{Name: "svcName", Label: "Service 名称 (留空=同名)", Type: ParamString, Default: "", UseObjName: true},
 			{Name: "svcType", Label: "Service 类型", Type: ParamSelect, Default: "ClusterIP",
 				Options: []SelectOption{
 					{Label: "ClusterIP (集群内)", Value: "ClusterIP"},

@@ -85,7 +85,7 @@ type Model = {
   storage: string; storageClass: string; accessModes: string[]
   reclaimPolicy: string; claimRefNs: string; claimRef: string
   pvMode: string; pvHostPath: string; pvNfsServer: string; pvNfsPath: string
-  scName: string; scProvisioner: string; scReclaim: string; scBindingMode: string; scAllowExpansion: boolean; scParams: string
+  scProvisioner: string; scReclaim: string; scBindingMode: string; scAllowExpansion: boolean; scParams: string
   rbacKind: string
   rbacRules: RbacRule[]
   rbacSubjects: RbacSubject[]
@@ -107,7 +107,7 @@ const blank = (kind: string): Model => ({
   storage: '5Gi', storageClass: '', accessModes: ['ReadWriteOnce'],
   reclaimPolicy: 'Retain', claimRefNs: 'default', claimRef: '',
   pvMode: 'hostPath', pvHostPath: '/mnt/data', pvNfsServer: '', pvNfsPath: '/',
-  scName: '', scProvisioner: '', scReclaim: 'Retain', scBindingMode: 'Immediate', scAllowExpansion: false, scParams: '{}',
+  scProvisioner: '', scReclaim: 'Retain', scBindingMode: 'Immediate', scAllowExpansion: false, scParams: '{}',
   rbacKind: kind,
   rbacRules: [{ apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }],
   rbacSubjects: [{ kind: 'User', name: '', namespace: '' }],
@@ -775,7 +775,6 @@ export default function CreateResource({ cluster, namespaces, initialKind, onCre
           {m.kind === 'StorageClass' && (
             <>
               <Grid cols={2}>
-                <F label="名称 *"><input className={IN} value={m.scName} placeholder="如 fast-nvme" onChange={(e) => set({ scName: e.target.value })} /></F>
                 <F label="Provisioner *" hint="存储插件, 如 nfs / ceph.com/cephfs / ebs.csi.aws.com">
                   <input className={IN} value={m.scProvisioner} placeholder="kubernetes.io/no-provisioner" onChange={(e) => set({ scProvisioner: e.target.value })} />
                 </F>
