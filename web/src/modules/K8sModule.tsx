@@ -320,6 +320,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   // 资源弹层: 双击行或行内操作打开
   const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
   const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string; autoOpen?: string } | null>(null)
+  // 右键菜单流式操作: exec / logs / port-forward / cp (K8sModule 级 state, 供 onStream 与渲染)
+  const [podTools, setPodTools] = useState<{ kind: string; cluster: string; ns: string; pod: string; containers: string[] } | null>(null)
   // 加入节点弹层: 生成 kubeadm join 命令
   const [joinNode, setJoinNode] = useState(false)
 
@@ -880,6 +882,30 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
 
       {joinNode && clusterID && (
         <NodeJoinModal cluster={clusterID} onClose={() => setJoinNode(false)} onMsg={onMsg || ((m: string) => window.alert(m))} />
+      )}
+
+      {/* 右键菜单流式操作: 终端 / 日志 / 端口转发 / 文件互拷 */}
+      {podTools?.kind === 'exec' && (
+        <ExecTerminalModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          containers={podTools.containers}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'logs' && (
+        <LogStreamModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          containers={podTools.containers}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'port-forward' && (
+        <PortForwardModal
+          cluster={podTools.cluster} ns={podTools.ns} name={podTools.pod}
+          onClose={() => setPodTools(null)} />
+      )}
+      {podTools?.kind === 'cp' && (
+        <CpModal
+          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
+          onClose={() => setPodTools(null)} />
       )}
 
       {/* 集群右键菜单 */}
