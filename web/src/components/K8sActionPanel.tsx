@@ -118,6 +118,16 @@ export default function K8sActionPanel({
   const run = async (action: ActionSpec, values: FormValues) => {
     if (action.requiresTTY) {
       if (action.name === 'port-forward' || action.name === 'cp') {
+        if (action.name === 'cp' && !values.container && res === 'pods') {
+          // 自动填充当前对象(pod)的第一个容器名, 可编辑
+          try {
+            const d = await getJSON<{ ok: boolean; detail: any }>(
+              `/api/plugins/containers/k8s/pod/detail?cluster=${encodeURIComponent(cluster)}&res=pods&ns=${encodeURIComponent(ns)}&name=${encodeURIComponent(name)}`)
+            if (d.ok && Array.isArray(d.detail?.containers) && d.detail.containers.length) {
+              values = { ...values, container: String(d.detail.containers[0].name || '') }
+            }
+          } catch { /* 保持空, 后端默认首个容器 */ }
+        }
         setStreamAction({ action, values })
         return
       }
