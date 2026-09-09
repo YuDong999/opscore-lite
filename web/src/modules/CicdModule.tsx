@@ -548,7 +548,7 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
                     className={cn('text-left rounded-lg px-2.5 py-1.5 border transition-colors',
-                      active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted')}>
+                      active ? 'border-accent bg-accent/15 font-semibold' : 'border-transparent hover:bg-muted')}>
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
                       <span className="font-medium text-sm truncate flex-1">{p.name}</span>
@@ -1430,7 +1430,7 @@ function RunsTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (
                 <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无运行记录</TableCell></TableRow>
               )}
               {sorted.map(r => (
-                <TableRow key={r.id} className={cn('cursor-pointer', filter === r.pipelineId && 'bg-accent/5 hover:bg-accent/10')}
+                <TableRow key={r.id} className={cn('cursor-pointer', filter === r.pipelineId && 'bg-accent/15 hover:bg-accent/20')}
                   title={filter === r.pipelineId ? '本列表已只看该流水线, 再次点击取消过滤' : '点击: 只看该流水线的运行记录'}
                   onClick={() => { setFilter(filter === r.pipelineId ? '' : r.pipelineId); setLimit(50) }}>
                   <TableCell className="font-semibold">
