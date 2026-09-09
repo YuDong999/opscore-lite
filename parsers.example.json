@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "name": "halo-springboot",
+      "match": { "sources": ["k8s"], "services": ["halo"] },
+      "time": {
+        "regex": "^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{1,9}(?:Z|[+-]\\d{2}:\\d{2}))",
+        "formats": ["2006-01-02T15:04:05.999999999Z07:00"],
+        "timezone": ""
+      },
+      "level": { "regex": "\\b(TRACE|DEBUG|INFO|WARN|ERROR)\\b", "default": "INFO" },
+      "service": { "normalize": true },
+      "summary": { "maxLen": 300 }
+    },
+    {
+      "name": "default",
+      "match": {},
+      "time": {
+        "regex": "(\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)",
+        "formats": []
+      },
+      "level": { "regex": "\\b(ERROR|WARN|INFO|DEBUG|FATAL)\\b", "default": "INFO" },
+      "service": { "regex": "\\[([a-zA-Z0-9\\-_\\.]+)\\]|service[=:]\\s*([a-zA-Z0-9\\-_\\.]+)", "normalize": true },
+      "summary": { "maxLen": 200 }
+    }
+  ]
+}
