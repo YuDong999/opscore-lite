@@ -108,7 +108,11 @@ export default function ConnectionTree({
 
   const loadTables = async (connId: string, db: string) => {
     const ck = `${connId}|${db}`
-    if (tablesCache[ck]) return
+    if (tablesCache[ck]) {
+      // 已缓存: 行数统计(ANALYZE 后会变化)仍每次展开刷新
+      getTableCounts(connId, db).then(counts => setRowCounts(prev => ({ ...prev, [ck]: counts }))).catch(() => {})
+      return
+    }
     try {
       const ts = await listTables(connId, db)
       setTablesCache(prev => ({

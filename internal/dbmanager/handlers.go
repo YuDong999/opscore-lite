@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tealeg/xlsx"
@@ -1169,7 +1170,79 @@ func (h *Handlers) handleTableCounts(w http.ResponseWriter, r *http.Request) {
 	var sqlText string
 	switch string(conn.Info.Engine) {
 	case "mysql", "mariadb", "goldendb":
-		sqlText = "SELECT table_name AS n, table_rows AS c FROM information_schema.TABLES WHERE table_schema = '" + esc(database) + "'"
+		// 精确 COUNT(*): information_schema.table_rows 估算受会话缓存(& ANALYZE 前为 0)影响, 易误导
+		nameRows, _, err := syncpkg.QueryRows(r.Context(), db,
+			"SELECT table_name FROM information_schema.TABLES WHERE table_schema = '"+esc(database)+"' AND table_type = 'BASE TABLE'")
+		if err != nil {
+			writeErr(w, "统计行数失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tables := make([]string, 0, len(nameRows))
+		for _, row := range nameRows {
+			var n string
+			switch v := row["table_name"].(type) {
+			case string:
+				n = v
+			case []byte:
+				n = string(v)
+			}
+			if n == "" {
+				if v2, ok := row["TABLE_NAME"].(string); ok {
+					n = v2
+				} else if v3, ok := row["TABLE_NAME"].([]byte); ok {
+					n = string(v3)
+				}
+			}
+			if n != "" {
+				tables = append(tables, n)
+			}
+		}
+		counts := map[string]int64{}
+		sem := make(chan struct{}, 8)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		qident := func(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }
+		for _, t := range tables {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(t string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				cRows, _, e := syncpkg.QueryRows(r.Context(), db, "SELECT COUNT(*) AS c FROM "+qident(database)+"."+qident(t))
+				if e != nil {
+					return
+				}
+				var c int64
+				for _, row := range cRows {
+					raw, ok := row["c"]
+					if !ok {
+						raw = row["C"]
+					}
+					switch v := raw.(type) {
+					case int64:
+						c = v
+					case int32:
+						c = int64(v)
+					case float64:
+						c = int64(v)
+					case string:
+						if n, pe := strconv.ParseInt(v, 10, 64); pe == nil {
+							c = n
+						}
+					case []byte:
+						if n, pe := strconv.ParseInt(string(v), 10, 64); pe == nil {
+							c = n
+						}
+					}
+				}
+				mu.Lock()
+				counts[t] = c
+				mu.Unlock()
+			}(t)
+		}
+		wg.Wait()
+		writeJSON(w, map[string]any{"counts": counts})
+		return
 	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
 		sqlText = `SELECT (n.nspname || '.' || c.relname) AS n, c.reltuples::bigint AS c ` +
 			`FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace ` +
