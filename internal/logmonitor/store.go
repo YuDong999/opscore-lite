@@ -25,10 +25,11 @@ type Store struct {
 	shardCfg ShardConfig
 }
 
-// aggCache 简单的 TTL 缓存, 泛型 getOrBuild, 供高频聚合查询使用。
+// aggCache 简单的 TTL 缓存, 泛型 getOrBuild(带单飞去重), 供高频聚合查询使用。
 type aggCache struct {
-	mu    sync.Mutex
-	items map[string]aggCacheItem
+	mu       sync.Mutex
+	items    map[string]aggCacheItem
+	inflight map[string]bool // 单飞: 同 key 同时只允许一个 builder
 }
 
 type aggCacheItem struct {
@@ -36,13 +37,15 @@ type aggCacheItem struct {
 	expires int64
 }
 
-func newAggCache() *aggCache { return &aggCache{items: map[string]aggCacheItem{}} }
+func newAggCache() *aggCache {
+	return &aggCache{items: map[string]aggCacheItem{}, inflight: map[string]bool{}}
+}
 
-const aggCacheTTL = 2500 * time.Millisecond
+const aggCacheTTL = 10 * time.Second
 
 // aggGetOrBuild 泛型只读缓存: 命中直接返回, 未命中构建并缓存。
+// 单飞: 同一 key 并发请求时, 只有一个 goroutine 实际构建, 其余等待其结果。
 func aggGetOrBuild[T any](c *aggCache, key string, ttl time.Duration, build func() (T, error)) (T, error) {
-	var zero T
 	now := time.Now().UnixMilli()
 	c.mu.Lock()
 	if it, ok := c.items[key]; ok && it.expires > now {
@@ -50,23 +53,41 @@ func aggGetOrBuild[T any](c *aggCache, key string, ttl time.Duration, build func
 		c.mu.Unlock()
 		return v, nil
 	}
+	if c.inflight[key] {
+		// 已有其他请求在构建: 短暂自旋等待(聚合通常 <1s, 避免 3s 轮询摧毁缓存价值)
+		c.mu.Unlock()
+		for i := 0; i < 50; i++ {
+			time.Sleep(20 * time.Millisecond)
+			now2 := time.Now().UnixMilli()
+			c.mu.Lock()
+			it, ok := c.items[key]
+			if ok && it.expires > now2 {
+				v := it.val.(T)
+				c.mu.Unlock()
+				return v, nil
+			}
+			c.mu.Unlock()
+		}
+		c.mu.Lock()
+	}
+	c.inflight[key] = true
 	c.mu.Unlock()
 
 	v, err := build()
-	if err != nil {
-		return zero, err
-	}
 	c.mu.Lock()
-	c.items[key] = aggCacheItem{val: v, expires: now + ttl.Milliseconds()}
-	if len(c.items) > 256 {
-		for k, it := range c.items {
-			if it.expires <= now {
-				delete(c.items, k)
+	delete(c.inflight, key)
+	if err == nil {
+		c.items[key] = aggCacheItem{val: v, expires: time.Now().UnixMilli() + ttl.Milliseconds()}
+		if len(c.items) > 256 {
+			for k, it := range c.items {
+				if it.expires <= now {
+					delete(c.items, k)
+				}
 			}
 		}
 	}
 	c.mu.Unlock()
-	return v, nil
+	return v, err
 }
 
 // clear 数据写入后调用, 避免读到过期聚合
@@ -81,7 +102,7 @@ func NewStore(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open logmeta db: %w", err)
 	}
-	db.SetMaxOpenConns(1) // SQLite 单写
+	db.SetMaxOpenConns(8) // WAL 下读并发安全; 写仍由 s.mu 串行, 单连接会令所有读在聚合时排队
 
 	s := &Store{db: db, dbPath: dbPath, agg: newAggCache()}
 	if err := s.Check(); err != nil {
@@ -415,7 +436,7 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 	if len(entries) == 0 {
 		return []int64{}, nil
 	}
-	s.agg.clear()
+	// 不主动清聚合缓存: TTL(10s) 自然过期即携带新数据, 避免 poller 每次写入令统计页全量重算
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1343,16 +1364,19 @@ func (s *Store) ApplyIlmAll() (int64, error) {
 			dropped += n
 		}
 	}
-	// 热表逐行清理 (遗留数据)
-	res, err := s.db.Exec("DELETE FROM log_meta WHERE ts < ? AND index_id = ''", cutoff)
-	if err != nil {
-		return dropped, err
+	// 热表 + 未整片 drop 的历史片逐行清理 unassigned
+	for _, t := range s.allDataTables() {
+		res, err := s.db.Exec("DELETE FROM "+t+" WHERE ts < ? AND index_id = ''", cutoff)
+		if err != nil {
+			return dropped, err
+		}
+		n, _ := res.RowsAffected()
+		dropped += n
 	}
-	n, _ := res.RowsAffected()
 	if dropped > 0 {
 		s.agg.clear()
 	}
-	return dropped + n, nil
+	return dropped, nil
 }
 
 // withDefaultIlm 填充 ILM 默认策略（当传入各阶段保留全为 0 时）

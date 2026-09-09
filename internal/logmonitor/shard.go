@@ -75,7 +75,8 @@ var shardIndexes = []string{
 	"idx_m_svc_lvl", "idx_m_svc_ts", "idx_m_index_id",
 }
 
-// ensureShardTable 建历史片表(结构=热表)并记录 log_shards
+// ensureShardTable 建历史片表(结构=热表)并记录 log_shards。
+// 注意: 调用方(InsertBatch)必须已持有 s.mu 写锁。
 func (s *Store) ensureShardTable(key string) error {
 	name := shardTableName(key)
 	var n int
@@ -203,10 +204,9 @@ func (s *Store) rollShardLocked(oldKey string) error {
 	return tx.Commit()
 }
 
-// tablesForRange 时间窗命中的表集合(含热表); start/end<=0 时返回全部
+// tablesForRange 时间窗命中的表集合(含热表); start/end<=0 时返回全部。
+// 注意: 调用方必须已持有 s.mu 读锁或写锁(RWMutex 不可重入)。
 func (s *Store) tablesForRange(startTs, endTs int64) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	var tables []string
 	rows, err := s.db.Query("SELECT shard, start_ts, end_ts FROM log_shards")
 	if err != nil {
