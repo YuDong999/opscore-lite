@@ -53,6 +53,9 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 			{Path: "/api/logmonitor/indexes/delete", Handler: h.handleIndexDelete},
 			{Path: "/api/logmonitor/indexes/stats", Handler: h.handleIndexStats},
 			{Path: "/api/logmonitor/ilm/run", Handler: h.handleIlmRun},
+			{Path: "/api/logmonitor/parsers", Handler: h.handleParsers},
+			{Path: "/api/logmonitor/parsers/save", Handler: h.handleParsersSave},
+			{Path: "/api/logmonitor/parsers/test", Handler: h.handleParsersTest},
 			{Path: "/api/logmonitor/discover/containers", Handler: h.handleDiscoverContainers},
 			{Path: "/api/logmonitor/discover/k8s", Handler: h.handleDiscoverK8s},
 			{Path: "/api/logmonitor/discover/clusters", Handler: h.handleDiscoverClusters},
@@ -625,6 +628,66 @@ func (h *Handlers) handleIlmRun(w http.ResponseWriter, r *http.Request) {
 		"deletedUnassigned": na,
 		"archiveFiles":     archFiles,
 	})
+}
+
+// GET /api/logmonitor/parsers → 当前解析规则(前端编辑/展示用)
+func (h *Handlers) handleParsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	rules, builtin, errStr := h.service.ParserInfo()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rules":   rules,
+		"builtin": builtin,
+		"error":   errStr,
+	})
+}
+
+// POST /api/logmonitor/parsers/save { "rules": [...] } → 写 parsers.json + 热载
+func (h *Handlers) handleParsersSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Rules []ParserRule `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if len(body.Rules) == 0 {
+		writeErr(w, http.StatusBadRequest, "规则列表不能为空")
+		return
+	}
+	if err := h.service.ParserSave(body.Rules); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// POST /api/logmonitor/parsers/test { "rule": {...}, "lines": [...] } → 逐行解析结果, 不改全局规则
+func (h *Handlers) handleParsersTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Rule  ParserRule `json:"rule"`
+		Lines []string   `json:"lines"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if len(body.Lines) == 0 {
+		writeErr(w, http.StatusBadRequest, "请至少输入一行样例日志")
+		return
+	}
+	results := h.service.ParserTest(body.Rule, body.Lines)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
 }
 
 // readLogContent 按 metadata 读取日志内容。

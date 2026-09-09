@@ -19,6 +19,58 @@ type Store struct {
 	db     *sql.DB
 	dbPath string
 	mu     sync.RWMutex
+	agg    *aggCache // 聚合结果缓存(Stats/Histogram/Terms), 3s 轮询直接命中
+}
+
+// aggCache 简单的 TTL 缓存, 泛型 getOrBuild, 供高频聚合查询使用。
+type aggCache struct {
+	mu    sync.Mutex
+	items map[string]aggCacheItem
+}
+
+type aggCacheItem struct {
+	val     interface{}
+	expires int64
+}
+
+func newAggCache() *aggCache { return &aggCache{items: map[string]aggCacheItem{}} }
+
+const aggCacheTTL = 2500 * time.Millisecond
+
+// aggGetOrBuild 泛型只读缓存: 命中直接返回, 未命中构建并缓存。
+func aggGetOrBuild[T any](c *aggCache, key string, ttl time.Duration, build func() (T, error)) (T, error) {
+	var zero T
+	now := time.Now().UnixMilli()
+	c.mu.Lock()
+	if it, ok := c.items[key]; ok && it.expires > now {
+		v := it.val.(T)
+		c.mu.Unlock()
+		return v, nil
+	}
+	c.mu.Unlock()
+
+	v, err := build()
+	if err != nil {
+		return zero, err
+	}
+	c.mu.Lock()
+	c.items[key] = aggCacheItem{val: v, expires: now + ttl.Milliseconds()}
+	if len(c.items) > 256 {
+		for k, it := range c.items {
+			if it.expires <= now {
+				delete(c.items, k)
+			}
+		}
+	}
+	c.mu.Unlock()
+	return v, nil
+}
+
+// clear 数据写入后调用, 避免读到过期聚合
+func (c *aggCache) clear() {
+	c.mu.Lock()
+	c.items = map[string]aggCacheItem{}
+	c.mu.Unlock()
 }
 
 func NewStore(dbPath string) (*Store, error) {
@@ -28,7 +80,7 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1) // SQLite 单写
 
-	s := &Store{db: db, dbPath: dbPath}
+	s := &Store{db: db, dbPath: dbPath, agg: newAggCache()}
 	if err := s.Check(); err != nil {
 		// 库损坏且 salvage 失败：拒绝启动，避免带病写入扩大损坏
 		db.Close()
@@ -322,6 +374,7 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 	if len(entries) == 0 {
 		return []int64{}, nil
 	}
+	s.agg.clear()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -457,6 +510,12 @@ func (s *Store) Query(q *LogQuery) (*LogQueryResult, error) {
 
 // Stats 获取统计信息
 func (s *Store) Stats(q *LogStatsQuery) (*LogStats, error) {
+	return aggGetOrBuild(s.agg, "stats|"+statsKey(q)+"|0", aggCacheTTL, func() (*LogStats, error) {
+		return s.statsUncached(q)
+	})
+}
+
+func (s *Store) statsUncached(q *LogStatsQuery) (*LogStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -522,11 +581,26 @@ func (s *Store) Stats(q *LogStatsQuery) (*LogStats, error) {
 
 // Histogram 按时间桶聚合（用于前端图表）
 func (s *Store) Histogram(q *LogStatsQuery, bucketMs int64) ([]HistogramBucket, error) {
+	return aggGetOrBuild(s.agg, "hist|"+statsKey(q)+"|"+strconv.FormatInt(bucketMs, 10), aggCacheTTL, func() ([]HistogramBucket, error) {
+		return s.histogramUncached(q, bucketMs)
+	})
+}
+
+func (s *Store) histogramUncached(q *LogStatsQuery, bucketMs int64) ([]HistogramBucket, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if bucketMs <= 0 {
 		bucketMs = 60000 // 默认 1 分钟
+	}
+	// 自适应桶宽: 桶数超过 MaxHistogramBuckets 时自动放大到分钟/5分钟/15分钟/小时/6小时/天,
+	// 避免大时间窗下聚合万级桶拖垮性能(对齐 Kibana 自动 date_histogram 间隔)。
+	if q != nil && q.EndTs > q.StartTs && q.StartTs > 0 {
+		const maxBuckets = 600
+		span := q.EndTs - q.StartTs
+		if span/bucketMs > maxBuckets {
+			bucketMs = autoBucketFor(span, maxBuckets)
+		}
 	}
 
 	where := []string{}
@@ -592,6 +666,24 @@ func (s *Store) Histogram(q *LogStatsQuery, bucketMs int64) ([]HistogramBucket, 
 
 // Terms 字段聚合（对标 ES terms aggregation）
 func (s *Store) Terms(q *LogTermsQuery) (*TermsResult, error) {
+	return aggGetOrBuild(s.agg, "terms|"+termsKey(q), aggCacheTTL, func() (*TermsResult, error) {
+		return s.termsUncached(q)
+	})
+}
+
+// termsKey 构造 Terms 缓存键（含全部过滤条件）
+func termsKey(q *LogTermsQuery) string {
+	if q == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		q.Field, q.Service, q.Level, q.Source, q.Keyword, q.IndexID,
+		strconv.FormatInt(q.StartTs, 10), strconv.FormatInt(q.EndTs, 10),
+		strconv.Itoa(q.Size),
+	}, "|")
+}
+
+func (s *Store) termsUncached(q *LogTermsQuery) (*TermsResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -689,6 +781,26 @@ func (s *Store) Terms(q *LogTermsQuery) (*TermsResult, error) {
 
 // fillEmptyBuckets 沿 [StartTs, EndTs] 以 bucketMs 为步长补齐缺失桶(零计数)。
 // 桶数过多时截断, 避免超大数组; x 轴随时间选择联动。
+// statsKey 构造 Stats/Histogram 缓存键（服务 + 时间窗）
+func statsKey(q *LogStatsQuery) string {
+	if q == nil {
+		return ""
+	}
+	return q.Service + "|" + strconv.FormatInt(q.StartTs, 10) + "|" + strconv.FormatInt(q.EndTs, 10)
+}
+
+// autoBucketFor 返回使桶数不超过 maxBuckets 的最小候选桶宽(毫秒)。
+// 候选: 1m / 5m / 15m / 1h / 6h / 1d
+func autoBucketFor(spanMs int64, maxBuckets int64) int64 {
+	candidates := []int64{60000, 300000, 900000, 3600000, 21600000, 86400000}
+	for _, b := range candidates {
+		if spanMs/b <= maxBuckets {
+			return b
+		}
+	}
+	return 86400000
+}
+
 func fillEmptyBuckets(buckets []HistogramBucket, q *LogStatsQuery, bucketMs int64) []HistogramBucket {
 	if q == nil || (q.StartTs <= 0 && q.EndTs <= 0) || bucketMs <= 0 {
 		return buckets

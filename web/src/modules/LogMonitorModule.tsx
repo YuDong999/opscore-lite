@@ -106,6 +106,24 @@ interface IlmPolicy {
   delete: IlmStage
 }
 
+interface ParserRule {
+  name: string
+  match: { sources?: string[]; services?: string[]; files?: string[] }
+  time: { regex?: string; formats?: string[]; timezone?: string }
+  level: { regex?: string; default?: string }
+  service: { regex?: string; normalize?: boolean }
+  summary?: { maxLen?: number }
+}
+
+interface ParserTestResult {
+  line: string
+  ts: number
+  level: string
+  service: string
+  summary: string
+  error?: string
+}
+
 interface LogIndex {
   id: string
   name: string
@@ -312,6 +330,16 @@ const [selCluster, setSelCluster] = useState('1')
   const [selPods, setSelPods] = useState<Set<string>>(new Set())
   const [ingesting, setIngesting] = useState(false)
 
+  // 解析规则(parsers.json) 可视化编辑 + 测试
+  const [parserOpen, setParserOpen] = useState(false)
+  const [parserBuiltin, setParserBuiltin] = useState(true)
+  const [parserErr, setParserErr] = useState('')
+  const [parserJson, setParserJson] = useState('')
+  const [parserSample, setParserSample] = useState('')
+  const [parserTestIdx, setParserTestIdx] = useState(0)
+  const [parserResults, setParserResults] = useState<ParserTestResult[] | null>(null)
+  const [parserBusy, setParserBusy] = useState(false)
+
   const latestHist = useRef<HistogramBucket[]>([])
 
   function pushToast(kind: ToastKind, text: string) {
@@ -497,6 +525,95 @@ const [selCluster, setSelCluster] = useState('1')
     } catch (e: any) {
       setErr(e?.message || '加载源失败')
     }
+  }
+
+  // ── 解析规则(parsers.json) 编辑器 ──
+  async function openParserEditor() {
+    setParserOpen(true)
+    setParserResults(null)
+    try {
+      const r = await getJSON<{ rules: ParserRule[]; builtin: boolean; error: string }>('/api/logmonitor/parsers')
+      setParserBuiltin(r.builtin)
+      setParserErr(r.error || '')
+      setParserJson(JSON.stringify({ rules: r.rules }, null, 2))
+      setParserTestIdx(0)
+    } catch (e: any) {
+      setParserErr(e?.message || '加载解析规则失败')
+    }
+  }
+
+  // 从编辑文本解析规则列表(非法 JSON 返回 null)
+  function parserRulesFromText(): ParserRule[] | null {
+    try {
+      const parsed = JSON.parse(parserJson)
+      if (!parsed || !Array.isArray(parsed.rules) || parsed.rules.length === 0) return null
+      return parsed.rules as ParserRule[]
+    } catch {
+      return null
+    }
+  }
+
+  async function saveParsers() {
+    const rules = parserRulesFromText()
+    if (!rules) {
+      pushToast('err', '规则 JSON 格式错误, 无法保存')
+      return
+    }
+    setParserBusy(true)
+    try {
+      await postJSON('/api/logmonitor/parsers/save', { rules })
+      pushToast('ok', '解析规则已保存并热载生效')
+      setParserErr('')
+      setParserBuiltin(false)
+      const r = await getJSON<{ rules: ParserRule[] }>('/api/logmonitor/parsers')
+      setParserJson(JSON.stringify({ rules: r.rules }, null, 2))
+    } catch (e: any) {
+      pushToast('err', '保存失败: ' + (e?.message || ''))
+    } finally {
+      setParserBusy(false)
+    }
+  }
+
+  async function testParser() {
+    const rules = parserRulesFromText()
+    if (!rules) {
+      pushToast('err', '规则 JSON 格式错误, 无法测试')
+      return
+    }
+    const idx = Math.max(0, Math.min(parserTestIdx, rules.length - 1))
+    const lines = parserSample.split('\n').map((s) => s.replace(/\r$/, '')).filter((s) => s.trim() !== '')
+    if (lines.length === 0) {
+      pushToast('err', '请先粘贴几行样例日志')
+      return
+    }
+    setParserBusy(true)
+    setParserResults(null)
+    try {
+      const r = await postJSON<{ results: ParserTestResult[] }>('/api/logmonitor/parsers/test', { rule: rules[idx], lines })
+      setParserResults(r.results)
+    } catch (e: any) {
+      pushToast('err', '测试失败: ' + (e?.message || ''))
+    } finally {
+      setParserBusy(false)
+    }
+  }
+
+  function fillDefaultRules() {
+    setParserJson(JSON.stringify({
+      rules: [
+        {
+          name: 'default',
+          match: {},
+          time: { regex: '(\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)' },
+          level: { regex: '\\b(ERROR|WARN|INFO|DEBUG|FATAL)\\b', default: 'INFO' },
+          service: { regex: '\\[([a-zA-Z0-9\\-_\\.]+)\\]|service[=:]\\s*([a-zA-Z0-9\\-_\\.]+)', normalize: true },
+          summary: { maxLen: 200 },
+        },
+      ],
+    }, null, 2))
+    setParserTestIdx(0)
+    setParserResults(null)
+    pushToast('ok', '已填入内置默认规则(未保存, 点保存生效)')
   }
 
   async function loadIndexList() {
@@ -799,11 +916,13 @@ const [selCluster, setSelCluster] = useState('1')
   // Live: stats/sources/indexes 每 3s 轮询（避免手动刷新才看到新采集数据）
   useEffect(() => {
     if (tab !== 'stats' && tab !== 'sources' && tab !== 'indexes') return
+    // 统计总览聚合重(百万行级 GROUP BY), 轮询降到 15s; 源列表/索引列表保持 3s 轻量刷新
+    const intervalMs = tab === 'stats' ? 15000 : 3000
     const t = setInterval(() => {
       if (tab === 'stats') loadStats(statsService)
       if (tab === 'sources') loadSources()
       if (tab === 'indexes') loadIndexes()
-    }, 3000)
+    }, intervalMs)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, statsService])
@@ -1305,6 +1424,7 @@ function clearFilters() {
         <div className="glass log-card">
           <div className="log-filter-row">
             <button className="btn-glass btn-sm" onClick={() => setSrcOpen(true)}>新增日志源</button>
+            <button className="btn-glass btn-sm" onClick={openParserEditor}>解析规则</button>
           </div>
           {sources.length === 0 ? (
             <div className="log-empty">暂无日志源。可添加文件/容器/syslog 源, 或在检索页直接"扫描文件入库"</div>
@@ -1796,6 +1916,97 @@ function clearFilters() {
             <div className="kib-modal-actions">
               <button className="kib-btn kib-btn-bare" onClick={() => setSrcOpen(false)}>取消</button>
               <button className="kib-btn kib-btn-primary" onClick={addSource}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 解析规则编辑器 (parsers.json): 可视化编辑 + 测试窗口 */}
+      {parserOpen && (
+        <div className="kib-modal-mask" onClick={() => setParserOpen(false)}>
+          <div className="kib-modal kib-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              解析规则 (parsers.json)
+              {parserBuiltin ? (
+                <span className="kib-badge" style={{ background: '#3b82f6' }}>内置默认</span>
+              ) : (
+                <span className="kib-badge" style={{ background: '#22a06b' }}>自定义</span>
+              )}
+            </h3>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+              按 source/服务/文件 匹配日志行, 用正则提取 时间/级别/服务。保存即写底层文件并热加载生效（支持自动热重载）。
+            </div>
+            {parserErr && <div style={{ color: '#e5484d', fontSize: 12, marginBottom: 6 }}>⚠ {parserErr}</div>}
+
+            <div className="kib-inline-form">
+              <div className="kib-form-row">
+                <label>规则 JSON *（写错会标红, 保存被拒）</label>
+                <textarea
+                  value={parserJson}
+                  onChange={(e) => { setParserJson(e.target.value); setParserResults(null) }}
+                  spellCheck={false}
+                  style={{ width: '100%', minHeight: 180, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 6, padding: 8, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div className="kib-form-row">
+                <label>用什么规则测试（来自上方 JSON）</label>
+                <select value={parserTestIdx} onChange={(e) => { setParserTestIdx(Number(e.target.value)); setParserResults(null) }}>
+                  {(() => { const rs = parserRulesFromText(); return rs
+                    ? rs.map((r, i) => <option key={i} value={i}>{i} · {r.name || '(未命名)'}</option>)
+                    : <option value={0}>JSON 格式错误</option> })()}
+                </select>
+              </div>
+              <div className="kib-form-row">
+                <label>样例日志（每行一条, 粘贴真实日志行）</label>
+                <textarea
+                  value={parserSample}
+                  onChange={(e) => setParserSample(e.target.value)}
+                  placeholder={'2026-09-09 10:00:01.123 INFO  [order-api] 订单创建成功 id=123\n2026-09-09 10:00:02.456 WARN  [order-api] 重试第 2 次'}
+                  spellCheck={false}
+                  style={{ width: '100%', minHeight: 90, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 6, padding: 8, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {parserResults && (
+                <table className="log-table" style={{ marginTop: 6 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 160 }}>解析时间</th>
+                      <th style={{ width: 70 }}>级别</th>
+                      <th style={{ width: 120 }}>服务</th>
+                      <th>摘要</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parserResults.map((res, i) => (
+                      <tr key={i}>
+                        {res.error ? (
+                          <td colSpan={4} style={{ color: '#e5484d' }}>✗ {res.error}</td>
+                        ) : (
+                          <>
+                            <td className="log-mono">{new Date(res.ts).toLocaleString('zh-CN', { hour12: false })}</td>
+                            <td><span className={`dot ${res.level === 'ERROR' || res.level === 'FATAL' ? 'dot-err' : res.level === 'WARN' ? 'dot-warn' : 'dot-ok'}`} />{res.level}</td>
+                            <td className="log-mono">{res.service || '—'}</td>
+                            <td className="log-mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 380, whiteSpace: 'nowrap' }}>{res.summary}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {parserResults === null && !parserErr && (
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+                  点「测试解析」后, 这里会显示按规则提取出的 时间/级别/服务 — 写对了出正常结果, 正则错了会红字提示或提取不到。
+                </div>
+              )}
+            </div>
+
+            <div className="kib-modal-actions">
+              <button className="kib-btn kib-btn-bare" onClick={() => setParserOpen(false)}>关闭</button>
+              <button className="kib-btn kib-btn-bare" onClick={fillDefaultRules}>填入内置默认</button>
+              <button className="kib-btn" onClick={testParser} disabled={parserBusy}>测试解析</button>
+              <button className="kib-btn kib-btn-primary" onClick={saveParsers} disabled={parserBusy}>保存并生效</button>
             </div>
           </div>
         </div>

@@ -29,6 +29,7 @@ type Service struct {
 	store    *Store
 	archiver *Archiver
 	dataDir  string
+	parsers  *ParserRuleSet
 	mu       sync.Mutex
 	cancel   chan struct{}
 	// 采集状态
@@ -42,6 +43,8 @@ func NewService(store *Store, archiver *Archiver) *Service {
 // Start 启动后台持续采集：每 10s 对 log_sources 中 enabled+follow 的源做增量采集。
 func (s *Service) Start(dataDir string) {
 	s.dataDir = dataDir
+	// 解析规则集: <base>/parsers.json (dataDir=<base>/logs), 缺失时用内置默认规则
+	s.parsers = NewParserRuleSet(filepath.Join(filepath.Dir(dataDir), "parsers.json"))
 	s.ValidateCursors()
 	go s.pollLoop(10 * time.Second)
 }
@@ -205,49 +208,56 @@ var (
 	reTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)`)
 )
 
-// ParseLine 解析一行日志为元数据
+// ParseLine 解析一行日志为元数据（委托可配置规则集; 规则集未就绪时回退内置默认）
 func (s *Service) ParseLine(line string, filePath string, offset int64, defaultService string, defaultSource string, indexID string) *LogEntry {
-	e := &LogEntry{
-		Ts:       nowMs(),
-		Level:    LevelINFO,
-		Service:  defaultService,
-		Source:   defaultSource,
-		FilePath: filePath,
-		Offset:   offset,
-		Size:     len(line),
-		IndexID:  indexID,
+	if s.parsers != nil {
+		return s.parsers.Parse(line, filePath, offset, defaultService, defaultSource, indexID)
 	}
+	tmp, _ := compileRules(defaultParserRules())
+	return parseOneRule(tmp[0], line, filePath, offset, defaultService, defaultSource, indexID)
+}
 
-	// 提取级别
-	if m := reLevel.FindString(line); m != "" {
-		e.Level = m
+// ── 解析规则管理(前端可视化编辑/测试) ──
+
+// ParserInfo 当前规则状态
+func (s *Service) ParserInfo() (rules []ParserRule, builtin bool, errStr string) {
+	if s.parsers == nil {
+		return defaultParserRules(), true, ""
 	}
+	return s.parsers.LoadedRules(), s.parsers.IsBuiltin(), s.parsers.Err
+}
 
-	// 提取服务
-	if m := reService.FindStringSubmatch(line); m != nil {
-		if m[1] != "" {
-			e.Service = m[1]
-		} else if m[2] != "" {
-			e.Service = m[2]
+// ParserSave 保存规则文件并热载
+func (s *Service) ParserSave(rules []ParserRule) error {
+	if s.parsers == nil {
+		return fmt.Errorf("规则集未初始化")
+	}
+	return s.parsers.Save(rules)
+}
+
+// ParserTestResult 单行测试结果
+type ParserTestResult struct {
+	Line    string `json:"line"`
+	Ts      int64  `json:"ts"`
+	Level   string `json:"level"`
+	Service string `json:"service"`
+	Summary string `json:"summary"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ParserTest 用给定单条规则测试解析(不改全局规则)
+func (s *Service) ParserTest(rule ParserRule, lines []string) []ParserTestResult {
+	compiled, err := compileRules([]ParserRule{rule})
+	out := make([]ParserTestResult, 0, len(lines))
+	for i, line := range lines {
+		if err != nil {
+			out = append(out, ParserTestResult{Line: line, Error: err.Error()})
+			continue
 		}
+		e := parseOneRule(compiled[0], line, "parser-test", int64(i), "", "test", "")
+		out = append(out, ParserTestResult{Line: line, Ts: e.Ts, Level: e.Level, Service: e.Service, Summary: e.Summary})
 	}
-	e.Service = NormalizeSvcName(e.Service)
-
-	// 提取时间戳
-	if m := reTimestamp.FindStringSubmatch(line); m != nil {
-		if t, err := parseLogTime(m[1]); err == nil {
-			e.Ts = t
-		}
-	}
-
-	// 摘要：去首行换行，限长
-	summary := strings.TrimSpace(line)
-	if len(summary) > 200 {
-		summary = summary[:200]
-	}
-	e.Summary = summary
-
-	return e
+	return out
 }
 
 func parseLogTime(s string) (int64, error) {

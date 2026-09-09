@@ -546,6 +546,10 @@
   flex-direction: column;
   gap: 12px;
 }
+.kib-modal-wide {
+  width: 760px;
+  max-width: 96vw;
+}
 .kib-modal h3 { margin: 0; font-size: 15px; color: var(--text); }
 .kib-inline-form { display: flex; flex-direction: column; gap: 10px; }
 .kib-form-row {
