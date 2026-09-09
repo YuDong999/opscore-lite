@@ -11,8 +11,6 @@ import K8sActionPanel from '../components/K8sActionPanel'
 import ExecTerminalModal from '../components/ExecTerminalModal'
 import K8sCertsModal from '../components/K8sCertsModal'
 import LogStreamModal from '../components/LogStreamModal'
-import PortForwardModal from '../components/PortForwardModal'
-import CpModal from '../components/CpModal'
 import { useTheme } from '../theme'
 import jsYaml from 'js-yaml'
 
@@ -320,7 +318,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   // 资源弹层: 双击行或行内操作打开
   const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
   const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string; autoOpen?: string } | null>(null)
-  // 右键菜单流式操作: exec / logs / port-forward / cp (K8sModule 级 state, 供 onStream 与渲染)
+  // 右键菜单流式操作: exec / logs (port-forward/cp 复用操作面板, 见 CTX_DEFS form:true)
   const [podTools, setPodTools] = useState<{ kind: string; cluster: string; ns: string; pod: string; containers: string[] } | null>(null)
   // 加入节点弹层: 生成 kubeadm join 命令
   const [joinNode, setJoinNode] = useState(false)
@@ -843,14 +841,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
             const tns = NSLESS.has(mres as K8sRes) ? '' : ctxMenu.res ? ctxMenu.row.namespace : ns === 'all' ? ctxMenu.row.namespace : ns
             const name = ctxMenu.row.name
             setCtxMenu(null)
-            const open = (containers: string[]) => setPodTools({ kind: type, cluster: clusterID, ns: tns, pod: name, containers })
-            if (type === 'exec' || type === 'logs') {
-              getJSON<{ ok: boolean; detail: any }>(`/api/plugins/containers/k8s/pod/detail?cluster=${clusterID}&res=pods&ns=${encodeURIComponent(tns)}&name=${encodeURIComponent(name)}`)
-                .then((d) => open(d.ok ? (d.detail?.containers || []).map((c: any) => c.name).filter(Boolean) : []))
-                .catch(() => open([]))
-            } else {
-              open([])
-            }
+            getJSON<{ ok: boolean; detail: any }>(`/api/plugins/containers/k8s/pod/detail?cluster=${clusterID}&res=pods&ns=${encodeURIComponent(tns)}&name=${encodeURIComponent(name)}`)
+              .then((d) => setPodTools({ kind: type, cluster: clusterID, ns: tns, pod: name, containers: d.ok ? (d.detail?.containers || []).map((c: any) => c.name).filter(Boolean) : [] }))
+              .catch(() => setPodTools({ kind: type, cluster: clusterID, ns: tns, pod: name, containers: [] }))
           }}
           onClose={() => setCtxMenu(null)}
         />
@@ -895,16 +888,6 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
         <LogStreamModal
           cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
           containers={podTools.containers}
-          onClose={() => setPodTools(null)} />
-      )}
-      {podTools?.kind === 'port-forward' && (
-        <PortForwardModal
-          cluster={podTools.cluster} ns={podTools.ns} name={podTools.pod}
-          onClose={() => setPodTools(null)} />
-      )}
-      {podTools?.kind === 'cp' && (
-        <CpModal
-          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
           onClose={() => setPodTools(null)} />
       )}
 
@@ -1301,7 +1284,6 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [execOpen, setExecOpen] = useState(false)
   const [logStreamOpen, setLogStreamOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
-  const [podTools, setPodTools] = useState<{ kind: string; cluster: string; ns: string; pod: string; containers: string[] } | null>(null)
   const [desc, setDesc] = useState('')
   const [descBusy, setDescBusy] = useState(false)
   const [replicas, setReplicas] = useState<number | ''>('')
@@ -1931,30 +1913,6 @@ function ResourceModal({ info, onClose, act, onMsg }: {
           onClose={() => setLogStreamOpen(false)} />
       )}
 
-      {/* 右键菜单流式操作: 终端 / 日志 / 端口转发 / 文件互拷 */}
-      {podTools?.kind === 'exec' && (
-        <ExecTerminalModal
-          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
-          containers={podTools.containers}
-          onClose={() => setPodTools(null)} />
-      )}
-      {podTools?.kind === 'logs' && (
-        <LogStreamModal
-          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
-          containers={podTools.containers}
-          onClose={() => setPodTools(null)} />
-      )}
-      {podTools?.kind === 'port-forward' && (
-        <PortForwardModal
-          cluster={podTools.cluster} ns={podTools.ns} name={podTools.pod}
-          onClose={() => setPodTools(null)} />
-      )}
-      {podTools?.kind === 'cp' && (
-        <CpModal
-          cluster={podTools.cluster} ns={podTools.ns} pod={podTools.pod}
-          onClose={() => setPodTools(null)} />
-      )}
-
       {/* 日志(静态, 近200行)弹窗 */}
       {logModalOpen && (
         <div className="modal-overlay" onClick={() => setLogModalOpen(false)}>
@@ -1993,8 +1951,8 @@ const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
   pods: [
     { label: '进入终端', action: 'exec', stream: 'exec' },
     { label: '日志跟随', action: 'logs', stream: 'logs' },
-    { label: '端口转发', action: 'port-forward', stream: 'port-forward' },
-    { label: '文件互拷', action: 'cp', stream: 'cp' },
+    { label: '端口转发', action: 'port-forward', form: true },
+    { label: '文件互拷', action: 'cp', form: true },
     { label: '等待条件就绪', action: 'wait', form: true },
   ],
   horizontalpodautoscalers: [
