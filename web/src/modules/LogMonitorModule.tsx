@@ -1812,31 +1812,25 @@ function clearFilters() {
             <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>分片存储 (shards.json)</span>
             <span className="kib-badge" style={{ background: '#8b5cf6' }}>按月分片 · 自动归档</span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
-            数据按月切片, 新周期自动归档上一片; 过期分片整体删除(秒级), 取代逐行 DELETE。保存即写底层 shards.json。
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+            <label>分片粒度</label>
+            <select value={shardCfg.shardBy} onChange={(e) => setShardCfg({ ...shardCfg, shardBy: e.target.value })} style={{ width: 110 }}>
+              <option value="month">月</option>
+              <option value="week">周</option>
+              <option value="day">天</option>
+            </select>
+            <label>热片数</label>
+            <input type="number" min={0} value={shardCfg.hotShards} onChange={(e) => setShardCfg({ ...shardCfg, hotShards: Number(e.target.value) })} style={{ width: 55 }} />
+            <label>全局保留(天)</label>
+            <input type="number" min={1} value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 55 }} />
+            <button className="btn-glass btn-sm" onClick={saveShardCfg}>保存配置</button>
+            <span style={{ flex: 1 }} />
+            <span className="kib-badge" style={{ background: shards.some((x) => x.dropAllowed) ? '#e5484d' : 'var(--border)' }}>
+              {shards.filter((x) => x.dropAllowed).length} 片可清理
+            </span>
+            <span>过期分片整体删除(秒级), 保存即写 shards.json</span>
           </div>
-          <div className="kib-inline-form">
-            <div className="kib-form-row">
-              <label>分片粒度</label>
-              <select value={shardCfg.shardBy} onChange={(e) => setShardCfg({ ...shardCfg, shardBy: e.target.value })}>
-                <option value="month">月 (month)</option>
-                <option value="week">周 (week)</option>
-                <option value="day">天 (day)</option>
-              </select>
-            </div>
-            <div className="kib-form-row">
-              <label>热片数(不参与保留)</label>
-              <input type="number" min={0} value={shardCfg.hotShards} onChange={(e) => setShardCfg({ ...shardCfg, hotShards: Number(e.target.value) })} style={{ width: 70 }} />
-            </div>
-            <div className="kib-form-row">
-              <label>全局保留(天, 未归属/未设索引)</label>
-              <input type="number" min={1} value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 70 }} />
-            </div>
-            <div className="kib-form-row">
-              <button className="btn-glass btn-sm" onClick={saveShardCfg}>保存配置</button>
-            </div>
-          </div>
-          <table className="log-table" style={{ marginTop: 8 }}>
+          <table className="log-table">
             <thead>
               <tr>
                 <th>分片</th>
