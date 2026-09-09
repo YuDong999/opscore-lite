@@ -649,12 +649,13 @@
 }
 .kib-badge.kib-multi { background: #22a06b; }
 
-/* 已接入标记（绿✓）: marginLeft 由行内动态计算, 所有行对齐到"最长方名+1ch"列 */
+/* 已接入标记（绿✓）: code 列等宽占位(maxName), √ 紧跟即统一对齐 */
 .kib-joined {
   color: #22a06b;
   font-weight: 700;
   font-size: 14px;
   line-height: 1;
+  margin-left: 6px;
   flex-shrink: 0;
 }
 

@@ -1400,8 +1400,8 @@ function clearFilters() {
                     return (
                       <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
                         <input type="checkbox" disabled={ghost} checked={!ghost && selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
-                        <code>{c.name}</code>
-                        {joined && <span className="kib-joined" style={{ marginLeft: `${maxName - c.name.length + 1}ch` }} title="已接入">✓</span>}
+                        <code style={{ minWidth: `${maxName}ch` }}>{c.name}</code>
+                        {joined && <span className="kib-joined" title="已接入">✓</span>}
                         <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
                         <span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}
                       </label>
@@ -1445,19 +1445,14 @@ function clearFilters() {
   )}
 </div>
 {(() => {
-                const ghostPods = selCluster
-                  ? sources.filter((s) => s.type === 'k8s' && s.cluster === selCluster && !discK8sPods.some((p) => p.namespace === s.namespace && p.name === s.path))
-                    .map((s) => ({ name: s.path, namespace: s.namespace || '', containers: ['历史 pod'], ghost: true as boolean }))
-                  : []
-                const shown = [...discK8sPods
-                  .filter((p) => {
+                const shown = discK8sPods.filter((p) => {
                     if (!podSearch && !selNamespace) return true
                     const hay = `${p.namespace}/${p.name}`.toLowerCase()
                     const q = podSearch.toLowerCase()
                     const matchSearch = !podSearch || hay.includes(q) || p.namespace.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
                     const matchNs = !selNamespace || p.namespace === selNamespace
                     return matchNs && matchSearch
-                  }), ...ghostPods]
+                  })
                 const maxName = Math.max(...shown.map((p) => (p.namespace + '/' + p.name).length))
                 return discClusters.length === 0 ? (
                   <div className="log-empty">无已连接集群</div>
@@ -1466,16 +1461,15 @@ function clearFilters() {
                 ) : (
                   <div className="kib-check-list">
                     {shown.map((p) => {
-                      const ghost = (p as { ghost?: boolean }).ghost === true
                       const key = `${p.namespace}/${p.name}`
                       const containers = Array.isArray(p.containers) ? p.containers : (typeof p.containers === 'string' ? (p.containers as unknown as string).split(',').map((s) => s.trim()).filter(Boolean) : [])
                       const cls = containers.length > 1 ? 'kib-multi' : ''
                       const joined = sources.some((s) => s.type === 'k8s' && s.path === p.name && s.namespace === p.namespace && s.enabled)
                       return (
-                        <label key={key} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
-                          <input type="checkbox" disabled={ghost} checked={!ghost && selPods.has(key)} onChange={() => togglePods(key)} />
-                          <code>{p.namespace}/{p.name}</code>
-                          {joined && <span className="kib-joined" style={{ marginLeft: `${maxName - (p.namespace + '/' + p.name).length + 1}ch` }} title="已接入">✓</span>}
+                        <label key={key} className="kib-check-item">
+                          <input type="checkbox" checked={selPods.has(key)} onChange={() => togglePods(key)} />
+                          <code style={{ minWidth: `${maxName}ch` }}>{p.namespace}/{p.name}</code>
+                          {joined && <span className="kib-joined" title="已接入">✓</span>}
                           {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
                           <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
                         </label>
