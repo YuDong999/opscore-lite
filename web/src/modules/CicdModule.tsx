@@ -149,7 +149,7 @@ function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: numb
                     <Fragment key={j}>
                       {j > 0 && <div className="w-0.5 h-1.5 bg-border mx-auto" style={{ marginLeft: 0 }} />}
                       <button
-                        className="flex items-center gap-1.5 w-full px-1 py-0.5 rounded text-xs hover:bg-muted/60 transition-colors"
+                        className="flex items-center gap-1.5 w-full px-1 py-0.5 rounded text-xs hover:bg-muted transition-colors"
                         title={sp.command}
                         onClick={() => onStepClick?.(i, j)}
                       >
@@ -548,7 +548,7 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
                     className={cn('text-left rounded-lg px-2.5 py-1.5 border transition-colors',
-                      active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted/60')}>
+                      active ? 'border-accent bg-accent/5' : 'border-transparent hover:bg-muted')}>
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
                       <span className="font-medium text-sm truncate flex-1">{p.name}</span>
@@ -2419,7 +2419,7 @@ function AuditCard() {
         <div className="flex flex-col">
           {list.length === 0 && <div className="text-sm text-muted-foreground py-3">暂无记录</div>}
           {list.map((a, i) => (
-            <div key={i} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/60 text-xs">
+            <div key={i} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted text-xs">
               <span className={cn('shrink-0 font-medium', AUDIT_DANGER.has(a.action) && 'text-destructive', a.action === 'approve' && 'text-ok', a.action.startsWith('trigger') && 'text-accent')}>
                 {AUDIT_TEXT[a.action] || a.action}
               </span>
@@ -2458,7 +2458,7 @@ function RecentActivity({ runs, onOpenRun, onMore }: { runs: Run[]; onOpenRun: (
           {list.length === 0 && <div className="text-sm text-muted-foreground py-4">暂无数据</div>}
           {list.map((r: Run) => (
             <button key={r.id} onClick={() => onOpenRun(r.id)}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/60 text-left transition-colors">
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted text-left transition-colors">
               <LastRunDot run={r} />
               <span className="text-sm font-medium truncate flex-1 min-w-0">{r.pipeline}</span>
               {r.status === 'running' && <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{r.progress || 0}%</span>}
