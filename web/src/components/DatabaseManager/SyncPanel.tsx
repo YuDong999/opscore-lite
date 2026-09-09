@@ -304,7 +304,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
         <div style={{ padding: '0.35rem 0.6rem', background: 'var(--surface-tint)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="db-engine-badge">同步范围</span>
           <b>{eff.table ? `表 ${shortName(eff.table)}` : eff.schema ? `模式 ${eff.schema}` : `库 ${eff.db}`}</b>
-          <span className="dim">{eff.table ? '该表已锁定, 可追加其他表' : '固定项不可改'} · 更换源连接可解除</span>
+          <span className="dim">{eff.table ? '该表已锁定, 可追加其他表' : '固定项不可改'} · 换源请从对应节点重新进入</span>
         </div>
       )}
 
