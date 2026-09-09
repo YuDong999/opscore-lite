@@ -515,7 +515,7 @@ const [selCluster, setSelCluster] = useState('1')
     if (next) {
       setDiscLoading(true)
       try {
-        await Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster)])
+        await Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
       } finally {
         setDiscLoading(false)
       }
@@ -1364,7 +1364,9 @@ function clearFilters() {
               <div className="log-filter-row">
                 <div style={{ flex: 1 }}>
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
+                  {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
                   <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 选择归档索引可双写。</div>
+                  {sources.length === 0 && !discLoading && <div style={{ color: '#e5484d', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
