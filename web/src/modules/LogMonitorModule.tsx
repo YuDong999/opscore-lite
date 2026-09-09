@@ -1390,6 +1390,7 @@ function clearFilters() {
                   .map((s) => ({ name: s.path, image: '已停止 / 不在当前 docker', state: 'ghost' as string }))
                 const all = [...discContainers, ...ghosts]
                 const maxName = Math.max(...all.map((c) => c.name.length))
+                const maxImage = Math.max(...all.map((c) => (c.image || '—').length))
                 return (discContainers.length === 0 && ghosts.length === 0) ? (
                   <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
                 ) : (
@@ -1398,12 +1399,12 @@ function clearFilters() {
                     const joined = sources.some((s) => s.type === 'container' && s.path === c.name && s.enabled)
                     const ghost = c.state === 'ghost'
                     return (
-                      <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`}>
+                      <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`} style={{ display: 'grid', gridTemplateColumns: `18px ${maxName}ch minmax(0,${maxImage}ch) 78px 20px`, alignItems: 'center', gap: 6 }}>
                         <input type="checkbox" disabled={ghost} checked={!ghost && selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
-                        <code style={{ minWidth: `${maxName}ch` }}>{c.name}</code>
+                        <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</code>
+                        <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.image || '—'}</span>
+                        <span style={{ whiteSpace: 'nowrap' }}><span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}</span>
                         {joined && <span className="kib-joined" title="已接入">✓</span>}
-                        <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{c.image || '—'}</span>
-                        <span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}
                       </label>
                     )
                   })}
@@ -1453,7 +1454,12 @@ function clearFilters() {
                     const matchNs = !selNamespace || p.namespace === selNamespace
                     return matchNs && matchSearch
                   })
+                function contStr(p: { containers?: unknown }): string {
+                  const a = Array.isArray(p.containers) ? p.containers : (typeof p.containers === 'string' ? (p.containers as string).split(',').map((s) => s.trim()).filter(Boolean) : [])
+                  return a.join(', ')
+                }
                 const maxName = Math.max(...shown.map((p) => (p.namespace + '/' + p.name).length))
+                const maxCont = Math.max(...shown.map((p) => contStr(p).length + (Array.isArray(p.containers) && (p.containers as unknown[]).length > 1 ? 3 : 0)))
                 return discClusters.length === 0 ? (
                   <div className="log-empty">无已连接集群</div>
                 ) : shown.length === 0 ? (
@@ -1466,12 +1472,14 @@ function clearFilters() {
                       const cls = containers.length > 1 ? 'kib-multi' : ''
                       const joined = sources.some((s) => s.type === 'k8s' && s.path === p.name && s.namespace === p.namespace && s.enabled)
                       return (
-                        <label key={key} className="kib-check-item">
+                        <label key={key} className="kib-check-item" style={{ display: 'grid', gridTemplateColumns: `18px ${maxName}ch minmax(0,${maxCont}ch) 20px`, alignItems: 'center', gap: 6 }}>
                           <input type="checkbox" checked={selPods.has(key)} onChange={() => togglePods(key)} />
-                          <code style={{ minWidth: `${maxName}ch` }}>{p.namespace}/{p.name}</code>
+                          <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.namespace}/{p.name}</code>
+                          <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
+                            {containers.join(', ') || '—'}
+                          </span>
                           {joined && <span className="kib-joined" title="已接入">✓</span>}
-                          {containers.length > 1 && <span className={`kib-badge ${cls}`}>{containers.length}</span>}
-                          <span className="log-mono" style={{ color: 'var(--text-dim)' }}>{containers.join(', ') || '—'}</span>
                         </label>
                       )
                     })}
