@@ -93,6 +93,12 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [execView, setExecView] = useState<{ name: string } | null>(null)
   const [statsView, setStatsView] = useState<{ name: string } | null>(null)
   const [statsData, setStatsData] = useState<any>(null)
+  const [envModal, setEnvModal] = useState<{ name: string } | null>(null)
+  const [cpModal, setCpModal] = useState<{ name: string } | null>(null)
+  const [topModal, setTopModal] = useState<{ name: string } | null>(null)
+  const [dfOpen, setDfOpen] = useState(false)
+  const [pruneOpen, setPruneOpen] = useState(false)
+  const [pauseBusy, setPauseBusy] = useState('')
 
   const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
   const load = () => getJSON<any>(`/api/plugins/containers/list?_=${Date.now()}${hostQ}`).then(setList).catch(() => setList(null))
@@ -175,6 +181,24 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       .catch(() => setStatsData(null))
   }
 
+  // docker 直连操作(经 tool/action 端点): 暂停/继续 + 清理
+  const pauseToggle = (c: AppContainer) => {
+    const pause = c.state === 'paused'
+    setPauseBusy(c.name)
+    dockerTool(selected?.id || '', { scope: 'container', action: pause ? 'unpause' : 'pause', name: c.name })
+      .then((d: any) => onMsg?.(d.ok ? `✓ ${pause ? '继续运行' : '已暂停'} ${c.name}` : '✗ ' + (d.error || '操作失败')))
+      .catch((e) => onMsg?.('✗ ' + String(e)))
+      .finally(() => { setPauseBusy(''); setTimeout(load, 400); setTimeout(load, 2500) })
+  }
+
+  const pruneContainers = () => {
+    setPruneOpen(false); setBusy(true)
+    dockerTool(selected?.id || '', { scope: 'container', action: 'prune' })
+      .then((d: any) => onMsg?.(d.ok ? '✓ 已清理停止容器' : '✗ ' + (d.error || '失败')))
+      .catch((e) => onMsg?.('✗ ' + String(e)))
+      .finally(() => { setBusy(false); setTimeout(load, 400); setTimeout(load, 2500) })
+  }
+
   return (
     <>
       <Card className="containers-card" title={`容器列表 (${containers.length})`}
@@ -189,6 +213,9 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('stop')}>批量停止</button>
           <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('restart')}>批量重启</button>
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={() => batchAction('remove')}>批量删除</button>
+          <span className="dim" style={{ marginLeft: 'auto' }} />
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="清理所有已停止容器 (docker container prune -f)" onClick={() => setPruneOpen(true)}>清理停止容器</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" title="磁盘占用总览 (docker system df)" onClick={() => setDfOpen(true)}>磁盘占用</button>
         </div>
         {list?.note && <div className="banner banner-warn">{list.note}</div>}
         <div className="table-wrap">
@@ -223,6 +250,12 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="实时资源监控(CPU/内存/网络)" onClick={() => openStats(c.name)}>监控</button>
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} onClick={() => setExecView({ name: c.name })}>命令</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} onClick={() => openLogs(c)}>日志</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite || pauseBusy === c.name} title="docker pause / unpause" onClick={() => pauseToggle(c)}>
+                        {pauseBusy === c.name ? '…' : (c.state === 'paused' ? '继续' : '暂停')}
+                      </button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} title="进程列表 (docker top)" onClick={() => setTopModal({ name: c.name })}>进程</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" title="在线修改环境变量 (docker update)" onClick={() => setEnvModal({ name: c.name })}>改Env</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite || c.state !== 'running'} title="文件互拷 (docker cp)" onClick={() => setCpModal({ name: c.name })}>互拷</button>
                     </div>
                   </td>
                 </tr>
@@ -317,6 +350,15 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           onClose={() => setRunModal(null)}
           onDone={(ok, m) => { setRunModal(null); onMsg?.(m); if (ok) setTimeout(load, 500) }}
         />
+      )}
+
+      {envModal && <EnvEditModal host={selected?.id || ''} name={envModal.name} onClose={() => setEnvModal(null)} onMsg={onMsg} />}
+      {cpModal && <DockerCpModal host={selected?.id || ''} name={cpModal.name} onClose={() => setCpModal(null)} onMsg={onMsg} />}
+      {topModal && <ContainerTopModal host={selected?.id || ''} name={topModal.name} onClose={() => setTopModal(null)} onMsg={onMsg} />}
+      {dfOpen && <SystemDfModal host={selected?.id || ''} onClose={() => setDfOpen(false)} />}
+      {pruneOpen && (
+        <ConfirmModal title="清理停止容器" desc="将删除所有已停止的容器 (docker container prune -f)。运行中的容器不受影响。" danger
+          onCancel={() => setPruneOpen(false)} onOk={pruneContainers} okLabel="清理" />
       )}
     </>
   )
@@ -528,6 +570,9 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [pullRT, setPullRT] = useState('') // 目标运行时: '' 自动 | docker | podman | crictl | ctr
   const [migrateModal, setMigrateModal] = useState('') // 跨运行时迁移的镜像名
   const [migrateImage, setMigrateImage] = useState('')
+  const [saveModal, setSaveModal] = useState<string | null>(null) // 导出镜像(默认名)
+  const [loadOpen, setLoadOpen] = useState(false)
+  const [pruneOpen, setPruneOpen] = useState(false)
 
   // 轮询拉取进度
   useEffect(() => {
@@ -643,6 +688,14 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
   }
 
+  const pruneImages = () => {
+    setPruneOpen(false); setBusy(true)
+    dockerTool(selected?.id || '', { scope: 'image', action: 'prune' })
+      .then((d: any) => onMsg?.(d.ok ? '✓ 已清理悬挂镜像' : '✗ ' + (d.error || '失败')))
+      .catch((e) => onMsg?.('✗ ' + String(e)))
+      .finally(() => { setBusy(false); setTimeout(load, 500) })
+  }
+
   const doPush = (image: string) => {
     setBusy(true); setOut('')
     postJSON('/api/plugins/containers/docker/image/push', { host: selected?.id || '', image })
@@ -749,6 +802,10 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
             ))}
           </select>
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={batchRemove}>删除选中</button>
+          <span className="dim" style={{ marginLeft: 'auto' }} />
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="导出为 tar 下载 (docker save)" onClick={() => setSaveModal(null)}>导出镜像</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="从 tar 导入 (docker load)" onClick={() => setLoadOpen(true)}>导入镜像</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="清理无引用镜像 (docker image prune -f)" onClick={() => setPruneOpen(true)}>清理悬挂镜像</button>
         </div>
         <div className="table-wrap">
           <table className="data-table">
@@ -770,6 +827,7 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                     <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="镜像历史层" onClick={() => openHistory(im.key)}>历史</button>
                     <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="打标签" onClick={() => { setTagModal(im.key); setTagInput('') }}>tag</button>
                     <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="推送到仓库(镜像名需含仓库前缀)" onClick={() => doPush(im.key)}>push</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="导出此镜像为 tar 下载" onClick={() => setSaveModal(im.key)}>导出</button>
                     <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy} onClick={() => removeOne(im.key)}>删除</button>
                   </div></td>
                 </tr>
@@ -824,6 +882,15 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {saveModal !== null && saveModal !== undefined && (
+        <ImageSaveModal host={selected?.id || ''} def={saveModal || ''} onClose={() => setSaveModal(null)} />
+      )}
+      {loadOpen && <ImageLoadModal host={selected?.id || ''} onClose={() => setLoadOpen(false)} onMsg={onMsg} />}
+      {pruneOpen && (
+        <ConfirmModal title="清理悬挂镜像" desc="将删除所有未被容器引用的镜像 (docker image prune -f)。正在使用的镜像不受影响。" danger
+          onCancel={() => setPruneOpen(false)} onOk={pruneImages} okLabel="清理" />
       )}
     </>
   )
@@ -917,6 +984,15 @@ function NetworksPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [createName, setCreateName] = useState('')
   const [createDriver, setCreateDriver] = useState('bridge')
   const [confirmDel, setConfirmDel] = useState<string | null>(null)
+  const [netModal, setNetModal] = useState<{ action: 'connect' | 'disconnect'; net: string } | null>(null)
+  const [containers, setContainers] = useState<{ name: string }[]>([])
+
+  const openNetModal = (action: 'connect' | 'disconnect', net: string) => {
+    setNetModal({ action, net })
+    getJSON<any>(`/api/plugins/containers/list?_=${Date.now()}${hostQ}`)
+      .then((d) => setContainers((d?.containers || []).map((c: any) => ({ name: c.name || '' })).filter((c: any) => c.name)))
+      .catch(() => setContainers([]))
+  }
 
   const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
   const load = () => getJSON<{ ok?: boolean; networks?: any[] }>(`/api/plugins/containers/docker/networks?_=${Date.now()}${hostQ}`)
@@ -971,6 +1047,10 @@ function NetworksPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="mono dim">{n.ID}</td>
                   <td className="mono dim" style={{ fontSize: '0.6875rem' }}>{n.Subnet ? `${n.Subnet}${n.Gateway ? ' · gw ' + n.Gateway : ''}` : '—'}</td>
                   <td><div className="btn-row k8s-row-actions">
+                    <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy} title="连接一个容器到该网络 (docker network connect)"
+                      onClick={() => openNetModal('connect', n.Name)}>连接容器</button>
+                    <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="将容器从该网络断开 (docker network disconnect)"
+                      onClick={() => openNetModal('disconnect', n.Name)}>断开容器</button>
                     <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || isDefault(n)} title={isDefault(n) ? '内建网络不可删除' : ''}
                       onClick={() => setConfirmDel(n.Name)}>删除</button>
                   </div></td>
@@ -992,6 +1072,11 @@ function NetworksPanel({ onMsg }: { onMsg?: (m: string) => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {netModal && (
+        <NetConnectModal host={selected?.id || ''} net={netModal.net} action={netModal.action} containers={containers}
+          onClose={() => setNetModal(null)} onMsg={onMsg} />
       )}
     </>
   )
@@ -1765,6 +1850,305 @@ function ExecModal({ name, host, onClose }: { name: string; host: string; onClos
           <pre className="code-block" style={{ maxHeight: 360, overflow: 'auto', fontSize: '0.6875rem', whiteSpace: 'pre-wrap', minHeight: 120 }}>
             {out || `常用: ${COMMON_CMDS.slice(0, 4).join(' · ')}`}
           </pre>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Docker 补齐 (tool/action 单端点): 磁盘占用 / 进程 top / 改 Env / 互拷 / 镜像导出导入 / 网络连接 ──
+
+function dockerTool(host: string, body: Record<string, any>): Promise<any> {
+  return postJSON('/api/plugins/containers/docker/tool/action', { host: host || '', ...body })
+}
+
+function b64Download(b64: string, fileName: string) {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const blob = new Blob([bytes])
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = fileName
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+}
+
+function readFileB64(file: File, cb: (b64: string) => void, err: (m: string) => void) {
+  const rd = new FileReader()
+  rd.onload = () => {
+    const s = String(rd.result || '')
+    const i = s.indexOf(',')
+    cb(i >= 0 ? s.slice(i + 1) : s)
+  }
+  rd.onerror = () => err('读取文件失败')
+  rd.readAsDataURL(file)
+}
+
+function ToolOutModal({ title, body, onClose }: { title: string; body: string; onClose: () => void }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+        <div className="modal-head">
+          <div className="modal-title">{title}</div>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={onClose}>关闭</button>
+        </div>
+        <pre className="code-block" style={{ margin: 0, maxHeight: 480, overflow: 'auto', fontSize: '0.6875rem', whiteSpace: 'pre-wrap' }}>{body}</pre>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmModal({ title, desc, danger, busy, onCancel, onOk, okLabel }: {
+  title: string; desc: string; danger?: boolean; busy?: boolean
+  onCancel: () => void; onOk: () => void; okLabel?: string
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+        <h3>{title}</h3>
+        <p className="dim">{desc}</p>
+        <div className="modal-actions">
+          <button className="btn-glass-soft" onClick={onCancel} disabled={busy}>取消</button>
+          <button className={`btn ${danger ? 'btn-danger' : 'btn-accent'}`} disabled={busy} onClick={onOk}>{busy ? '执行中…' : (okLabel || '确认')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 容器环境变量在线修改 (docker update --env-add/--env-rm)
+function EnvEditModal({ host, name, onClose, onMsg }: { host: string; name: string; onClose: () => void; onMsg?: (m: string) => void }) {
+  const [addKeys, setAddKeys] = useState('')
+  const [rmKeys, setRmKeys] = useState('')
+  const [busy, setBusy] = useState(false)
+  const parseKV = (s: string) => {
+    const env: Record<string, string> = {}
+    for (const kv of s.split(',')) {
+      const t = kv.trim(); if (!t) continue
+      const i = t.indexOf('='); if (i < 0) continue
+      env[t.slice(0, i).trim()] = t.slice(i + 1).trim()
+    }
+    return env
+  }
+  const apply = () => {
+    setBusy(true)
+    dockerTool(host, { scope: 'container', action: 'env-update', name, env: parseKV(addKeys), removeEnv: rmKeys.split(',').map((k) => k.trim()).filter(Boolean) })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ 已更新环境变量 ${name}` : '✗ ' + (d.error || '失败')); if (d.ok) onClose() })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <h3>修改环境变量 — {name}</h3>
+        <p className="dim" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>docker update 仅影响重启后新进程的环境; 运行中的进程需容器外改。</p>
+        <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+          <input className="input mono" placeholder="新增/覆盖 env, 逗号分隔 K=V, 如 A=1,B=2" value={addKeys} onChange={(e) => setAddKeys(e.target.value)} disabled={busy} />
+          <input className="input mono" placeholder="删除 env 键, 逗号分隔, 如 OLD_KEY" value={rmKeys} onChange={(e) => setRmKeys(e.target.value)} disabled={busy} />
+        </div>
+        <div className="modal-actions">
+          <button className="btn-glass-soft" onClick={onClose} disabled={busy}>取消</button>
+          <button className="btn btn-accent" disabled={busy || (!addKeys.trim() && !rmKeys.trim())} onClick={apply}>应用</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 容器文件互拷 (docker cp, 经 base64 传输, 单文件 ≤100MB)
+function DockerCpModal({ host, name, onClose, onMsg }: { host: string; name: string; onClose: () => void; onMsg?: (m: string) => void }) {
+  const [direction, setDirection] = useState<'from-pod' | 'to-pod'>('from-pod')
+  const [path, setPath] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const doOut = () => {
+    setBusy(true); setErr('')
+    dockerTool(host, { scope: 'container', action: 'cp-out', name, path: path.trim() })
+      .then((d: any) => {
+        if (d.ok) { b64Download(d.archive, d.base ? `${name}-${d.base}.tar` : `${name}.tar`); onMsg?.(`✓ 已下载 ${d.base} (${(d.size / 1048576).toFixed(2)} MiB)`) }
+        else setErr(d.error || '失败')
+      })
+      .catch((e) => setErr(String(e))).finally(() => setBusy(false))
+  }
+  const doIn = () => {
+    if (!file) return
+    setBusy(true); setErr('')
+    readFileB64(file, (b64) => {
+      dockerTool(host, { scope: 'container', action: 'cp-in', name, dir: path.trim(), archiveB64: b64 })
+        .then((d: any) => { if (d.ok) { onMsg?.(`✓ 已上传 ${file.name} → ${path.trim()}`); onClose() } else setErr(d.error || '失败') })
+        .catch((e) => setErr(String(e))).finally(() => setBusy(false))
+    }, setErr)
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620 }}>
+        <h3>文件互拷 — {name}</h3>
+        <div className="btn-row" style={{ marginTop: '0.5rem' }}>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${direction === 'from-pod' ? 'btn-glass-soft-accent' : ''}`} onClick={() => setDirection('from-pod')}>从容器下载</button>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${direction === 'to-pod' ? 'btn-glass-soft-accent' : ''}`} onClick={() => setDirection('to-pod')}>上传到容器</button>
+        </div>
+        <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+          <input className="input mono" style={{ width: '100%' }} placeholder={direction === 'from-pod' ? '容器内路径, 如 /app/app.log' : '容器内目标目录, 如 /data'}
+            value={path} onChange={(e) => setPath(e.target.value)} disabled={busy} />
+          {direction === 'to-pod' && <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} disabled={busy} />}
+        </div>
+        {err && <div style={{ marginTop: '0.5rem', color: 'var(--danger)' }}>{err}</div>}
+        <div className="modal-actions">
+          <button className="btn-glass-soft" onClick={onClose} disabled={busy}>关闭</button>
+          <button className="btn btn-accent" disabled={busy || !path.trim() || (direction === 'to-pod' && !file)} onClick={direction === 'from-pod' ? doOut : doIn}>
+            {busy ? '处理中…' : (direction === 'from-pod' ? '下载' : '上传')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 容器进程视图 (docker top)
+function ContainerTopModal({ host, name, onClose, onMsg }: { host: string; name: string; onClose: () => void; onMsg?: (m: string) => void }) {
+  const [out, setOut] = useState('')
+  useEffect(() => {
+    dockerTool(host, { scope: 'container', action: 'top', name })
+      .then((d: any) => setOut(d.ok ? d.output : '✗ ' + (d.error || '失败')))
+      .catch((e) => setOut('✗ ' + String(e)))
+  }, [])
+  return <ToolOutModal title={`进程列表: ${name}`} body={out || '查询中…'} onClose={onClose} />
+}
+
+// 磁盘占用总览 (docker system df)
+function SystemDfModal({ host, onClose }: { host: string; onClose: () => void }) {
+  const [out, setOut] = useState('')
+  useEffect(() => {
+    dockerTool(host, { scope: 'system', action: 'df' })
+      .then((d: any) => {
+        if (!d.ok) { setOut('✗ ' + (d.error || '失败')); return }
+        const rows = (d.rows || []) as any[]
+        setOut([
+          `TYPE\ttotal\tactive\tsize\treclaimable`,
+          ...rows.map((r: any) => `${r['Type'] ?? r.type ?? '-'}\t${r['Total'] ?? '-'}\t${r['Active'] ?? '-'}\t${r['Size'] ?? '-'}\t${r['Reclaimable'] ?? '-'}`),
+        ].join('\n'))
+      })
+      .catch((e) => setOut('✗ ' + String(e)))
+  }, [])
+  return <ToolOutModal title="磁盘占用 (docker system df)" body={out || '查询中…'} onClose={onClose} />
+}
+
+// 网络连接容器 / 断开容器
+function NetConnectModal({ host, net, action, containers, onClose, onMsg }: {
+  host: string; net: string; action: 'connect' | 'disconnect'
+  containers: { name: string }[]; onClose: () => void; onMsg?: (m: string) => void
+}) {
+  const [container, setContainer] = useState(containers[0]?.name || '')
+  const [alias, setAlias] = useState('')
+  const [force, setForce] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const titleText = action === 'connect' ? `连接实例到网络: ${net}` : `从网络断开: ${net}`
+  const doIt = () => {
+    if (!container) return
+    setBusy(true)
+    dockerTool(host, { scope: 'network', action, network: net, container, alias: alias.trim(), force })
+      .then((d: any) => { onMsg?.(d.ok ? `✓ ${action} ${container} ${net}` : '✗ ' + (d.error || '失败')); if (d.ok) onClose() })
+      .catch((e) => onMsg?.('✗ ' + String(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <h3>{titleText}</h3>
+        <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+          <select className="input" value={container} onChange={(e) => setContainer(e.target.value)} disabled={busy || !containers.length}>
+            {containers.length === 0 && <option value="">（无容器可连接）</option>}
+            {containers.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+          </select>
+          {action === 'connect' && (
+            <input className="input mono" placeholder="网络别名(可选)" value={alias} onChange={(e) => setAlias(e.target.value)} disabled={busy} />
+          )}
+          {action === 'disconnect' && (
+            <label className="k8s-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+              <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={busy} /> 强制断开 (--force)
+            </label>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn-glass-soft" onClick={onClose} disabled={busy}>取消</button>
+          <button className="btn btn-accent" disabled={busy || !container} onClick={doIt}>{busy ? '执行中…' : (action === 'connect' ? '连接' : '断开')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 导出镜像 (docker save → 下载 tar)
+function ImageSaveModal({ host, def, onClose }: { host: string; def: string; onClose: () => void }) {
+  const [image, setImage] = useState(def)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const doSave = () => {
+    if (!image.trim()) return
+    setBusy(true); setErr('')
+    dockerTool(host, { scope: 'image', action: 'save', image: image.trim() })
+      .then((d: any) => {
+        if (d.ok) {
+          b64Download(d.archive, d.fileName)
+          onClose()
+        } else setErr(d.error || '失败')
+      })
+      .catch((e) => setErr(String(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <h3>导出镜像 (docker save)</h3>
+        <p className="dim" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>经 base64 传输, 单次上限 100MB, 大镜像请直接在宿主机 docker save -o。</p>
+        <div className="btn-row" style={{ marginTop: '0.75rem', alignItems: 'center' }}>
+          <input className="input mono" style={{ flex: 1 }} value={image} onChange={(e) => setImage(e.target.value)} placeholder="镜像名, 如 nginx:1.27-alpine" disabled={busy} />
+          <button className="btn btn-accent" disabled={busy || !image.trim()} onClick={doSave}>{busy ? '导出中…' : '导出下载'}</button>
+        </div>
+        {err && <div style={{ marginTop: '0.5rem', color: 'var(--danger)' }}>{err}</div>}
+      </div>
+    </div>
+  )
+}
+
+// 导入镜像 (docker load: 上传或宿主机已有路径)
+function ImageLoadModal({ host, onClose, onMsg }: { host: string; onClose: () => void; onMsg?: (m: string) => void }) {
+  const [mode, setMode] = useState<'upload' | 'path'>('upload')
+  const [file, setFile] = useState<File | null>(null)
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const doLoad = () => {
+    setBusy(true); setErr('')
+    const finish = (b64: string, p: string) => {
+      dockerTool(host, { scope: 'image', action: 'load', archiveB64: b64, path: p })
+        .then((d: any) => { if (d.ok) { onMsg?.('✓ 镜像导入完成'); onClose() } else setErr(d.error || '失败') })
+        .catch((e) => setErr(String(e))).finally(() => setBusy(false))
+    }
+    if (mode === 'path') {
+      if (!path.trim()) { setErr('请输入宿主机镜像 tar 路径'); setBusy(false); return }
+      finish('', path.trim())
+    } else {
+      if (!file) { setErr('请选择镜像 tar 文件'); setBusy(false); return }
+      readFileB64(file, (b64) => finish(b64, ''), setErr)
+    }
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
+        <h3>导入镜像 (docker load)</h3>
+        <div className="btn-row" style={{ marginTop: '0.5rem' }}>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'upload' ? 'btn-glass-soft-accent' : ''}`} onClick={() => setMode('upload')}>本地上传</button>
+          <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'path' ? 'btn-glass-soft-accent' : ''}`} onClick={() => setMode('path')}>宿主机已有文件</button>
+        </div>
+        <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+          {mode === 'upload'
+            ? <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} disabled={busy} />
+            : <input className="input mono" style={{ width: '100%' }} placeholder="宿主机镜像 tar 绝对路径, 如 /opt/images/app-v1.tar" value={path} onChange={(e) => setPath(e.target.value)} disabled={busy} />}
+        </div>
+        {err && <div style={{ marginTop: '0.5rem', color: 'var(--danger)' }}>{err}</div>}
+        <div className="modal-actions">
+          <button className="btn-glass-soft" onClick={onClose} disabled={busy}>取消</button>
+          <button className="btn btn-accent" disabled={busy} onClick={doLoad}>{busy ? '导入中…' : '导入'}</button>
         </div>
       </div>
     </div>
