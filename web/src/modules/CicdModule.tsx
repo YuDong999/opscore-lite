@@ -2097,7 +2097,7 @@ function ReposTab() {
   const credName = (id: string) => (creds.data || []).find(c => c.id === id)?.name || '-'
 
   return (
-    <div>
+    <div className="lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col lg:gap-3">
       {confirmEl}
       <ErrBanner msg={err} onClose={() => setErr('')} />
 
