@@ -22,7 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
-  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal, ChevronRight,
+  Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal, ChevronRight, CircleDashed,
   Star, Settings2, Filter,
 } from 'lucide-react'
 import {
@@ -94,6 +94,7 @@ function StageNodeIcon({ status }: { status: string }) {
   if (status === 'running') return <LoaderCircle className="size-4 animate-spin" />
   if (status === 'waiting') return <Pause className="size-3.5" />
   if (status === 'canceled') return <Minus className="size-4" />
+  if (status === 'pending') return <CircleDashed className="size-4 opacity-70" />
   return <span className="size-1.5 rounded-full bg-current opacity-50" />
 }
 
