@@ -2361,7 +2361,7 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
   const waitingRun: Run | undefined = (data.recentRuns || []).find((r: Run) => r.status === 'waiting')
 
   return (
-    <div className="space-y-3 lg:h-[calc(100vh-14rem)] lg:flex lg:flex-col">
+    <div className="flex flex-col gap-3 lg:h-[calc(100vh-14rem)]">
       {/* 指标条: 一行内联, 不再一张卡一个数字 */}
       <div className="flex gap-2 flex-wrap lg:shrink-0">
         <StatChip label="流水线" value={String(data.pipelines)} />
@@ -2383,7 +2383,7 @@ function OverviewTab({ data, onOpenRun, onMore }: { data: any; onOpenRun: (id: s
       )}
 
       {/* 双栏底对齐撑满剩余高度, 内容各自框内滑动(整页不滚) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch lg:flex-1 lg:min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch lg:flex-1 lg:min-h-0 mb-0">
         <div className="lg:col-span-2 min-w-0 min-h-0">
           <StageViewCard onOpenRun={onOpenRun} />
         </div>
