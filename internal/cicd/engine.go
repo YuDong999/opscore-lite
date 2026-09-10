@@ -346,7 +346,7 @@ func cloneCommand(url, branch, commit string, cred *Credential) string {
 		"if [ -d .git ]; then R=$(git config --get remote.origin.url 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
 			"if [ \"$R\" != %s ]; then echo \"工作目录是其他仓库($R), 拒绝重置\"; exit 64; fi; "+
 			"%s"+
-			"else git clone --depth 1 -b %s %s .%s; fi; "+
+			"else git clone --depth 1 -b %s %s .%s; fi; RC=$?; [ $RC -eq 0 ] || exit $RC; "+
 			"printf '%s%%s\\n' \"$(git log -1 --format='%%h %%s' 2>/dev/null)\"",
 		shq(name), fetch, shq(branch), shq(auth), pin, commitMarkerPrefix,
 	)
