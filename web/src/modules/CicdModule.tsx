@@ -127,7 +127,7 @@ function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: numb
             {i > 0 && (
               <div
                 className="flex-1 min-w-8 h-0.5 rounded-full mt-[17px]"
-                style={{ background: stages[i - 1].status === 'success' ? 'var(--ok)' : 'var(--border)' }}
+                style={{ background: STAGE_COLOR[stages[i - 1].status] || 'var(--border)' }}
               />
             )}
             <div className="flex flex-col items-center w-40 shrink-0">
