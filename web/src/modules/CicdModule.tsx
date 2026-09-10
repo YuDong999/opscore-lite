@@ -134,15 +134,15 @@ function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: numb
         return (
           <Fragment key={idx}>
             {idx > 0 && (
-              <div className="flex-1 min-w-5 h-0.5 rounded-full mt-[15px]" style={{ background: STEP_C[items[idx - 1].sp.status] || 'var(--border)' }} />
+              <div className="flex-1 min-w-5 h-0.5 rounded-full mt-[39px]" style={{ background: STEP_C[items[idx - 1].sp.status] || 'var(--border)' }} />
             )}
             <div className="flex flex-col items-center w-24 shrink-0">
               {stageStart && (
-                <div className="text-[10px] text-muted-foreground mb-1 px-1.5 rounded border border-border bg-muted/40 whitespace-nowrap">
+                <div className="text-[10px] text-muted-foreground px-1.5 rounded border border-border bg-muted/40 whitespace-nowrap h-6 flex items-center">
                   {it.st.name}{it.st.approval ? ' · 审批' : ''}
                 </div>
               )}
-              {!stageStart && <div className="mb-1 h-[18px]" />}
+              {!stageStart && <div className="h-6" />}
               <button
                 className={cn('size-8 rounded-full border-2 flex items-center justify-center bg-background', it.sp.status === 'running' && 'animate-pulse')}
                 title={`${it.sp.name}: ${it.sp.status}`}
