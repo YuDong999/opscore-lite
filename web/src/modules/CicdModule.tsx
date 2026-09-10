@@ -117,52 +117,52 @@ function StepDot({ status }: { status: string }) {
 
 // 详情页横向节点流(Blue Ocean 式): 阶段节点 + 纵向步骤链(可点击跳日志), 实时耗时
 function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: number; onStepClick?: (si: number, j: number) => void }) {
+  // 步骤级节点流: 每个步骤一个节点, 连线按该步骤状态着色(绿=过/红=挂/灰=未到), 阶段名作分组标注
+  const STEP_C: Record<string, string> = {
+    success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
+    canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--border)',
+  }
+  const items = stages.flatMap((st, si) => st.steps.map((sp, j) => ({ st, sp, si, j })))
+  if (items.length === 0) return null
+  const dur = (sp: StepRun) => sp.status === 'running' ? fmtDur(Math.max(0, now - (sp.startedAt ? new Date(sp.startedAt).getTime() : now))) : fmtDur(sp.durationMs)
   return (
-    <div className="flex items-start w-full py-1 overflow-x-auto">
-      {stages.map((st, i) => {
-        const color = STAGE_COLOR[st.status] || 'var(--border)'
-        const solid = ['success', 'failed', 'running', 'waiting'].includes(st.status)
+    <div className="flex items-start w-full py-1 overflow-x-auto pb-1">
+      {items.map((it, idx) => {
+        const color = STEP_C[it.sp.status] || 'var(--border)'
+        const solid = ['success', 'failed', 'running', 'waiting'].includes(it.sp.status)
+        const stageStart = idx === 0 || items[idx - 1].si !== it.si
         return (
-          <Fragment key={i}>
-            {i > 0 && (
-              <div
-                className="flex-1 min-w-8 h-0.5 rounded-full mt-[17px]"
-                style={{ background: STAGE_COLOR[stages[i - 1].status] || 'var(--border)' }}
-              />
+          <Fragment key={idx}>
+            {idx > 0 && (
+              <div className="flex-1 min-w-5 h-0.5 rounded-full mt-[15px]" style={{ background: STEP_C[items[idx - 1].sp.status] || 'var(--border)' }} />
             )}
-            <div className="flex flex-col items-center w-40 shrink-0">
-              <div
-                className={cn('size-9 rounded-full border-2 flex items-center justify-center bg-background', st.status === 'running' && 'animate-pulse')}
+            <div className="flex flex-col items-center w-24 shrink-0">
+              {stageStart && (
+                <div className="text-[10px] text-muted-foreground mb-1 px-1.5 rounded border border-border bg-muted/40 whitespace-nowrap">
+                  {it.st.name}{it.st.approval ? ' · 审批' : ''}
+                </div>
+              )}
+              {!stageStart && <div className="mb-1 h-[18px]" />}
+              <button
+                className={cn('size-8 rounded-full border-2 flex items-center justify-center bg-background', it.sp.status === 'running' && 'animate-pulse')}
+                title={`${it.sp.name}: ${it.sp.status}`}
                 style={{
                   borderColor: color,
                   color: solid ? color : 'var(--text-dim)',
                   background: solid ? `color-mix(in srgb, ${color} 14%, var(--surface-solid))` : undefined,
                 }}
+                onClick={() => onStepClick?.(it.si, it.j)}
               >
-                <StageNodeIcon status={st.status} />
-              </div>
-              <div className="text-xs font-medium text-center leading-tight break-all px-0.5 mt-1">{st.name}</div>
-              <div className="text-[10px] text-muted-foreground tabular-nums">{fmtDur(stageElapsedMs(st, now))}</div>
-              {st.steps.length > 0 && (
-                <div className="mt-2 w-full flex flex-col items-stretch">
-                  {st.steps.map((sp, j) => (
-                    <Fragment key={j}>
-                      {j > 0 && <div className="w-0.5 h-1.5 bg-border mx-auto" style={{ marginLeft: 0 }} />}
-                      <button
-                        className="flex items-center gap-1.5 w-full px-1 py-0.5 rounded text-xs hover:bg-muted transition-colors"
-                        title={sp.command}
-                        onClick={() => onStepClick?.(i, j)}
-                      >
-                        <StepDot status={sp.status} />
-                        <span className={cn('truncate flex-1 text-left', sp.status === 'running' && 'font-medium')}>{sp.name}</span>
-                        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-                          {sp.status === 'running' ? fmtDur(Math.max(0, now - (sp.startedAt ? new Date(sp.startedAt).getTime() : now))) : fmtDur(sp.durationMs)}
-                        </span>
-                      </button>
-                    </Fragment>
-                  ))}
-                </div>
-              )}
+                <StageNodeIcon status={it.sp.status} />
+              </button>
+              <button
+                className="text-[11px] font-medium text-center leading-tight break-all px-0.5 mt-1 w-full hover:text-accent transition-colors"
+                title={it.sp.command}
+                onClick={() => onStepClick?.(it.si, it.j)}
+              >
+                {it.sp.name}
+              </button>
+              <div className="text-[10px] text-muted-foreground tabular-nums">{dur(it.sp)}</div>
             </div>
           </Fragment>
         )
