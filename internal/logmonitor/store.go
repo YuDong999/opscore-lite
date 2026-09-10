@@ -145,19 +145,52 @@ func (s *Store) shardsInit() error {
 	if err := s.ensureColumn("log_shards", "index_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// 物化表结构升级: 旧结构(无 shard 列) → DROP, 由下方 CREATE 一次性重建(数据由启动回填重灌)
+	// 注意: 用 PRAGMA table_info 直接查询(参数化 pragma 在 modernc 下不可靠)
+	for _, tbl := range []string{"log_meta_minute", "log_meta_minute_svc"} {
+		rows, err := s.db.Query("PRAGMA table_info(" + tbl + ")")
+		if err != nil {
+			continue // 表不存在: 由下方 CREATE IF NOT EXISTS 建表
+		}
+		hasShard := false
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, pk int
+			var dflt interface{}
+			rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk)
+			found = true
+			if name == "shard" {
+				hasShard = true
+			}
+		}
+		rows.Close()
+		if !found {
+			continue // 表不存在(PRAGMA 对缺失表返回空集)
+		}
+		if !hasShard {
+			if _, err := s.db.Exec("DROP TABLE IF EXISTS " + tbl); err != nil {
+				return err
+			}
+			log.Printf("[logmonitor] 物化表 %s 结构升级: 重建并按片重灌", tbl)
+		}
+	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS log_meta_minute (
 		minute INTEGER NOT NULL,
 		level  TEXT    NOT NULL DEFAULT 'INFO',
+		shard  TEXT    NOT NULL DEFAULT '',
 		cnt    INTEGER NOT NULL DEFAULT 0,
 		bytes  INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (minute, level)
+		PRIMARY KEY (minute, level, shard)
 	);
 	CREATE INDEX IF NOT EXISTS idx_minute_ts ON log_meta_minute(minute);
 	CREATE TABLE IF NOT EXISTS log_meta_minute_svc (
 		minute  INTEGER NOT NULL,
 		service TEXT    NOT NULL DEFAULT '',
+		shard   TEXT    NOT NULL DEFAULT '',
 		cnt     INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (minute, service)
+		PRIMARY KEY (minute, service, shard)
 	);
 	CREATE INDEX IF NOT EXISTS idx_minute_svc_ts ON log_meta_minute_svc(minute);`); err != nil {
 		return fmt.Errorf("migrate shard tables: %w", err)
@@ -166,6 +199,7 @@ func (s *Store) shardsInit() error {
 		return err
 	}
 	go s.EnsureIndexShardMigration()
+	// 重建后的空物化表由后台回填; histsReady 会在回填完成后置位
 	return nil
 }
 
@@ -191,6 +225,19 @@ func (s *Store) EnsureIndexShardMigration() {
 			legacy = append(legacy, shardTableName(k))
 		}
 		rows.Close()
+	}
+	// 孤儿表兜底: 存在于磁盘但已无路由记录的 log_meta_* 表(迁移中断残留) 也纳入拆片
+	orphanRows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'log\_meta\_%' ESCAPE '\'
+		AND name NOT LIKE 'log\_meta\_minute%' ESCAPE '\'
+		AND name NOT IN (SELECT 'log_meta_' || shard FROM log_shards)
+		AND name NOT LIKE 'log\_meta\_idx\_%' AND name NOT LIKE '%\_\_10e2b3'`)
+	if err == nil {
+		for orphanRows.Next() {
+			var nm string
+			orphanRows.Scan(&nm)
+			legacy = append(legacy, nm)
+		}
+		orphanRows.Close()
 	}
 	moved := int64(0)
 	for _, tbl := range legacy {
@@ -231,9 +278,15 @@ func (s *Store) EnsureIndexShardMigration() {
 			} else if id != "" {
 				// 目标片已存在(可能迁过一轮): 用 INSERT OR IGNORE 吸取剩余
 			}
-			if _, err := s.db.Exec("INSERT OR IGNORE INTO "+name+" SELECT * FROM "+tbl+" WHERE index_id = ?", id); err != nil {
+			if _, err := s.db.Exec(`INSERT OR IGNORE INTO `+name+` (ts, level, service, source, file_path, offset, size, summary, index_id)
+				SELECT ts, level, service, source, file_path, offset, size, summary, index_id FROM `+tbl+` WHERE index_id = ?`, id); err != nil {
 				log.Printf("[logmonitor] 迁移搬移失败 %s→%s: %v", tbl, key, err)
 				continue
+			}
+			// 幂等去重: 重复搬移或 id 冲突导致的重复行清理(GROUP BY 百万行级, 一次性)
+			if _, err := s.db.Exec(`DELETE FROM `+name+` WHERE rowid NOT IN (
+				SELECT MIN(rowid) FROM `+name+` GROUP BY ts, offset, source, file_path)`); err != nil {
+				log.Printf("[logmonitor] 迁移去重失败(%s): %v", name, err)
 			}
 			moved++
 			// 记录/更新路由并刷新边界
@@ -298,6 +351,10 @@ func (s *Store) EnsureIndexShardMigration() {
 	}
 	if moved > 0 {
 		log.Printf("[logmonitor] 分片迁移完成: %d 组索引数据已拆入新片", moved)
+	}
+	// 孤儿/新拆片补齐物化(INSERT OR IGNORE 幂等)
+	if moved > 0 || !s.histReady.Load() {
+		s.EnsureHistBackfill()
 	}
 	s.migrated.Store(true)
 }
@@ -641,21 +698,22 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 	return ids, nil
 }
 
-// upsertMinute 把批次日志增量累加进物化表(分钟,级别,字节,服务); 调用方需已持 s.mu 写锁
+// upsertMinute 把批次日志增量累加进物化表(分钟,级别,字节,服务 × 片); 调用方需已持 s.mu 写锁
 func (s *Store) upsertMinute(entries []*LogEntry) error {
-	m := map[int64]map[string][2]int64{}         // minute → level → [cnt, bytes]
-	svc := map[int64]map[string]int64{}          // minute → service → cnt
+	type acc struct {
+		cnt, bytes int64
+	}
+	m := map[string]acc{}   // "minute|level|slug"
+	svc := map[string]acc{} // "minute|service|slug"
 	for _, e := range entries {
+		slug := indexSlug(e.IndexID)
 		min := e.Ts / 60000
-		if m[min] == nil {
-			m[min] = map[string][2]int64{}
-		}
-		v := m[min][e.Level]
-		m[min][e.Level] = [2]int64{v[0] + 1, v[1] + int64(e.Size)}
-		if svc[min] == nil {
-			svc[min] = map[string]int64{}
-		}
-		svc[min][e.Service]++
+		k := strconv.FormatInt(min, 10) + "|" + e.Level + "|" + slug
+		v := m[k]
+		m[k] = acc{v.cnt + 1, v.bytes + int64(e.Size)}
+		k2 := strconv.FormatInt(min, 10) + "|" + e.Service + "|" + slug
+		v2 := svc[k2]
+		svc[k2] = acc{v2.cnt + 1, 0}
 	}
 	if len(m) == 0 {
 		return nil
@@ -671,22 +729,28 @@ func (s *Store) upsertMinute(entries []*LogEntry) error {
 		s.histReady.CompareAndSwap(false, true)
 		return nil
 	}
-	for min, lv := range m {
-		for l, v := range lv {
-			if _, err := tx.Exec(`INSERT INTO log_meta_minute (minute, level, cnt, bytes) VALUES (?, ?, ?, ?)
-				ON CONFLICT(minute, level) DO UPDATE SET cnt = cnt + excluded.cnt, bytes = bytes + excluded.bytes`, min, l, v[0], v[1]); err != nil {
-				tx.Rollback()
-				return err
-			}
+	for k, v := range m {
+		p := strings.SplitN(k, "|", 3)
+		if len(p) != 3 {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO log_meta_minute (minute, level, shard, cnt, bytes) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(minute, level, shard) DO UPDATE SET cnt = cnt + excluded.cnt, bytes = bytes + excluded.bytes`,
+			p[0], p[1], p[2], v.cnt, v.bytes); err != nil {
+			tx.Rollback()
+			return err
 		}
 	}
-	for min, sv := range svc {
-		for s2, c := range sv {
-			if _, err := tx.Exec(`INSERT INTO log_meta_minute_svc (minute, service, cnt) VALUES (?, ?, ?)
-				ON CONFLICT(minute, service) DO UPDATE SET cnt = cnt + excluded.cnt`, min, s2, c); err != nil {
-				tx.Rollback()
-				return err
-			}
+	for k, v := range svc {
+		p := strings.SplitN(k, "|", 3)
+		if len(p) != 3 {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO log_meta_minute_svc (minute, service, shard, cnt) VALUES (?, ?, ?, ?)
+			ON CONFLICT(minute, service, shard) DO UPDATE SET cnt = cnt + excluded.cnt`,
+			p[0], p[1], p[2], v.cnt); err != nil {
+			tx.Rollback()
+			return err
 		}
 	}
 	return commit()
@@ -707,12 +771,17 @@ func (s *Store) EnsureHistBackfill() {
 		if t == "log_meta" && s.migrated.Load() {
 			continue
 		}
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute (minute, level, cnt, bytes)
-			SELECT ts/60000, level, COUNT(*), COALESCE(SUM(size),0) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
+		// 从表名推导片 slug(表名 log_meta_<slug>_<period>), 物化按片独立行 → 幂等且多源不互相吞
+		slug := strings.TrimPrefix(t, "log_meta_")
+		if i := strings.LastIndexByte(slug, '_'); i > 0 {
+			slug = slug[:i]
+		}
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute (minute, level, shard, cnt, bytes)
+			SELECT ts/60000, level, ?, COUNT(*), COALESCE(SUM(size),0) FROM `+t+` GROUP BY 1, 2`, slug); err != nil {
 			log.Printf("[logmonitor] 分钟物化回填失败(%s): %v", t, err)
 		}
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute_svc (minute, service, cnt)
-			SELECT ts/60000, service, COUNT(*) FROM ` + t + ` GROUP BY 1, 2`); err != nil {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO log_meta_minute_svc (minute, service, shard, cnt)
+			SELECT ts/60000, service, ?, COUNT(*) FROM `+t+` GROUP BY 1, 2`, slug); err != nil {
 			log.Printf("[logmonitor] 服务物化回填失败(%s): %v", t, err)
 		}
 	}
