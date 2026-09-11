@@ -148,6 +148,52 @@ var actionRegistry = map[string]ActionSpec{
 				p["COMMAND"], shq(glob)), nil // COMMAND 是用户命令(与 shell 步骤同信任级), 原样展开; 仅 glob 作为值引用
 		},
 	},
+	"nginx.bgswitch": {
+		Type: "nginx.bgswitch", Title: "蓝绿切换(nginx root)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "CONF", Label: "站点配置文件路径", Placeholder: "/etc/nginx/demo-site.conf", Required: true},
+			{Name: "MARKER", Label: "server 行特征(限定替换范围)", Placeholder: "listen 8097", Required: true},
+			{Name: "ROOT_BLUE", Label: "蓝环境 root", Placeholder: "/opt/app/blue", Required: true},
+			{Name: "ROOT_GREEN", Label: "绿环境 root", Placeholder: "/opt/app/green", Required: true},
+			{Name: "MODE", Label: "切至", Type: "select", Options: []string{"green", "blue"}, Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "CONF", "MARKER", "ROOT_BLUE", "ROOT_GREEN", "MODE"); err != nil {
+				return "", err
+			}
+			if p["MODE"] != "blue" && p["MODE"] != "green" {
+				return "", fmt.Errorf("MODE 必须为 blue 或 green")
+			}
+			if strings.Contains(p["MARKER"], "'") {
+				return "", fmt.Errorf("MARKER 不能包含单引号")
+			}
+			root := p["ROOT_BLUE"]
+			if p["MODE"] == "green" {
+				root = p["ROOT_GREEN"]
+			}
+			// 约定: conf 内目标 server 块含 MARKER 行; MARKER 即地址正则片段(原样进入, 勿含单引号)
+			return fmt.Sprintf("sed -i -E '/%s/,+1s#root [^;]*;#root %s;#' %s && nginx -t >/dev/null && nginx -s reload && echo 蓝绿已切换: %s",
+				p["MARKER"], shq(root), shq(p["CONF"]), p["MODE"]), nil
+		},
+	},
+	"k8s.scale": {
+		Type: "k8s.scale", Title: "K8s 副本放量(金丝雀)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "DEPLOYMENT", Label: "Deployment 名称", Required: true},
+			{Name: "REPLICAS", Label: "目标副本数", Placeholder: "2", Required: true},
+			{Name: "NAMESPACE", Label: "命名空间(可空)", Placeholder: "default"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "DEPLOYMENT", "REPLICAS"); err != nil {
+				return "", err
+			}
+			ns := ""
+			if p["NAMESPACE"] != "" {
+				ns = " -n " + shq(p["NAMESPACE"])
+			}
+			return fmt.Sprintf("kubectl%s scale deploy/%s --replicas=%s", ns, shq(p["DEPLOYMENT"]), shq(p["REPLICAS"])), nil
+		},
+	},
 	"health.http": {
 		Type: "health.http", Title: "HTTP 健康检查", Category: "验证",
 		Fields: []ActionField{
