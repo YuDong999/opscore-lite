@@ -149,6 +149,37 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 
 // CicdExec 在目标主机上执行步骤命令: 本机逐行流式; 远程 SSH 单会话(完成后整块回传)。
 // 命令语义为 POSIX shell(sh -c); 远程参数经 Shq 单引号转义防注入。
+// CicdExecDirect 控制面直连执行(nginx 探测/配置应用): 不走流式通道, 合并输出直接返回。
+// 本机经 sh -c; 远程经 SSH 单会话。命令为控制面命令, 与步骤命令(用户 shell)信任级一致。
+func CicdExecDirect(hostID, command string) (string, int, error) {
+	if IsLocalTarget(hostID) {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			return "", -1, errors.New("本机未找到 sh(Windows 需 Git Bash)")
+		}
+		cmd := exec.Command(sh, "-c", command)
+		out, err := cmd.CombinedOutput()
+		rc := 0
+		if err != nil {
+			rc = -1
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				rc = ee.ExitCode()
+			}
+		}
+		return string(out), rc, nil
+	}
+	h := resolveAnsibleHost(hostID)
+	if h == nil {
+		return "", -1, fmt.Errorf("目标主机不存在: %s", hostID)
+	}
+	if remotePool == nil {
+		return "", -1, errors.New("远程执行池未初始化")
+	}
+	rm := resolveRemoteHost(*h)
+	return remotePool.ExecLine(rm, ArgsToLine([]string{"sh", "-c", command}))
+}
+
 func CicdExec(ctx context.Context, hostID, workspace, command string, env []cicd.Var, onLine func(string)) (int, error) {
 	if IsLocalTarget(hostID) {
 		return cicdExecLocal(ctx, workspace, command, env, onLine)

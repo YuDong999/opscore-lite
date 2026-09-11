@@ -198,6 +198,9 @@ func runProgress(r *Run) int {
 // 返回退出码; ctx 取消时应尽快中断(本机 kill, 远程放弃等待)。
 type ExecFunc func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error)
 
+// ExecDirectFunc 控制面直连执行: 返回(合并输出, 退出码, 错误)
+type ExecDirectFunc func(hostID, command string) (string, int, error)
+
 // CollectFunc 在目标主机上执行命令并返回原始 stdout 字节(制品归档专用):
 // 本机直接捕获; 远程经 base64 文本通道传输后由实现方解码。
 // 未注入(nil)时制品收集自动跳过并记日志。
@@ -416,6 +419,7 @@ type Engine struct {
 	scriptsFile    *store.JSONFile
 
 	Exec    ExecFunc    // main.go 注入
+	ExecDirect ExecDirectFunc // main.go 注入: 探测/配置应用等控制面命令直连通道(不走流式)
 	Collect CollectFunc // main.go 注入(制品归档; nil=跳过收集)
 	Push    PushFunc    // main.go 注入(制品分发; nil=远程拉取失败)
 
