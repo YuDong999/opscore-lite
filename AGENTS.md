@@ -27,12 +27,15 @@
 - 规则：index.css 的 legacy `.grid` 规则(components层)会给所有 `grid` 类元素加 gap/margin——用 `grid` 类的布局容器需显式 `mb-0`/gap 覆盖。
 - 证据：概览/流水线卡片 25px 死区间根因(abfd138/f7845e0)。
 
-## Skill 路由（改动前读对应 skill）
-- 修 bug / 调样式 / 重构 → `debug-and-refactor`
-- 写代码 / 加功能 → `ponytail`（阶梯：仓内已有→标准库→平台原生→已装依赖→一行→最小实现）
-- 前端布局 / 新页面 → `frontend-design` + 上方前端规范
-- 不确定 → `find-skills`
-- 经验沉淀 / 修改本文件 → `project-memory-sculptor`
+## 工作流（每次任务照此执行）
+
+1. **开工前**——按任务类型直达（高频三件套，已验证）：
+   - 修 bug / 调样式 / 重构 → `debug-and-refactor`
+   - 写代码 / 加功能 → `ponytail`（阶梯：仓内已有→标准库→平台原生→已装依赖→一行→最小实现）
+   - 前端布局 / 新页面 → `frontend-design` + 上方前端规范
+2. **任务不在上表或拿不准** → `find-skills` 检索匹配的 skill 再动手
+3. **收尾后**——本会话出现了用户采纳/纠正的信号、或踩到新坑 → `project-memory-sculptor`
+   把经验以 [待确认] 提案写入本文件（用户批准后上移 [已生效]；注意节制，不是每个任务都值得沉淀）
 
 ## [待确认]
 
