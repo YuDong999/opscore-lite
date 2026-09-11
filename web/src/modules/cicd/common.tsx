@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { API, SELECT_NONE, type HostOpt } from './shared'
+import { cn } from '@/lib/utils'
 
 // ── 主机列表(本机 + Ansible 清单, 与 HostSelector 同源) ──
 export function useHosts(): HostOpt[] {
@@ -37,7 +38,7 @@ export function HostSelect({ value, onChange }: { value: string; onChange: (v: s
 // 可选值下拉(空串语义统一走哨兵, 消灭 onChange 手动复位 hack)
 // 可选值下拉(空串语义统一走哨兵; 选中态高亮沿用增强版)
 // 选中非空值时触发器高亮: 过滤态/已配置态必须一眼可辨(否则用户看不出当前限定了什么)
-function OptSelect({ value, onChange, placeholder, items, className }: {
+export function OptSelect({ value, onChange, placeholder, items, className }: {
   value: string
   onChange: (v: string) => void
   placeholder: string
