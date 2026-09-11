@@ -6,6 +6,7 @@ package cicd
 
 import (
 	"encoding/base64"
+	"log"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -180,103 +181,110 @@ func min(a, b int) int {
 	return b
 }
 
-// nxWalk 递归提取 upstream/server 块并解析 include(深度≤3)
-func (e *Engine) nxWalk(host string, filePath, text string, depth int, probe *NginxProbe, seen map[string]bool) {
+// nxWalkFile 递归提取文件内所有层级的 upstream/server 块, 并解析 include(深度≤3)
+func (e *Engine) nxWalkFile(host string, filePath, text string, depth int, probe *NginxProbe, seen map[string]bool) {
 	file := NginxConfFile{Path: filePath}
-	stmts := nxParse(text)
-	for i := range stmts {
-		st := &stmts[i]
-		if len(st.args) == 0 {
-			continue
-		}
-		switch st.args[0] {
-		case "upstream":
-			if len(st.args) < 2 {
+	var walk func(stmts []nxStmt)
+	walk = func(stmts []nxStmt) {
+		for i := range stmts {
+			st := &stmts[i]
+			if len(st.args) == 0 {
 				continue
 			}
-			up := NginxUpstream{Name: st.args[1], File: filePath}
-			var raw strings.Builder
-			raw.WriteString("upstream " + st.args[1] + " {")
-			for _, c := range st.children {
-				if len(c.args) == 0 {
+			switch st.args[0] {
+			case "upstream":
+				if len(st.args) < 2 {
 					continue
 				}
-				if c.args[0] == "server" && len(c.args) >= 2 {
-					s := NginxUpstreamServer{Addr: c.args[1], RawArgs: strings.Join(c.args[2:], " ")}
-					for _, a := range c.args[2:] {
-						switch {
-						case a == "down":
-							s.Down = true
-						case a == "backup":
-							s.Backup = true
-						case strings.HasPrefix(a, "weight="):
-							fmt.Sscanf(a, "weight=%d", &s.Weight)
+				up := NginxUpstream{Name: st.args[1], File: filePath}
+				var raw strings.Builder
+				raw.WriteString("upstream " + st.args[1] + " {")
+				for _, c := range st.children {
+					if len(c.args) == 0 {
+						continue
+					}
+					if c.args[0] == "server" && len(c.args) >= 2 {
+						sv := NginxUpstreamServer{Addr: c.args[1], RawArgs: strings.Join(c.args[2:], " ")}
+						for _, a := range c.args[2:] {
+							switch {
+							case a == "down":
+								sv.Down = true
+							case a == "backup":
+								sv.Backup = true
+							case strings.HasPrefix(a, "weight="):
+								fmt.Sscanf(a, "weight=%d", &sv.Weight)
+							}
+						}
+						if sv.Weight == 0 && !sv.Down {
+							sv.Weight = 1
+						}
+						up.Servers = append(up.Servers, sv)
+						raw.WriteString("\n    server " + c.args[1] + " " + strings.Join(c.args[2:], " ") + ";")
+					} else if c.args[0] != "server" {
+						up.LB = c.args[0]
+						raw.WriteString("\n    " + strings.Join(c.args, " ") + ";")
+					}
+				}
+				raw.WriteString("\n}")
+				up.Raw = raw.String()
+				file.Upstreams = append(file.Upstreams, up)
+			case "server":
+				sv := NginxServerBlock{File: filePath}
+				for _, c := range st.children {
+					if len(c.args) == 0 {
+						continue
+					}
+					switch c.args[0] {
+					case "listen":
+						if len(c.args) >= 2 {
+							sv.Listen = c.args[1]
+						}
+					case "server_name":
+						if len(c.args) >= 2 {
+							sv.ServerName = strings.Join(c.args[1:], " ")
+						}
+					case "location":
+						for _, g := range c.children {
+							if len(g.args) >= 2 && g.args[0] == "proxy_pass" {
+								sv.ProxyPass = append(sv.ProxyPass, g.args[1])
+							}
 						}
 					}
-					if s.Weight == 0 && !s.Down {
-						s.Weight = 1
-					}
-					up.Servers = append(up.Servers, s)
-					raw.WriteString("\n    server " + c.args[1] + " " + strings.Join(c.args[2:], " ") + ";")
-				} else if c.args[0] != "server" {
-					up.LB = c.args[0]
-					raw.WriteString("\n    " + strings.Join(c.args, " ") + ";")
 				}
-			}
-			raw.WriteString("\n}")
-			up.Raw = raw.String()
-			file.Upstreams = append(file.Upstreams, up)
-		case "server":
-			sv := NginxServerBlock{File: filePath}
-			for _, c := range st.children {
-				if len(c.args) == 0 {
+				if sv.Listen != "" {
+					file.Servers = append(file.Servers, sv)
+				}
+			case "include":
+				log.Printf("[nginx-probe] include 命中: %v depth=%d", st.args, depth)
+				if depth >= 3 || len(st.args) < 2 {
 					continue
 				}
-				switch c.args[0] {
-				case "listen":
-					if len(c.args) >= 2 {
-						sv.Listen = c.args[1]
-					}
-				case "server_name":
-					if len(c.args) >= 2 {
-						sv.ServerName = strings.Join(c.args[1:], " ")
-					}
-				case "location":
-					for _, g := range c.children {
-						if len(g.args) >= 2 && g.args[0] == "proxy_pass" {
-							sv.ProxyPass = append(sv.ProxyPass, g.args[1])
-						}
-					}
+				pattern := st.args[1]
+				if !strings.HasPrefix(pattern, "/") {
+					pattern = path.Join(path.Dir(filePath), pattern)
 				}
-			}
-			if sv.Listen != "" {
-				file.Servers = append(file.Servers, sv)
-			}
-		case "include":
-			if depth >= 3 || len(st.args) < 2 {
-				continue
-			}
-			pattern := st.args[1]
-			if !strings.HasPrefix(pattern, "/") {
-				pattern = path.Join(path.Dir(filePath), pattern)
-			}
-			// 远端 glob 展开
-			out, rc, err := e.ExecLineOutput(host, "ls -1 "+shq(pattern)+" 2>/dev/null")
-			if err != nil || rc != 0 {
-				continue
-			}
-			for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
-				f = strings.TrimSpace(f)
-				if f == "" || seen[f] {
+				out, rc, err := e.ExecLineOutput(host, "ls -1 "+shq(pattern)+" 2>/dev/null")
+				if err != nil || rc != 0 {
 					continue
 				}
-				seen[f] = true
-				if content, ferr := e.nxFetch(host, f); ferr == nil {
-					e.nxWalk(host, f, content, depth+1, probe, seen)
+				for _, f := range strings.Split(strings.TrimSpace(out), "\\n") {
+					f = strings.TrimSpace(f)
+					if f == "" || seen[f] {
+						continue
+					}
+					seen[f] = true
+					if content, ferr := e.nxFetch(host, f); ferr == nil {
+						e.nxWalkFile(host, f, content, depth+1, probe, seen)
+					}
+				}
+			default:
+				if st.hasBlock {
+					walk(st.children) // 深入 http/events 等块继续找
 				}
 			}
 		}
 	}
+	walk(nxParse(text))
 	probe.Files = append(probe.Files, file)
 }
 
@@ -309,7 +317,7 @@ func (e *Engine) NginxProbe(hostID string) (*NginxProbe, error) {
 		return nil, fmt.Errorf("读取主配置失败: %w", ferr)
 	}
 	seen := map[string]bool{main: true}
-	e.nxWalk(hostID, main, text, 0, probe, seen)
+	e.nxWalkFile(hostID, main, text, 0, probe, seen)
 	// 文件按路径排序稳定输出
 	sort.Slice(probe.Files, func(i, j int) bool { return probe.Files[i].Path < probe.Files[j].Path })
 	return probe, nil
