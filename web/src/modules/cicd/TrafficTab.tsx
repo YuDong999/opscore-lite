@@ -195,7 +195,7 @@ export default function TrafficTab() {
                   <div key={i} className="text-xs text-muted-foreground flex gap-2 items-center px-2 py-1 flex-wrap">
                     <span className="font-mono">listen {sv.listen}</span>
                     {sv.serverName && <span>· {sv.serverName}</span>}
-                    {sv.proxyPass.map((pp, j) => <Badge key={j} variant="secondary" className="font-mono text-[10px]">→ {pp}</Badge>)}
+                    {(sv.proxyPass || []).map((pp, j) => <Badge key={j} variant="secondary" className="font-mono text-[10px]">→ {pp}</Badge>)}
                   </div>
                 ))}
               </CardContent>
