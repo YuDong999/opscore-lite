@@ -225,6 +225,14 @@ body {
   -webkit-backdrop-filter: var(--blur);
 }
 
+/* 监控页：多卡紧邻时取消外阴影与毛玻璃, 避免互相叠影 (仅监控页容器内生效) */
+.monitor-cards .card,
+.monitor-cards .glass {
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 /* ── Layout ── */
 .layout { display: flex; height: 100vh; }
 

@@ -1436,8 +1436,9 @@ function clearFilters() {
                        <option value={6}>最近 6 小时</option>
                        <option value={24}>最近 24 小时</option>
                        <option value={72}>最近 3 天</option>
-                       <option value={168}>最近 7 天</option>
-                       <option value={0}>全部时间</option>
+<option value={168}>最近 7 天</option>
+                        <option value={720}>最近 30 天</option>
+                        <option value={0}>全部时间</option>
                      </select>
                    )}
 
