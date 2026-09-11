@@ -40,7 +40,7 @@ function parseTwoCol(rows: any[][], columns: string[]): StatusMap {
   return out
 }
 
-export default function ServerDashboardPanel({ connId, engine }: { connId: string; engine: string }) {
+export default function ServerDashboardPanel({ connId, engine, database }: { connId: string; engine: string; database?: string }) {
   const isMysql = ['mysql', 'mariadb', 'goldendb'].includes(engine)
   const isPg = ['postgres', 'opengauss', 'kingbase', 'highgo', 'vastbase', 'gaussdb'].includes(engine)
   const [err, setErr] = useState('')
@@ -73,6 +73,21 @@ export default function ServerDashboardPanel({ connId, engine }: { connId: strin
     const row = (r.data.rows || [])[0] || {}
     const status: StatusMap = {}
     for (const [k, v] of Object.entries(row)) status[k] = String(v ?? '0')
+    try {
+      const v = await runQueryRaw(connId, 'SELECT version() AS version')
+      const vv = String(((v.data.rows || [])[0] || [])[0] ?? '')
+      if (vv) {
+        status.version = vv.split(' (').join(' ').slice(0, 40)
+      }
+    } catch { /* 版本获取失败不影响指标 */ }
+    // WAL 累计(PG14+ pg_stat_wal; 低版本无此视图则静默跳过)
+    try {
+      const w = await runQueryRaw(connId, 'SELECT wal_bytes AS wal_bytes FROM pg_stat_wal')
+      const wb = (w.data.rows || [])[0]
+      const wbRow = (wb as any[])[0] || {}
+      const wv = String(wbRow.wal_bytes ?? wbRow.WAL_BYTES ?? '0')
+      if (wv) status.wal_bytes = wv
+    } catch { /* 低版本无 pg_stat_wal */ }
     return { at: Date.now(), status }
   }, [connId, isMysql])
 
@@ -135,6 +150,8 @@ export default function ServerDashboardPanel({ connId, engine }: { connId: strin
         { label: '入流量', value: rate('Bytes_received') != null ? fmtBytes(Math.round(rate('Bytes_received')!)) + '/s' : '采样中…' },
         { label: '出流量', value: rate('Bytes_sent') != null ? fmtBytes(Math.round(rate('Bytes_sent')!)) + '/s' : '采样中…' },
         { label: '慢查询(累计)', value: fmtNum(val('Slow_queries')) },
+        { label: '死锁(累计)', value: fmtNum(val('Innodb_deadlocks')) },
+        { label: '行锁等待(累计)', value: fmtNum(val('Innodb_row_lock_waits')) },
         { label: 'InnoDB 命中率', value: hit },
       ]
     }
@@ -142,11 +159,13 @@ export default function ServerDashboardPanel({ connId, engine }: { connId: strin
       const tps = (() => { const a = rate('xact_commit'), b = rate('xact_rollback'); return a != null && b != null ? fmtRate(a + b) : '采样中…' })()
       const hr = (() => { const r2 = val('blks_read'), h = val('blks_hit'); return h + r2 > 0 ? ((h / (h + r2)) * 100).toFixed(2) + '%' : '—' })()
       return [
+        { label: '版本', value: (curr?.status.version || '').split(',').join(' ') || '—' },
         { label: '连接数', value: fmtNum(val('numbackends')) },
         { label: 'TPS', value: tps },
         { label: '缓存命中率', value: hr },
         { label: '死锁(累计)', value: fmtNum(val('deadlocks')) },
         { label: '临时文件(累计)', value: fmtNum(val('temp_files')) },
+        { label: 'WAL 生成速率', value: rate('wal_bytes') != null ? fmtBytes(Math.round(rate('wal_bytes')!)) + '/s' : '—' },
         { label: '元组写入(累计)', value: fmtNum(val('tup_inserted')) },
         { label: '元组更新(累计)', value: fmtNum(val('tup_updated')) },
       ]
@@ -161,9 +180,13 @@ export default function ServerDashboardPanel({ connId, engine }: { connId: strin
   }, [curr, statusFilter, isMysql])
 
   return (
-    <div className="db-dash" style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%', minHeight: 0, overflowY: 'auto' }}>
+    <div className="db-dash" data-engine={engine} data-db={database || ''} style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%', minHeight: 0, overflowY: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="db-engine-badge">服务器仪表盘</span>
+        {database && <span className="dim" style={{ fontSize: '0.72rem' }}>库: <b>{database}</b></span>}
+        {(variables.version || curr?.status.version) && (
+          <span className="dim" style={{ fontSize: '0.72rem' }}>版本: <b>{variables.version || curr?.status.version}</b></span>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', cursor: 'pointer' }}>
           <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /> 自动刷新(10s)
         </label>
