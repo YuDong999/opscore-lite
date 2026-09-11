@@ -1936,6 +1936,16 @@ func humanBytes(n int64) string {
 }
 
 // execCall Exec 回调包装: 未注入时返回明确错误(单测场景)
+// ExecLineOutput 执行命令并收集输出(nginx 探测/配置应用等非流式场景)
+func (e *Engine) ExecLineOutput(hostID, command string) (string, int, error) {
+	var b strings.Builder
+	rc, err := e.execCall(context.Background(), hostID, "", command, nil, func(line string) {
+		b.WriteString(line)
+		b.WriteString("\n")
+	})
+	return b.String(), rc, err
+}
+
 func (e *Engine) execCall(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
 	if e.Exec == nil {
 		return -1, fmt.Errorf("执行回调未初始化")

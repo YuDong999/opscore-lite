@@ -817,6 +817,47 @@ func badgeSVG(name, status string) []byte {
 	))
 }
 
+// ── nginx 流量分发可视化(探测 + 应用) ──────────────────────
+
+// CicdNginxProbe POST /api/cicd/nginx/probe {host} → 配置结构
+func CicdNginxProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Host string `json:"host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	probe, err := cicdEngine.NginxProbe(body.Host)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, probe)
+}
+
+// CicdNginxApply POST /api/cicd/nginx/apply {host, mainConf, edits[]}
+func CicdNginxApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req cicd.NginxApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	if err := cicdEngine.NginxApply(req.Host, &req); err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true})
+}
+
 // ── 操作审计 ──────────────────────────────────────────────
 
 // CicdAudit GET /api/cicd/audit —— CI/CD 操作审计链(新→旧)

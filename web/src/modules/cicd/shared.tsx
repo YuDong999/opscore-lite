@@ -32,6 +32,8 @@ export const API = {
   runs: '/api/cicd/runs',
   overview: '/api/cicd/overview',
   audit: '/api/cicd/audit',
+  nginxProbe: '/api/cicd/nginx/probe',
+  nginxApply: '/api/cicd/nginx/apply',
   badge: (id: string) => `/api/cicd/badge/${id}.svg`,
   webhook: (id: string) => `/api/cicd/webhook/${id}`,
   artifactDownload: '/api/cicd/artifact/download',

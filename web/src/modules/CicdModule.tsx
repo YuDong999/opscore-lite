@@ -321,6 +321,9 @@ export default function CicdModule() {
           <TabsTrigger value="overview">
             概览{waiting > 0 && <span className="ml-1 text-warn">•{waiting}</span>}
           </TabsTrigger>
+          <TabsTrigger value="traffic">
+            流量分发
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} onOpenRun={openRun} /></TabsContent>
@@ -329,6 +332,7 @@ export default function CicdModule() {
         <TabsContent value="repos"><ReposTab /></TabsContent>
         <TabsContent value="creds"><CredentialsTab /></TabsContent>
         <TabsContent value="overview"><OverviewTab data={overview} onOpenRun={openRun} onMore={() => setTab('runs')} /></TabsContent>
+        <TabsContent value="traffic"><TrafficTab /></TabsContent>
       </Tabs>
 
       {detailRunId && (
@@ -337,60 +341,6 @@ export default function CicdModule() {
           onChanged={loadOverview} onClose={closeRun} />
       )}
     </div>
-  )
-}
-
-// ── 主机列表(本机 + Ansible 清单, 与 HostSelector 同源) ──
-function useHosts(): HostOpt[] {
-  const [hosts, setHosts] = useState<HostOpt[]>([{ id: '', label: '本机' }])
-  useEffect(() => {
-    fetch(API.hosts).then(r => r.json())
-      .then((list: any[]) => {
-        const opts = list.map(h => ({
-          id: h.id as string,
-          label: (h.alias || h.addr) + (h.alias && h.alias !== h.addr ? ` (${h.addr})` : ''),
-        }))
-        setHosts([{ id: '', label: '本机' }, ...opts])
-      })
-      .catch(() => {})
-  }, [])
-  return hosts
-}
-
-// 主机下拉(阶段卡用; NONE 哨兵承载"本机"空串语义)
-function HostSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const hosts = useHosts()
-  return (
-    <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
-      {/* w-full: trigger 默认 w-fit 在定宽父容器(inline-block 取 max-content 尺寸)会溢出压住后续字段 */}
-      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-      <SelectContent>
-        {hosts.map(h => <SelectItem key={h.id || SELECT_NONE} value={h.id || SELECT_NONE}>{h.label}</SelectItem>)}
-      </SelectContent>
-    </Select>
-  )
-}
-
-// 可选值下拉(空串语义统一走哨兵, 消灭 onChange 手动复位 hack · R4)
-// 选中非空值时触发器高亮: 过滤态/已配置态必须一眼可辨(否则用户看不出当前限定了什么)
-function OptSelect({ value, onChange, placeholder, items, className }: {
-  value: string
-  onChange: (v: string) => void
-  placeholder: string
-  items: { value: string; label: string }[]
-  className?: string
-}) {
-  const set = value !== ''
-  return (
-    <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
-      <SelectTrigger className={cn(className, set && 'border-accent/60 bg-accent/10 text-accent font-medium')}>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={SELECT_NONE}>{placeholder}</SelectItem>
-        {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
-      </SelectContent>
-    </Select>
   )
 }
 
@@ -1752,7 +1702,8 @@ function RunDetail({ runId, initialStep, onStepSelect, onClose, onChanged, onRer
             </div>
             <div className="px-3 py-1">
               {st.steps.map((sp, j) => (
-                <div key={j} className={cn('flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap rounded transition-shadow',
+                <Fragment key={j}>
+                <div className={cn('flex items-center gap-3 py-1.5 border-b last:border-b-0 text-sm flex-wrap rounded transition-shadow',
                   hl === `${i}-${j}` && 'ring-1 ring-accent bg-accent/5')}>
                   <span className="min-w-36">
                     <span className="font-mono text-xs text-muted-foreground tabular-nums">{String(j + 1).padStart(2, '0')}</span>{' '}
@@ -1786,6 +1737,7 @@ function RunDetail({ runId, initialStep, onStepSelect, onClose, onChanged, onRer
                     {sp.quality.skipped > 0 && <span className="text-muted-foreground">↷ {sp.quality.skipped}</span>}
                   </div>
                 )}
+                </Fragment>
               ))}
             </div>
           </div>
