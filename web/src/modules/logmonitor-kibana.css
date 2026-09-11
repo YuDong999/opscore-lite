@@ -66,6 +66,16 @@
   cursor: pointer;
   max-width: 220px;
 }
+.kib-time {
+  appearance: none;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.08));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
 
 /* 搜索/查询框 + 建议下拉 */
 .kib-search {
@@ -319,8 +329,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
-  cursor: help;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
+.kib-idx:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
 .kib-ts { color: var(--text-secondary); font-size: 11px; }
 
 /* 分页 */
@@ -434,7 +446,10 @@
   gap: 8px;
   max-width: 360px;
   animation: kib-toast-in 0.2s ease-out;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
 }
+.kib-toast:hover { border-color: var(--text-dim); }
 .kib-toast-ok { border-left: 3px solid var(--ok); }
 .kib-toast-err { border-left: 3px solid var(--danger); }
 .kib-toast-info { border-left: 3px solid var(--accent-2); }
@@ -658,6 +673,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
+  position: relative;
   width: 34px;
   height: 18px;
   padding: 2px;
@@ -668,6 +684,9 @@
   vertical-align: middle;
   margin-right: 8px;
 }
+/* 视觉不变, 命中区外扩至 ~50×34 */
+.kib-switch::after { content: ''; position: absolute; inset: -8px; }
+.kib-switch:hover { box-shadow: 0 0 0 3px var(--bg-soft, rgba(127,127,127,0.15)); }
 .kib-switch i {
   width: 14px;
   height: 14px;

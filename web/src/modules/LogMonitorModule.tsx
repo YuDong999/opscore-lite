@@ -1186,9 +1186,9 @@ function clearFilters() {
       </div>
 
       {/* Toasts */}
-      <div className="kib-toast-wrap">
+      <div className="kib-toast-wrap" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`kib-toast kib-toast-${t.kind}`} onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
+          <div key={t.id} className={`kib-toast kib-toast-${t.kind}`} role="status" title="点击关闭" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
             {t.text}
           </div>
         ))}
@@ -1276,7 +1276,7 @@ function clearFilters() {
                  <div className="kib-topbar">
                    <div className="kib-dataview">
                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" /><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
-                     <select value={indexView} onChange={(e) => onIndexViewChange(e.target.value)} title="数据视图 / 索引">
+                     <select value={indexView} onChange={(e) => onIndexViewChange(e.target.value)} title="数据视图 / 索引" aria-label="数据视图 / 索引">
                        <option value="">所有数据</option>
                        {allIndexes.map((ix) => (
                          <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
@@ -1287,7 +1287,7 @@ function clearFilters() {
                    {absStart && absEnd ? (
                      <span className="kib-topbar-soon">自定义区间</span>
                    ) : (
-                     <select className="kib-time" value={relativeHours} onChange={(e) => onTimeChange(Number(e.target.value))}>
+                     <select className="kib-time" value={relativeHours} onChange={(e) => onTimeChange(Number(e.target.value))} aria-label="时间范围">
                        <option value={1}>最近 1 小时</option>
                        <option value={6}>最近 6 小时</option>
                        <option value={24}>最近 24 小时</option>
@@ -1310,18 +1310,25 @@ function clearFilters() {
                      <input
                        value={kql}
                        placeholder={searchPlaceholder}
-                       onChange={(e) => { setKql(e.target.value); setSuggestOpen(true) }}
+                       aria-label="KQL 查询"
+                       onChange={(e) => { setKql(e.target.value); setSuggestIdx(0); setSuggestOpen(true) }}
                        onFocus={() => setSuggestOpen(true)}
                        onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
                        onKeyDown={(e) => {
-                         if (e.key === 'Enter') applyKql()
+                         const hints = suggestOpen ? buildHints() : []
+                         if (e.key === 'ArrowDown' && hints.length) { e.preventDefault(); setSuggestIdx((i) => Math.min(i + 1, hints.length - 1)) }
+                         else if (e.key === 'ArrowUp' && hints.length) { e.preventDefault(); setSuggestIdx((i) => Math.max(i - 1, 0)) }
+                         else if (e.key === 'Enter') {
+                           const h = hints[suggestIdx]
+                           if (h) { setKql(h.field + h.op + h.val); applyKql(h.field + h.op + h.val) } else applyKql()
+                         }
                          if (e.key === 'Escape') setSuggestOpen(false)
                        }}
                      />
 {suggestOpen && (
-                        <div className="kib-suggest">
+                        <div className="kib-suggest" role="listbox" aria-label="字段建议">
                           {buildHints().map((h, i) => (
-                            <div key={i} className={`kib-suggest-item ${i === suggestIdx ? 'sel' : ''}`} onMouseDown={() => { setKql(h.field + h.op + h.val); applyKql(h.field + h.op + h.val) }}>
+                            <div key={i} className={`kib-suggest-item ${i === suggestIdx ? 'sel' : ''}`} onMouseEnter={() => setSuggestIdx(i)} onMouseDown={() => { setKql(h.field + h.op + h.val); applyKql(h.field + h.op + h.val) }}>
                               <span className="kib-suggest-opt">{h.field}{h.op}{h.val}</span>
                               <span style={{ color: 'var(--text-dim)' }}>{h.label}</span>
                             </div>
@@ -1329,18 +1336,18 @@ function clearFilters() {
                         </div>
                       )}
                    </div>
-                   <button className="kib-btn kib-btn-primary" onClick={applyKql}>查询</button>
+                   <button className="kib-btn kib-btn-primary" onClick={() => applyKql()}>查询</button>
                    <button className="kib-btn kib-btn-bare" onClick={clearFilters} title="清空所有过滤">重置</button>
                  </div>
 
                  {/* 已应用过滤 chips */}
                 {(service || level || source || keyword || indexFilter) && (
                   <div className="kib-chips">
-                    {indexFilter && <span className="kib-chip" onClick={() => { setIndexFilter(''); setIndexView(''); setPage(1) }}><span className="kib-chip-key">index:</span>{allIndexes.find((ix) => ix.id === indexFilter)?.name || indexFilter} ✕</span>}
-                    {service && <span className="kib-chip" onClick={() => setService('')}><span className="kib-chip-key">service:</span>{service} ✕</span>}
-                    {level && <span className="kib-chip" onClick={() => setLevel('')}><span className="kib-chip-key">level:</span>{level} ✕</span>}
-                    {source && <span className="kib-chip" onClick={() => setSource('')}><span className="kib-chip-key">source:</span>{source} ✕</span>}
-                    {keyword && <span className="kib-chip" onClick={() => setKeyword('')}><span className="kib-chip-key">message:</span>{keyword} ✕</span>}
+                    {indexFilter && <span className="kib-chip" role="button" tabIndex={0} aria-label={`移除过滤 index: ${allIndexes.find((ix) => ix.id === indexFilter)?.name || indexFilter}`} onClick={() => { setIndexFilter(''); setIndexView(''); setPage(1) }} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (setIndexFilter(''), setIndexView(''), setPage(1))}><span className="kib-chip-key">index:</span>{allIndexes.find((ix) => ix.id === indexFilter)?.name || indexFilter} ✕</span>}
+                    {service && <span className="kib-chip" role="button" tabIndex={0} aria-label={`移除过滤 service: ${service}`} onClick={() => setService('')} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setService('')}><span className="kib-chip-key">service:</span>{service} ✕</span>}
+                    {level && <span className="kib-chip" role="button" tabIndex={0} aria-label={`移除过滤 level: ${level}`} onClick={() => setLevel('')} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setLevel('')}><span className="kib-chip-key">level:</span>{level} ✕</span>}
+                    {source && <span className="kib-chip" role="button" tabIndex={0} aria-label={`移除过滤 source: ${source}`} onClick={() => setSource('')} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSource('')}><span className="kib-chip-key">source:</span>{source} ✕</span>}
+                    {keyword && <span className="kib-chip" role="button" tabIndex={0} aria-label={`移除过滤 message: ${keyword}`} onClick={() => setKeyword('')} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setKeyword('')}><span className="kib-chip-key">message:</span>{keyword} ✕</span>}
                   </div>
                 )}
 
@@ -1391,7 +1398,7 @@ function clearFilters() {
                           </thead>
                           <tbody>
                             {result.items.map((e) => (
-                              <tr key={e.id} className={detail?.id === e.id ? 'row-on' : ''} onClick={() => viewDetail(e.id)}>
+                              <tr key={e.id} className={detail?.id === e.id ? 'row-on' : ''} tabIndex={0} onClick={() => viewDetail(e.id)} onKeyDown={(ev) => ev.key === 'Enter' && viewDetail(e.id)}>
                                 <td className="kib-ts">{fmtTime(e.ts)}</td>
                                 <td>
                                   <span className="kib-lvl" style={{ color: levelColor(e.level), background: levelColor(e.level) + '22' }}>{e.level || '-'}</span>
@@ -1401,7 +1408,7 @@ function clearFilters() {
                                 </td>
                                 <td>
                                   {e.indexId ? (
-                                    <span className="kib-idx" title={`索引 ${e.indexId}`} onClick={(ev) => { ev.stopPropagation(); addFieldFilter('indexId', e.indexId) }}>
+                                    <span className="kib-idx" role="button" tabIndex={0} title={`索引 ${e.indexId}`} onClick={(ev) => { ev.stopPropagation(); addFieldFilter('indexId', e.indexId) }} onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); addFieldFilter('indexId', e.indexId) } }}>
                                       {allIndexes.find((ix) => ix.id === e.indexId)?.name || e.indexId}
                                     </span>
                                   ) : (
@@ -1503,8 +1510,13 @@ function clearFilters() {
                     <td>
                       <span
                         className={`kib-switch ${s.enabled ? 'on' : ''}`}
+                        role="switch"
+                        aria-checked={s.enabled}
+                        aria-label={`${s.enabled ? '停用' : '启用'}采集: ${s.name}`}
+                        tabIndex={0}
                         title={s.enabled ? '停用采集(暂停接收日志)' : '启用采集'}
                         onClick={() => toggleSourceEnabled(s)}
+                        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleSourceEnabled(s)}
                       >
                         <i />
                       </span>
@@ -1541,8 +1553,8 @@ function clearFilters() {
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
               <div className="kib-form-row" style={{ marginTop: 10 }}>
-                <label>归属索引(可选, 双写到归档)</label>
-                <select value={selTargetIdx} onChange={(e) => setSelTargetIdx(e.target.value)}>
+                <label htmlFor="disc-target-idx">归属索引(可选, 双写到归档)</label>
+                <select id="disc-target-idx" value={selTargetIdx} onChange={(e) => setSelTargetIdx(e.target.value)}>
                   <option value="">未归属</option>
                   {allIndexes.map((ix) => (
                     <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
@@ -1596,11 +1608,11 @@ function clearFilters() {
         })
         setSelPods(new Set(filtered.map((p) => `${p.namespace}/${p.name}`)))
       }}>全选</button>
-      <select value={selCluster} onChange={(e) => { setSelCluster(e.target.value); loadDiscoverK8s(e.target.value); setSelPods(new Set()); setSelNamespace(''); setPodSearch(''); }}>
+      <select value={selCluster} onChange={(e) => { setSelCluster(e.target.value); loadDiscoverK8s(e.target.value); setSelPods(new Set()); setSelNamespace(''); setPodSearch(''); }} aria-label="集群">
         <option value="">选择集群…</option>
         {discClusters.map((c) => <option key={c} value={c}>集群 {c}</option>)}
       </select>
-      <select value={selNamespace} onChange={(e) => setSelNamespace(e.target.value)}>
+      <select value={selNamespace} onChange={(e) => setSelNamespace(e.target.value)} aria-label="命名空间">
         <option value="">所有命名空间</option>
         {[...new Set(discK8sPods.map((p) => p.namespace))].sort().map((ns) => (
           <option key={ns} value={ns}>{ns}</option>
@@ -1608,6 +1620,7 @@ function clearFilters() {
       </select>
       <input
         placeholder="搜索 Pod 名 / 命名空间"
+        aria-label="搜索 Pod 名 / 命名空间"
         value={podSearch}
         onChange={(e) => setPodSearch(e.target.value)}
         style={{ flex: 1, minWidth: 180, padding: '4px 8px', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 8 }}
@@ -1677,6 +1690,7 @@ function clearFilters() {
             <input
               className="input log-input log-svc-filter"
               placeholder="输入服务名过滤"
+              aria-label="按服务名过滤统计"
               value={statsService}
               onChange={(e) => setStatsService(e.target.value)}
             />
@@ -1822,15 +1836,15 @@ function clearFilters() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
             <label>分片粒度</label>
-            <select value={shardCfg.shardBy} onChange={(e) => setShardCfg({ ...shardCfg, shardBy: e.target.value })} style={{ width: 110 }}>
+            <select aria-label="分片粒度" value={shardCfg.shardBy} onChange={(e) => setShardCfg({ ...shardCfg, shardBy: e.target.value })} style={{ width: 110 }}>
               <option value="month">月</option>
               <option value="week">周</option>
               <option value="day">天</option>
             </select>
             <label>热片数</label>
-            <input type="number" min={0} value={shardCfg.hotShards} onChange={(e) => setShardCfg({ ...shardCfg, hotShards: Number(e.target.value) })} style={{ width: 55 }} />
+            <input type="number" min={0} aria-label="热分片数量" value={shardCfg.hotShards} onChange={(e) => setShardCfg({ ...shardCfg, hotShards: Number(e.target.value) })} style={{ width: 55 }} />
             <label>全局保留(天)</label>
-            <input type="number" min={1} value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 55 }} />
+            <input type="number" min={1} aria-label="全局保留天数" value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 55 }} />
             <button className="btn-glass btn-sm" onClick={saveShardCfg}>保存配置</button>
             <span style={{ flex: 1 }} />
             <span className={`kib-badge${shards.some((x) => x.dropAllowed) ? ' kib-tint-danger' : ''}`}>
@@ -1887,8 +1901,8 @@ function clearFilters() {
           </div>
 
           <div className="log-filter-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-            <input className="input log-input" placeholder="索引名称 *" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-            <select className="input log-input" value={editing.source} onChange={(e) => setEditing({ ...editing, source: e.target.value })}>
+            <input className="input log-input" placeholder="索引名称 *" aria-label="索引名称(必填)" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+            <select className="input log-input" aria-label="来源类型" value={editing.source} onChange={(e) => setEditing({ ...editing, source: e.target.value })}>
               <option value="file">file</option>
               <option value="syslog">syslog</option>
               <option value="journal">journal</option>
@@ -1897,9 +1911,9 @@ function clearFilters() {
               <option value="fluentbit">fluentbit</option>
               <option value="es">es</option>
             </select>
-            <input className="input log-input" placeholder="采集路径/地址" value={editing.sourcePath} onChange={(e) => setEditing({ ...editing, sourcePath: e.target.value })} />
-            <input className="input log-input" placeholder="归属服务" value={editing.service} onChange={(e) => setEditing({ ...editing, service: e.target.value })} />
-            <input className="input log-input log-hours" type="number" placeholder="总保留(天)" value={editing.deleteAfter} onChange={(e) => setEditing({ ...editing, deleteAfter: Number(e.target.value) })} />
+            <input className="input log-input" placeholder="采集路径/地址" aria-label="采集路径/地址" value={editing.sourcePath} onChange={(e) => setEditing({ ...editing, sourcePath: e.target.value })} />
+            <input className="input log-input" placeholder="归属服务" aria-label="归属服务" value={editing.service} onChange={(e) => setEditing({ ...editing, service: e.target.value })} />
+            <input className="input log-input log-hours" type="number" placeholder="总保留(天)" aria-label="总保留天数" value={editing.deleteAfter} onChange={(e) => setEditing({ ...editing, deleteAfter: Number(e.target.value) })} />
           </div>
 
           <div className="log-section-title" style={{ margin: '12px 0 8px' }}>ILM 冷热归档策略</div>
@@ -1971,16 +1985,16 @@ function clearFilters() {
             <h3>扫描文件入库</h3>
             <div className="kib-inline-form">
               <div className="kib-form-row">
-                <label>日志文件绝对路径 *</label>
-                <input value={scanPath} onChange={(e) => setScanPath(e.target.value)} placeholder="/var/log/syslog" />
+                <label htmlFor="scan-path">日志文件绝对路径 *</label>
+                <input id="scan-path" value={scanPath} onChange={(e) => setScanPath(e.target.value)} placeholder="/var/log/syslog" />
               </div>
               <div className="kib-form-row">
-                <label>归属服务</label>
-                <input value={scanSvc} onChange={(e) => setScanSvc(e.target.value)} placeholder="留空自动提取" />
+                <label htmlFor="scan-svc">归属服务</label>
+                <input id="scan-svc" value={scanSvc} onChange={(e) => setScanSvc(e.target.value)} placeholder="留空自动提取" />
               </div>
               <div className="kib-form-row">
-                <label>归属索引(可选, 双写到归档)</label>
-                <select value={scanIdx} onChange={(e) => setScanIdx(e.target.value)}>
+                <label htmlFor="scan-idx">归属索引(可选, 双写到归档)</label>
+                <select id="scan-idx" value={scanIdx} onChange={(e) => setScanIdx(e.target.value)}>
                   <option value="">未归属</option>
                   {allIndexes.map((ix) => (
                     <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
@@ -2003,12 +2017,12 @@ function clearFilters() {
             <h3>新增日志源</h3>
             <div className="kib-inline-form">
               <div className="kib-form-row">
-                <label>名称 *</label>
-                <input value={srcDraft.name} onChange={(e) => setSrcDraft({ ...srcDraft, name: e.target.value })} placeholder="如 order-api" />
+                <label htmlFor="src-name">名称 *</label>
+                <input id="src-name" value={srcDraft.name} onChange={(e) => setSrcDraft({ ...srcDraft, name: e.target.value })} placeholder="如 order-api" />
               </div>
               <div className="kib-form-row">
-                <label>类型</label>
-                <select value={srcDraft.type} onChange={(e) => setSrcDraft({ ...srcDraft, type: e.target.value })}>
+                <label htmlFor="src-type">类型</label>
+                <select id="src-type" value={srcDraft.type} onChange={(e) => setSrcDraft({ ...srcDraft, type: e.target.value })}>
                   <option value="file">file</option>
                   <option value="syslog">syslog</option>
                   <option value="journal">journal</option>
@@ -2017,12 +2031,12 @@ function clearFilters() {
                 </select>
               </div>
               <div className="kib-form-row">
-                <label>文件路径 / 容器名 / URL *</label>
-                <input value={srcDraft.path} onChange={(e) => setSrcDraft({ ...srcDraft, path: e.target.value })} />
+                <label htmlFor="src-path">文件路径 / 容器名 / URL *</label>
+                <input id="src-path" value={srcDraft.path} onChange={(e) => setSrcDraft({ ...srcDraft, path: e.target.value })} />
               </div>
               <div className="kib-form-row">
-                <label>所属服务</label>
-                <input value={srcDraft.service} onChange={(e) => setSrcDraft({ ...srcDraft, service: e.target.value })} />
+                <label htmlFor="src-svc">所属服务</label>
+                <input id="src-svc" value={srcDraft.service} onChange={(e) => setSrcDraft({ ...srcDraft, service: e.target.value })} />
               </div>
             </div>
             <div className="kib-modal-actions">
@@ -2052,8 +2066,9 @@ function clearFilters() {
 
             <div className="kib-inline-form">
               <div className="kib-form-row">
-                <label>规则 JSON *（写错会标红, 保存被拒）</label>
+                <label htmlFor="parser-json">规则 JSON *（写错会标红, 保存被拒）</label>
                 <textarea
+                  id="parser-json"
                   value={parserJson}
                   onChange={(e) => { setParserJson(e.target.value); setParserResults(null) }}
                   spellCheck={false}
@@ -2061,16 +2076,17 @@ function clearFilters() {
                 />
               </div>
               <div className="kib-form-row">
-                <label>用什么规则测试（来自上方 JSON）</label>
-                <select value={parserTestIdx} onChange={(e) => { setParserTestIdx(Number(e.target.value)); setParserResults(null) }}>
+                <label htmlFor="parser-test-idx">用什么规则测试（来自上方 JSON）</label>
+                <select id="parser-test-idx" value={parserTestIdx} onChange={(e) => { setParserTestIdx(Number(e.target.value)); setParserResults(null) }}>
                   {(() => { const rs = parserRulesFromText(); return rs
                     ? rs.map((r, i) => <option key={i} value={i}>{i} · {r.name || '(未命名)'}</option>)
                     : <option value={0}>JSON 格式错误</option> })()}
                 </select>
               </div>
               <div className="kib-form-row">
-                <label>样例日志（每行一条, 粘贴真实日志行）</label>
+                <label htmlFor="parser-sample">样例日志（每行一条, 粘贴真实日志行）</label>
                 <textarea
+                  id="parser-sample"
                   value={parserSample}
                   onChange={(e) => setParserSample(e.target.value)}
                   placeholder={'2026-09-09 10:00:01.123 INFO  [order-api] 订单创建成功 id=123\n2026-09-09 10:00:02.456 WARN  [order-api] 重试第 2 次'}
