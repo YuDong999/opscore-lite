@@ -11,7 +11,8 @@ export function useHosts(): HostOpt[] {
   useEffect(() => {
     fetch(API.hosts).then(r => r.json())
       .then((list: any[]) => {
-        const opts = list.map(h => ({
+        // 本机已由下方硬编码项承载; API 清单里的 isLocal 条目(及空 id)跳过, 防止"本机"重复
+        const opts = list.filter(h => !h.isLocal && h.id !== '').map(h => ({
           id: h.id as string,
           label: (h.alias || h.addr) + (h.alias && h.alias !== h.addr ? ` (${h.addr})` : ''),
         }))
