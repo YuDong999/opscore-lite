@@ -68,6 +68,7 @@ html {
   --bg-grad-2: #e0ecff;
   --surface: rgba(255, 255, 255, 0.38);
   --surface-solid: #ffffff;
+  --editor-surface: color-mix(in srgb, var(--text) 5%, var(--surface-solid)); /* 编辑器专用表面: 浅色下非纯白, I 形鼠标指针可见 */
   --surface-tint: rgba(91, 106, 191, 0.06);
   --border: rgba(0, 0, 0, 0.10);
   --border-glow: rgba(255, 255, 255, 0.8);
@@ -94,6 +95,7 @@ html {
   --bg-grad-2: #0f0a1a;
   --surface: rgba(255, 255, 255, 0.06);
   --surface-solid: #15131e;
+  --editor-surface: color-mix(in srgb, var(--text) 2%, var(--surface-solid));
   --surface-tint: rgba(167, 139, 250, 0.06);
   --border: rgba(255, 255, 255, 0.10);
   --border-glow: rgba(167, 139, 250, 0.15);
@@ -116,6 +118,7 @@ html {
   --bg-grad-2: #1a1228;
   --surface: rgba(255, 255, 255, 0.06);
   --surface-solid: #1c1938;
+  --editor-surface: color-mix(in srgb, var(--text) 2%, var(--surface-solid));
   --surface-tint: rgba(167, 139, 250, 0.06);
   --border: rgba(255, 255, 255, 0.10);
   --border-glow: rgba(167, 139, 250, 0.12);
@@ -139,6 +142,7 @@ html {
   --bg-grad-2: #dcf5e0;
   --surface: rgba(255, 255, 255, 0.38);
   --surface-solid: #ffffff;
+  --editor-surface: color-mix(in srgb, var(--text) 5%, var(--surface-solid)); /* 编辑器专用表面: 浅色下非纯白, I 形鼠标指针可见 */
   --surface-tint: rgba(5, 150, 105, 0.06);
   --border: rgba(0, 0, 0, 0.10);
   --border-glow: rgba(255, 255, 255, 0.8);
@@ -162,6 +166,7 @@ html {
   --bg-grad-2: #fce0e8;
   --surface: rgba(255, 255, 255, 0.38);
   --surface-solid: #ffffff;
+  --editor-surface: color-mix(in srgb, var(--text) 5%, var(--surface-solid)); /* 编辑器专用表面: 浅色下非纯白, I 形鼠标指针可见 */
   --surface-tint: rgba(217, 119, 6, 0.06);
   --border: rgba(0, 0, 0, 0.10);
   --border-glow: rgba(255, 255, 255, 0.8);
@@ -3086,7 +3091,7 @@ body {
 .db-cell-detail-body { margin: 0; padding: 0.625rem; overflow: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; color: var(--text); flex: 1; }
 
 /* CodeMirror 融合主题(跟随 data-theme 变量, 不用自带底色) */
-.db-query-cm { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-solid); }
+.db-query-cm { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--editor-surface); }
 .db-query-cm .cm-editor { background: transparent; }
 .db-query-cm .cm-editor.cm-focused { outline: none; }
 .db-query-cm .cm-gutters { background: var(--surface-tint); border-right: 1px solid var(--border); color: var(--text-dim); }
