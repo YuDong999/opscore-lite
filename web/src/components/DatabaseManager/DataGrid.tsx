@@ -23,7 +23,7 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase }: {
+export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
@@ -33,6 +33,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
   onFilter?: (col: string, op: string, value: string) => void
   onClearFilters?: () => void
   onSortDatabase?: (col: string, dir: 'asc' | 'desc') => void
+  exportSql?: string                 // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
@@ -44,6 +45,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
   const [rowDetail, setRowDetail] = useState<number | null>(null)
   const [colDetail, setColDetail] = useState<number | null>(null)
   const [fieldFilter, setFieldFilter] = useState('')
+  const [transpose, setTranspose] = useState<{ r: number } | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null)
   const [rowCtxMenu, setRowCtxMenu] = useState<{ row: number; x: number; y: number } | null>(null)
 
@@ -94,9 +96,14 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
     }
   }, [result])
 
+  // ── 结果分页(dbx 同款): 默认 100 行/页 + 底部翻页栏; 行数据始终全量在内存(客户端分页) ──
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(100)
+  useEffect(() => { setPage(1) }, [result])
+
   // 本地排序视图(不影响 editedRows 的原始行号映射)
   const viewRows = useMemo(() => {
-    if (sortCol === null || !editedRows.length) return editedRows
+    if (sortCol === null || !editedRows.length) return editedRows.map((_, i) => i)  // 统一语义: viewRows=原行索引数组
     const idx = editedRows.map((_, i) => i)
     idx.sort((a, b) => {
       const va = editedRows[a]?.[sortCol], vb = editedRows[b]?.[sortCol]
@@ -111,8 +118,14 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
       }
       return sortAsc ? cmp : -cmp
     })
-    return idx.map(i => editedRows[i])
+    return idx
   }, [editedRows, sortCol, sortAsc])
+
+  // 当前页的原行索引切片(排序感知; 右键/详情/编辑条全部用原索引, 排序不再错位)
+  const pageStart = (page - 1) * pageSize
+  const pageIdx = viewRows.slice(pageStart, pageStart + pageSize)
+
+
 
   // ── 详情(单/行/列三种聚合共用一个原子构建器, dbx dataGridDetail 同构) ──
   const metaByName = useMemo(() => new Map((columnMeta || []).map(m => [m.name, m])), [columnMeta])
@@ -131,6 +144,8 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
       length: value === null ? 0 : String(value).length,
     }
   }, [result, metaByName, columnMeta, columnTypes])
+
+  const exportEffective = exportSql?.trim() || sql   // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
 
   const copyCell = useCallback((v: any) => {
     const text = renderCell(v)
@@ -167,6 +182,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
       { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ r: row, c: col }) },
       { label: '行详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setRowDetail(row) } },
       { label: '列详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setColDetail(col) } },
+      { label: '转置显示此行', icon: <ActionIcon kind="doc" />, onClick: () => setTranspose({ r: row }) },
       { divider: 'heavy' },
       // ── 排序(dbx 双模式: 数据库排序=后端 ORDER BY, 当前页排序=本地) ──
       ...(onSortDatabase ? [
@@ -194,26 +210,26 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
       { label: '复制整行 (JSON)', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(JSON.stringify(rowObj, null, 2)) },
       { divider: true },
     ]
-    items.push({ label: '导出当前页 (CSV)', icon: <ActionIcon kind="upload" />, disabled: !connId || !sql, onClick: () => { if (connId && sql) exportQuery(connId, sql, 'csv').catch(() => {}) } })
+    items.push({ label: '导出当前页 (CSV)', icon: <ActionIcon kind="upload" />, disabled: !connId || !exportEffective, onClick: () => { if (connId && exportEffective) exportQuery(connId, exportEffective, 'csv').catch(() => {}) } })
     return items
-  }, [result, connId, sql])
+  }, [result, connId, exportEffective])
 
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [exportErr, setExportErr] = useState('')
 
   const doExport = useCallback(async (format: ExportFormat) => {
-    if (!connId || !sql?.trim()) return
+    if (!connId || !exportEffective?.trim()) return
     setExporting(format)
     setExportErr('')
     try {
-      const { fileName } = await exportQuery(connId, sql, format)
+      const { fileName } = await exportQuery(connId, exportEffective, format)
       setExportErr(`已导出 ${fileName}`)
     } catch (e: any) {
       setExportErr(e.message || '导出失败')
     } finally {
       setExporting(null)
     }
-  }, [connId, sql])
+  }, [connId, exportEffective])
 
   if (!result) {
     return <div className="db-empty">执行查询后查看结果 · Ctrl+Enter 快速执行</div>
@@ -303,7 +319,9 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
             </tr>
           </thead>
           <tbody>
-            {viewRows.map((row, i) => (
+            {pageIdx.map((i, j) => {
+              const row = editedRows[i] || []
+              return (
               <tr
                 key={i}
                 onContextMenu={e => {
@@ -348,16 +366,29 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
                   </td>
                 ))}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
-      {isEditable && (
-        <div className="db-edit-controls">
-          <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
-          <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
-        </div>
-      )}
+      <div className="db-result-footer">
+        <span className="dim">共 {viewRows.length} 行{result.truncated ? ' · 已截断' : ''}</span>
+        <select className="input db-page-size" title="每页行数" value={pageSize}
+          onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
+          {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n} 行/页</option>)}
+        </select>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(1)} title="首页">«</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} title="上一页">‹</button>
+        <span className="dim">{page} / {Math.max(1, Math.ceil(viewRows.length / pageSize))}</span>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(p => p + 1)} title="下一页">›</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(Math.ceil(viewRows.length / pageSize))} title="末页">»</button>
+        {isEditable && (
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
+            <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
+            <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
+          </span>
+        )}
+      </div>
       {ctxMenu && result && result.columns?.length && ctxMenu.col < result.columns.length && (
         <ContextMenu
           x={ctxMenu.x}
@@ -431,6 +462,7 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
                 <span className="db-cell-detail-col">行详情 · 第 {rowDetail + 1} 行 <span className="dim">{fields.length} 列</span></span>
                 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(json); setCopied('已复制 JSON'); setTimeout(() => setCopied(''), 1200) }}>复制 JSON</button>
                 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(tsv); setCopied('已复制 TSV'); setTimeout(() => setCopied(''), 1200) }}>复制 TSV</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { const NL = String.fromCharCode(10); const md = '| ' + fields.map(f => f.column).join(' | ') + ' |' + NL + '| ' + fields.map(() => '---').join(' | ') + ' |' + NL + fields.map(f => '| ' + (f.value === null ? 'NULL' : String(f.value)) + ' |').join(NL); navigator.clipboard?.writeText(md); setCopied('已复制 Markdown'); setTimeout(() => setCopied(''), 1200) }}>复制 Markdown</button>
                 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setRowDetail(null)}>✕</button>
               </div>
               <div className="db-cell-detail-body">
@@ -443,6 +475,34 @@ export default function DataGrid({ result, onEdit, connId, sql, columnTypes, col
                     </div>
                   ))}
                   {shown.length === 0 && <div className="db-empty-sm">无匹配字段</div>}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      })()}
+      {/* 转置显示: 单行按字段名×值两列铺开 */}
+      {transpose !== null && (() => {
+        if (!result || !result.columns) return null
+        const fields = result.columns
+          .map((column, c) => buildCellInfo(transpose.r, c))
+          .filter(Boolean) as NonNullable<ReturnType<typeof buildCellInfo>>[]
+        return createPortal(
+          <div className="qo-overlay" onClick={() => setTranspose(null)}>
+            <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
+              <div className="db-cell-detail-head">
+                <span className="db-cell-detail-col">转置 · 第 {transpose.r + 1} 行</span>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setTranspose(null)}>✕</button>
+              </div>
+              <div className="db-cell-detail-body">
+                <div className="db-detail-fields">
+                  {fields.map(f => (
+                    <div key={f.column} className="db-detail-field-row">
+                      <span className="db-detail-field-name" title={f.column}>{f.column}</span>
+                      <span className="db-detail-field-val">{f.value === null ? <i className="dim">NULL</i> : renderCell(f.value)}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

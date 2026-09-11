@@ -6,7 +6,7 @@
 ## 侧栏树
 | 特性 | dbx | opscore | 后端缺口 |
 |---|---|---|---|
-| 懒加载树 连接→库→schema→分组→对象 | ✅ | ⚠️ 缺 schema 层(库下直接平铺对象) | metadata 返回对象 schema, 前端加一层 |
+| 懒加载树 连接→库→schema→分组→对象 | ✅ | ✅ (schema 层已实现: listSchemas API + ConnectionTree 渲染, PG schemas/views; MySQL databases/views) | — |
 | 分组(表/视图/存储过程/函数/序列/触发器) | ✅ | ⚠️ 仅表/视图 | routines 接口(SHOW PROCEDURE/FUNCTION/TRIGGERS) |
 | 对象搜索(侧栏过滤) | ✅ | ✅ | — |
 | 置顶表 | ✅ | ✅ | — |
@@ -20,15 +20,16 @@
 ## 数据网格
 | 特性 | dbx | opscore | 后端缺口 |
 |---|---|---|---|
-| 分页/排序 | ✅ | ✅ | — |
+| 分页/排序 | ✅ | ✅ (DataGrid 客户端分页+排序, DataPanel 服务端分页) | — |
 | 虚拟滚动 | ✅ canvas 渲染 | ❌ | 纯前端 |
 | 行内编辑+保存前SQL预览 | ✅ | ⚠️ 骨架无后端 | 已决策移除(用户) |
 | 列筛选控件(WHERE构建) | ✅ | ❌ | /data 已支持 where 参数 |
 | 右键过滤(LIKE) | ✅ | ❌ | 同上 |
-| 单元格详情弹层 | ✅ | ❌ | 纯前端 |
-| 导出 CSV/JSON/XLSX/INSERT/Markdown | ✅ | ⚠️ CSV/JSON/XLSX+INSERT复制 | Markdown 可选 |
+| 单元格详情弹层 | ✅ | ✅ | — |
+| 导出 CSV/JSON/XLSX/INSERT/Markdown | ✅ | ✅ (CSV/JSON/XLSX + INSERT 复制 + Markdown 复制) | — |
 | 图表 | ✅ vue-echarts | ❌ | 纯前端(echarts) |
-| 完整单元格换行详情 | ✅ | ❌ | 纯前端 |
+| 完整单元格换行详情 | ✅ | ✅ | — |
+| 行转置显示 | ✅ | ✅ | — |
 
 ## 查询编辑器
 | 特性 | dbx | opscore | 后端缺口 |

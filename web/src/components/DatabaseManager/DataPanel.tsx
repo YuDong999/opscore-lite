@@ -53,9 +53,10 @@ export default function DataPanel({
     setBusy(true); setErr('')
     try {
       const d = await fetchData(conn.id, database, table, page, pageSize, orderBy, orderDir, where)
-      setData(d)
-      if (d.columns.length > 0 && visibleCols.size === 0) {
-        setVisibleCols(new Set(d.columns.map((_, i) => i)))
+      const normalized = { ...d, columns: d.columns || [], rows: d.rows || [] }
+      setData(normalized)
+      if (normalized.columns.length > 0 && visibleCols.size === 0) {
+        setVisibleCols(new Set(normalized.columns.map((_, i) => i)))
       }
     } catch (e: any) {
       setErr(e.message || '加载失败')
@@ -69,8 +70,8 @@ export default function DataPanel({
     setColTypes(undefined)
     describeTable(conn.id, database, table)
       .then(d => {
-        setColTypes(d.columns.map(c => c.type))
-        setColMeta(d.columns)
+        setColTypes(d?.columns?.map(c => c?.type) ?? undefined)
+        setColMeta(d?.columns)
       })
       .catch(() => setColTypes(undefined))
   }, [conn.id, database, table])
@@ -90,13 +91,13 @@ export default function DataPanel({
   }
 
   const visibleColumns = useMemo(() => {
-    if (!data) return []
+    if (!data || !data.columns) return []
     return data.columns.filter((_, i) => visibleCols.has(i))
   }, [data, visibleCols])
 
   // JSON 视图
   const jsonRows = useMemo(() => {
-    if (!data || viewMode !== 'json') return []
+    if (!data || viewMode !== 'json' || !data.rows) return []
     return data.rows.map(row => {
       const obj: Record<string, any> = {}
       data.columns.forEach((col, i) => { if (visibleCols.has(i)) obj[col] = row[i] })
@@ -106,7 +107,7 @@ export default function DataPanel({
 
   // 文本视图
   const textRows = useMemo(() => {
-    if (!data || viewMode !== 'text') return []
+    if (!data || viewMode !== 'text' || !data.columns || !data.rows) return []
     const colWidths = data.columns.map((col, i) => {
       if (!visibleCols.has(i)) return 0
       return Math.max(col.length, ...data.rows.slice(0, 20).map(row => String(row[i] ?? '').length))
@@ -226,17 +227,18 @@ export default function DataPanel({
           <DataGrid
             result={{
               columns: visibleColumns,
-              rows: data.rows.map(row => visibleColumns.map((_, i) => {
+               rows: (data.rows || []).map(row => visibleColumns.map((_, i) => {
                 const origIdx = data.columns.indexOf(visibleColumns[i])
                 return origIdx >= 0 ? row[origIdx] : null
               })),
-              rowCount: data.rows.length,
+              rowCount: data.rows?.length ?? 0,
               affected: 0,
               durationMs: data.durationMs || 0,
               truncated: false,
             }}
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
+            exportSql={`SELECT * FROM ${database}.${table} LIMIT ${pageSize} OFFSET ${(page - 1) *pageSize}`}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
@@ -254,8 +256,8 @@ export default function DataPanel({
                 <table className="db-table db-table-meta-mini">
                   <thead><tr><th>索引名</th><th>列</th><th>唯一</th><th>主键</th></tr></thead>
                   <tbody>
-                    {meta.indexes.length === 0 && <tr><td colSpan={4} className="dim">无索引</td></tr>}
-                    {meta.indexes.map((ix, i) => (
+                    {(!meta?.indexes?.length) && <tr><td colSpan={4} className="dim">无索引</td></tr>}
+                    {(meta?.indexes || []).map((ix, i) => (
                       <tr key={i}>
                         <td>{ix.name || '-'}</td>
                         <td>{(ix.columns || []).join(', ')}</td>
@@ -269,8 +271,8 @@ export default function DataPanel({
                 <table className="db-table db-table-meta-mini">
                   <thead><tr><th>约束名</th><th>本表列</th><th>引用表</th><th>引用列</th></tr></thead>
                   <tbody>
-                    {meta.foreignKeys.length === 0 && <tr><td colSpan={4} className="dim">无外键</td></tr>}
-                    {meta.foreignKeys.map((fk, i) => (
+                    {(!meta?.foreignKeys?.length) && <tr><td colSpan={4} className="dim">无外键</td></tr>}
+                    {(meta?.foreignKeys || []).map((fk, i) => (
                       <tr key={i}>
                         <td>{fk.constraint || fk.name || '-'}</td>
                         <td>{fk.column}</td>
@@ -284,8 +286,8 @@ export default function DataPanel({
                 <table className="db-table db-table-meta-mini">
                   <thead><tr><th>触发器</th><th>时机</th><th>事件</th></tr></thead>
                   <tbody>
-                    {meta.triggers.length === 0 && <tr><td colSpan={3} className="dim">无触发器</td></tr>}
-                    {meta.triggers.map((tr, i) => (
+                    {(!meta?.triggers?.length) && <tr><td colSpan={3} className="dim">无触发器</td></tr>}
+                    {(meta?.triggers || []).map((tr, i) => (
                       <tr key={i}>
                         <td title={tr.statement}>{tr.name}</td>
                         <td>{tr.timing}</td>

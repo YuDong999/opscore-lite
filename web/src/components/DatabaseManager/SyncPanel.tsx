@@ -309,6 +309,24 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       )}
 
       <div className="db-form">
+        {!eff.db && (sourceId || targetId) && (
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn-glass-soft btn-glass-soft-sm"
+              title="交换源与目标(含已选范围)"
+              onClick={() => {
+                const s0 = sourceId, t0 = targetId
+                setSourceId(t0); setTargetId(s0)
+                setSourceDb(''); setTargetDb('')
+                setSrcSchema(''); setTargetSchema('')
+                resetDownstream()
+              }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 4 }}><path d="M7 16V4m0 0L3 8m4-4 4 4" /><path d="M17 8v12m0 0 4-4m-4 4-4-4" /></svg>
+              交换源/目标
+            </button>
+          </div>
+        )}
         {/* 第一行: 源连接 → 源范围(库|模式) → 表 */}
         <div className="db-form-row">
           {eff.db ? (

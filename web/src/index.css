@@ -3181,7 +3181,7 @@ body {
 /* 网格化表格: dbx DataGrid 同构 —— 全边框单元 + 粘性表头 + 斑马悬停 */
 .db-table-grid { border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 60vh; }
 .db-table-grid table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.78rem; }
-.db-table-grid th, .db-table-grid td { padding: 0.32rem 0.6rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
+.db-table-grid th, .db-table-grid td { height: 22px; padding: 0.32rem 0.6rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
 .db-table-grid th:last-child, .db-table-grid td:last-child { border-right: none; }
 .db-table-grid thead th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 650; z-index: 2; cursor: pointer; user-select: none; }
 .db-table-grid thead th.db-col-num { background: var(--surface-tint); }
@@ -3246,3 +3246,7 @@ body {
 /* V16: 查询结果卡片与编辑器卡片同规格贴合(结果 padding/gap 对齐编辑器, 两卡间距一致) */
 .db-query-section { gap: 0.25rem; }
 .db-query-section .db-result { padding: 0.25rem 0.35rem; gap: 0.25rem; }
+
+/* 查询结果分页栏(dbx 同款) */
+.db-result-footer { display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; flex-wrap: nowrap; }
+.db-result-footer .btn-glass-soft-sm { font-size: 0.7rem; padding: 0.1rem 0.45rem; line-height: 1.25; height: auto; }

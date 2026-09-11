@@ -2,6 +2,9 @@
 
 > 方法: project-cartographer skill。范围: dbx 数据库管理核心链路（侧栏树/数据网格/查询编辑器/数据迁移）。
 > 状态: 本图为**聚焦图**，非全量——dbx 前端 12.6 万行，专项链路（Redis/MQ/Nacos/JVM/向量）未入账（🚧 留档）。
+>
+> 后续: opscore-lite DatabaseManager 模块已在 dev/dbmanager 分支完成 schema 层级实现(fd02e43)，
+> 数据网格分页/转置/Markdown 导出等增强(commit `1babe69` 未提交)，null `.map` 崩溃防护已修复。
 
 ## 台账
 
@@ -16,3 +19,5 @@
 | DBX-06 AI 面板 / 专项浏览器(Redis/MQ/Nacos/JVM) / 向量 / Dolt | ⛔ 死胡同(不移植) | 用户明确不需要 |
 | DBX-07 ER 图 / 字段血缘 / Schema Diff / 执行计划可视化 | 🚧 待测绘 | P3 缺口清单已列 feature-matrix |
 | OPS-00 我们项目对照侧 | ✅ 已测绘 | → feature-matrix.md 右列 |
+| OPS-01 Schema 层级 (PG schemas, MySQL databases) | ✅ 已实现 | commit fd02e43: listSchemas API + ConnectionTree 三级渲染 |
+| OPS-02 null .map 防护 (DataPanel rows/columns) | ✅ 已修复 | guard data.rows/data.columns/null, meta 数组防空 |
