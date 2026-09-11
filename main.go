@@ -117,6 +117,7 @@ func main() {
 		log.Fatalf("init cicd engine: %v", err)
 	}
 	cicdEngine.Exec = handlers.CicdExec
+	cicdEngine.ExecDirect = handlers.CicdExecDirect
 	cicdEngine.Collect = handlers.CicdCollect
 	cicdEngine.Push = handlers.CicdPush
 	handlers.InitCicd(cicdEngine)

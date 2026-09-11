@@ -53,7 +53,7 @@ export default function TrafficTab() {
   const [dirty, setDirty] = useState(false)
 
   const doProbe = () => {
-    if (!host) return
+    if (host === undefined) return
     setProbing(true); setErr(''); setProbe(null); setDraft([]); setDirty(false)
     postJSON<NginxProbeT>(API.nginxProbe, { host })
       .then(d => {
