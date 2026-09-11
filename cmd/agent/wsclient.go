@@ -90,10 +90,10 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	// 首次重采集(services/processes/network)可能耗时 >60s, 期间无快照可发 ——
-	// 每 10s 补一个应用层心跳, 防止服务端把"正在慢采集"误判为掉线。
+	// 心跳固定周期无条件发送(不因快照流动而抑制): 服务端对每条 ping 回 pong,
+	// pong 是读截止的唯一喂食者 —— 若因快照流动而跳过 ping, 读截止必然饿死(v4 教训)。
 	const heartbeatEvery = 10 * time.Second
-	lastSent := time.Now()
+	lastPing := time.Now()
 
 	for {
 		select {
@@ -105,7 +105,6 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 		case <-ticker.C:
 		}
 
-		sent := false
 		select {
 		case snap := <-w.snapCh:
 			data, _ := json.Marshal(snap)
@@ -118,18 +117,16 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 				log.Printf("发送失败: %v", err)
 				return
 			}
-			lastSent = time.Now()
-			sent = true
 		default:
 		}
-		if !sent && time.Since(lastSent) >= heartbeatEvery {
+		if time.Since(lastPing) >= heartbeatEvery {
 			hb, _ := json.Marshal(map[string]string{"type": "ping"})
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, hb); err != nil {
 				log.Printf("心跳发送失败: %v", err)
 				return
 			}
-			lastSent = time.Now()
+			lastPing = time.Now()
 		}
 	}
 }
