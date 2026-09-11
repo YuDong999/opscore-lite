@@ -194,6 +194,44 @@ var actionRegistry = map[string]ActionSpec{
 			return fmt.Sprintf("kubectl%s scale deploy/%s --replicas=%s", ns, shq(p["DEPLOYMENT"]), shq(p["REPLICAS"])), nil
 		},
 	},
+	"nginx.canary": {
+		Type: "nginx.canary", Title: "金丝雀权重(nginx upstream)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "CONF", Label: "upstream 所在配置文件", Placeholder: "/etc/nginx/demo-site.conf", Required: true},
+			{Name: "PORT_BLUE", Label: "蓝环境端口", Placeholder: "9001", Required: true},
+			{Name: "PORT_GREEN", Label: "绿环境端口", Placeholder: "9002", Required: true},
+			{Name: "GREEN_WEIGHT", Label: "绿环境权重 0-100(蓝=100-绿)", Placeholder: "10", Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "CONF", "PORT_BLUE", "PORT_GREEN", "GREEN_WEIGHT"); err != nil {
+				return "", err
+			}
+			gw := 0
+			for _, c := range p["GREEN_WEIGHT"] {
+				if c < '0' || c > '9' {
+					return "", fmt.Errorf("GREEN_WEIGHT 必须为 0-100 的整数")
+				}
+			}
+			fmt.Sscanf(p["GREEN_WEIGHT"], "%d", &gw)
+			if gw < 0 || gw > 100 {
+				return "", fmt.Errorf("GREEN_WEIGHT 必须为 0-100")
+			}
+			// 端口即行锚点, 整行重建; 0/100 用 down 下线(nginx 不接受 weight=0), 蓝绿互补
+			blue, green := "weight="+fmt.Sprint(100-gw), "weight="+fmt.Sprint(gw)
+			if gw == 0 {
+				green = "down" // nginx 不接受 weight=0
+			}
+			if gw == 100 {
+				blue = "down"
+			}
+			return fmt.Sprintf("sed -i -E -e 's#.*127.0.0.1:%s[ ;].*#server 127.0.0.1:%s %s;#' "+
+				"-e 's#.*127.0.0.1:%s[ ;].*#server 127.0.0.1:%s %s;#' %s && nginx -t >/dev/null && nginx -s reload && "+
+				"echo 金丝雀权重: 绿 %d%% / 蓝 %d%%",
+				shq(p["PORT_GREEN"]), shq(p["PORT_GREEN"]), green,
+				shq(p["PORT_BLUE"]), shq(p["PORT_BLUE"]), blue,
+				shq(p["CONF"]), gw, 100-gw), nil
+		},
+	},
 	"health.http": {
 		Type: "health.http", Title: "HTTP 健康检查", Category: "验证",
 		Fields: []ActionField{
