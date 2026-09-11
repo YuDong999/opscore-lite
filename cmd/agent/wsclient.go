@@ -69,6 +69,12 @@ func (w *wsClient) run(stop chan struct{}) {
 func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 	defer conn.Close()
 
+	// 读截止: 每收到任何消息(注册回执/pong)续期; 服务端对 ping 会回 pong,
+	// 因此只要链路活着, 读侧每 ~10s 内必有流量, 死链最迟 90s 被发现并重连。
+	const readWait = 90 * time.Second
+	conn.SetReadDeadline(time.Now().Add(readWait))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(readWait)) })
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -77,11 +83,17 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 			if err != nil {
 				return
 			}
+			conn.SetReadDeadline(time.Now().Add(readWait))
 		}
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+
+	// 首次重采集(services/processes/network)可能耗时 >60s, 期间无快照可发 ——
+	// 每 10s 补一个应用层心跳, 防止服务端把"正在慢采集"误判为掉线。
+	const heartbeatEvery = 10 * time.Second
+	lastSent := time.Now()
 
 	for {
 		select {
@@ -93,6 +105,7 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 		case <-ticker.C:
 		}
 
+		sent := false
 		select {
 		case snap := <-w.snapCh:
 			data, _ := json.Marshal(snap)
@@ -100,11 +113,23 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 				"type": json.RawMessage(`"snapshot"`),
 				"data": data,
 			})
+			conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				log.Printf("发送失败: %v", err)
 				return
 			}
+			lastSent = time.Now()
+			sent = true
 		default:
+		}
+		if !sent && time.Since(lastSent) >= heartbeatEvery {
+			hb, _ := json.Marshal(map[string]string{"type": "ping"})
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteMessage(websocket.TextMessage, hb); err != nil {
+				log.Printf("心跳发送失败: %v", err)
+				return
+			}
+			lastSent = time.Now()
 		}
 	}
 }

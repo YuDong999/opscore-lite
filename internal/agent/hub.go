@@ -71,6 +71,12 @@ func (h *AgentHub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 连接级保活: 读截止 75s, 每收到任何消息(含心跳 ping)即续期。
+	// agent 侧每 10s 发应用层心跳, 快照间隔(首次重采集可能 >60s)不再被误判为死链。
+	const readWait = 75 * time.Second
+	conn.SetReadDeadline(time.Now().Add(readWait))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(readWait)) })
+
 	var hostID string
 	defer func() {
 		if hostID != "" {
@@ -88,6 +94,7 @@ func (h *AgentHub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		conn.SetReadDeadline(time.Now().Add(readWait))
 
 		var msg wsMessage
 		if err := json.Unmarshal(raw, &msg); err != nil {
@@ -107,7 +114,20 @@ func (h *AgentHub) ServeWS(w http.ResponseWriter, r *http.Request) {
 			h.conns[hostID] = &agentConn{hostID: hostID, conn: conn, lastSeen: time.Now()}
 			h.mu.Unlock()
 			log.Printf("[agent] %s registered", hostID)
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			conn.WriteJSON(map[string]string{"type": "registered"})
+
+		case "ping":
+			// 应用层心跳: 刷新在线状态并回 pong, 让 agent 读侧也有流量可判定死链
+			if hostID != "" {
+				h.mu.Lock()
+				if c, ok := h.conns[hostID]; ok {
+					c.lastSeen = time.Now()
+				}
+				h.mu.Unlock()
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				_ = conn.WriteJSON(map[string]string{"type": "pong"})
+			}
 
 		case "snapshot":
 			if hostID == "" {
