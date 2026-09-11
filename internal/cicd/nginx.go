@@ -225,7 +225,7 @@ func nxExtractFile(filePath, text string) NginxConfFile {
 				up.Raw = raw.String()
 				file.Upstreams = append(file.Upstreams, up)
 			case "server":
-				sv := NginxServerBlock{File: filePath}
+				sv := NginxServerBlock{File: filePath, ProxyPass: []string{}}
 				for _, c := range st.children {
 					if len(c.args) == 0 {
 						continue
@@ -290,7 +290,8 @@ func splitNginxTDump(dump string) []NginxConfFile {
 
 // NginxProbe 探测目标主机 nginx: 运行状态 + nginx -T 全量转储结构化
 func (e *Engine) NginxProbe(hostID string) (*NginxProbe, error) {
-	out, _, err := e.ExecLineOutput(hostID, "systemctl is-active nginx 2>/dev/null || true; echo ---CONF-DUMP---; nginx -T 2>&1")
+	// 运行状态双信号: systemd is-active 或 pidof(裸 nginx 启动的进程 systemd 看不到)
+	out, _, err := e.ExecLineOutput(hostID, "systemctl is-active nginx 2>/dev/null || true; pidof nginx 2>/dev/null; echo ---CONF-DUMP---; nginx -T 2>&1")
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +300,17 @@ func (e *Engine) NginxProbe(hostID string) (*NginxProbe, error) {
 		state = strings.TrimSpace(out[:idx])
 		dump = out[idx+len("---CONF-DUMP---"):]
 	}
-	probe := &NginxProbe{Host: hostID, MainConf: "/etc/nginx/nginx.conf", NginxActive: strings.TrimSpace(state) == "active", Files: []NginxConfFile{}}
+	// 运行双信号: systemd active 或 pidof 有输出(裸 nginx 启动的进程 systemd 看不到)
+	lines := strings.Split(strings.TrimSpace(state), "\n")
+	sysdActive := len(lines) > 0 && strings.TrimSpace(lines[0]) == "active"
+	pidofHit := false
+	for _, l := range lines[1:] {
+		if t := strings.TrimSpace(l); t != "" {
+			pidofHit = true
+		}
+	}
+	nginxActive := sysdActive || pidofHit
+	probe := &NginxProbe{Host: hostID, MainConf: "/etc/nginx/nginx.conf", NginxActive: nginxActive, Files: []NginxConfFile{}}
 	if strings.Contains(dump, "nginx: [emerg]") || strings.Contains(dump, "command not found") || strings.TrimSpace(dump) == "" {
 		return probe, nil // nginx 未安装/配置不可读: 返回空结构(前端给出明确提示)
 	}
