@@ -19,4 +19,3 @@ func getConnectTimeoutSeconds(config connection.ConnectionConfig) int {
 func getConnectTimeout(config connection.ConnectionConfig) time.Duration {
 	return time.Duration(getConnectTimeoutSeconds(config)) * time.Second
 }
-

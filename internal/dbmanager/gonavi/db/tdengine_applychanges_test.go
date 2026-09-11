@@ -533,4 +533,3 @@ func TestTDengineGetCreateStatementNotFoundUsesCurrentLanguage(t *testing.T) {
 		t.Fatalf("expected no raw Chinese CREATE TABLE not found text, got %q", err.Error())
 	}
 }
-

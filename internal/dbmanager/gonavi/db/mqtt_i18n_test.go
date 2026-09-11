@@ -1,9 +1,9 @@
 package db
 
 import (
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 func TestMQTTTimeoutMessagesUseCurrentLanguage(t *testing.T) {
@@ -50,7 +50,6 @@ func TestMQTTTimeoutMessagesUseCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-
 
 func TestMQTTTimeoutCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()

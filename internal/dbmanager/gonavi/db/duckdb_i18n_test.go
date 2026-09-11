@@ -3,9 +3,9 @@
 package db
 
 import (
-	"errors"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"os"

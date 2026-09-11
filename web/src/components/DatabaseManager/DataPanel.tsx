@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, type TableData, type ColumnInfo, type TableMeta } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, type TableData, type ColumnInfo, type TableMeta, importTableCsv } from './api'
 import { useToast } from '../Toast'
 import DataGrid from './DataGrid'
 
@@ -23,6 +23,9 @@ export default function DataPanel({
   const [meta, setMeta] = useState<TableMeta | null>(null)
   const [showMeta, setShowMeta] = useState(false)
   const [metaTab, setMetaTab] = useState<'indexes' | 'fks' | 'triggers'>('indexes')
+  const [showImport, setShowImport] = useState(false)
+  const [importCsv, setImportCsv] = useState('')
+  const [importMsg, setImportMsg] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [busy, setBusy] = useState(false)
@@ -34,6 +37,7 @@ export default function DataPanel({
   const [orderBy, setOrderBy] = useState('')
   const [orderDir, setOrderDir] = useState<'ASC' | 'DESC'>('ASC')
   const [filters, setFilters] = useState<Array<{ col: string; op: string; value: string }>>([])
+  const [filterJoiner, setFilterJoiner] = useState<'AND' | 'OR'>('AND')
   const where = useMemo(() => filters.map(f => {
     const col = f.col
     const v = f.value.replace(/'/g, "''")
@@ -49,7 +53,7 @@ export default function DataPanel({
       case 'IS NOT NULL': return `${col} IS NOT NULL`
       default: return ''
     }
-  }).filter(Boolean).join(' AND '), [filters])
+  }).filter(Boolean).join(` ${filterJoiner} `), [filters, filterJoiner])
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
@@ -169,6 +173,43 @@ export default function DataPanel({
         {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }} title={err}>⚠ {err.slice(0, 40)}</span>}
         <span className="db-data-spacer" />
 
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setShowImport(!showImport); setImportMsg('') }} title="粘贴或选择 CSV(首行为列名)导入本表">
+          {showImport ? '隐藏导入' : '导入数据'}
+        </button>
+
+        {showImport && (
+          <div className="db-import-panel" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <b style={{ fontSize: '0.78rem' }}>导入 CSV 到 {database}.{table}</b>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>首行为列名 · NULL 关键字置空 · 事务内整批写入</span>
+              <label className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }}>
+                选择文件
+                <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={e => {
+                  const f = e.target.files?.[0]
+                  if (f) { const rd = new FileReader(); rd.onload = () => setImportCsv(String(rd.result || '')); rd.readAsText(f) }
+                  e.target.value = ''
+                }} />
+              </label>
+            </div>
+            <textarea className="input" style={{ minHeight: '7rem', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.72rem' }}
+              placeholder={'id,name,score\n9001,zhang,90\n9002,NULL,85'}
+              value={importCsv} onChange={e => setImportCsv(e.target.value)} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
+                disabled={!importCsv.trim()}
+                onClick={() => {
+                  setImportMsg('导入中...')
+                  importTableCsv(conn.id, database, table, importCsv)
+                    .then(r => { setImportMsg(`导入成功: ${r.imported} 行`); load() })
+                    .catch(e => setImportMsg('失败: ' + (e.message || e)))
+                }}>
+                开始导入
+              </button>
+              {importMsg && <span style={{ fontSize: '0.75rem' }}>{importMsg}</span>}
+            </div>
+          </div>
+        )}
+
         {/* 表信息抽屉 */}
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
           if (!meta) getTableMeta(conn.id, database, table).then(setMeta).catch(e => setMeta(null))
@@ -233,8 +274,14 @@ export default function DataPanel({
           ))}
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
             <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setFilters(fs => [...fs, { col: data.columns[0] || '', op: '=', value: '' }])}>+ 条件</button>
+            {filters.length > 1 && (
+              <button className="btn-glass-soft btn-glass-soft-sm" title="切换条件间组合方式"
+                onClick={() => setFilterJoiner(j => (j === 'AND' ? 'OR' : 'AND'))}>
+                组合: {filterJoiner}
+              </button>
+            )}
             {filters.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setFilters([])}>清除全部</button>}
-            <span className="dim" style={{ fontSize: '0.625rem' }}>多条件 AND 组合 · 筛选后翻页统计随之变化</span>
+            <span className="dim" style={{ fontSize: '0.625rem' }}>多条件 {filterJoiner} 组合 · 筛选后翻页统计随之变化</span>
           </div>
         </div>
       )}

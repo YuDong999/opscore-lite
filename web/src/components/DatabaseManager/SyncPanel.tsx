@@ -86,6 +86,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   const [pickedTables, setPickedTables] = useState<Set<string>>(new Set())
   const [targetNames, setTargetNames] = useState<Record<string, string>>({})
   const [syncEngines, setSyncEngines] = useState<string[] | null>(null)
+  const [nameCase, setNameCase] = useState<'keep' | 'lower' | 'upper'>('keep')
   const [tblOpen, setTblOpen] = useState(false)
   const [tblFilter, setTblFilter] = useState('')
   const [tblPos, setTblPos] = useState<{ left: number; top: number; bottom: number; up: boolean; maxH: number; width: number }>({ left: 0, top: 0, bottom: 0, up: false, maxH: 380, width: 0 })
@@ -238,7 +239,11 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       sourceId, sourceDb, targetId, targetDb,
       targetSchema: dstThree ? targetSchema : undefined,
       mode,
-      tableMaps: [...pickedTables].map(t => ({ source: t, target: targetNames[t]?.trim() || t })),
+      tableMaps: [...pickedTables].map(t => {
+        const base = targetNames[t]?.trim() || t
+        const target = nameCase === 'lower' ? base.toLowerCase() : nameCase === 'upper' ? base.toUpperCase() : base
+        return { source: t, target }
+      }),
     }
   }
 
@@ -278,7 +283,10 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
         .then(r => r.json()).then(d => {
           setJob(d.job)
           if (d.job?.status === 'running') setTimeout(tick, 1200)
-          else if (d.job?.status === 'done') toast.success('同步完成')
+          else if (d.job?.status === 'done') {
+            toast.success('同步完成')
+            window.dispatchEvent(new CustomEvent('dbmanager:tree-refresh'))
+          }
           else if (d.job?.status === 'failed') toast.error('同步失败: ' + (d.job.err || ''))
         }).catch(() => {})
     }
@@ -309,37 +317,26 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
       )}
 
       <div className="db-form">
-        {!eff.db && (sourceId || targetId) && (
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <button
-              type="button"
-              className="btn-glass-soft btn-glass-soft-sm"
-              title="交换源与目标(含已选范围)"
-              onClick={() => {
-                const s0 = sourceId, t0 = targetId
-                setSourceId(t0); setTargetId(s0)
-                setSourceDb(''); setTargetDb('')
-                setSrcSchema(''); setTargetSchema('')
-                resetDownstream()
-              }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 4 }}><path d="M7 16V4m0 0L3 8m4-4 4 4" /><path d="M17 8v12m0 0 4-4m-4 4-4-4" /></svg>
-              交换源/目标
-            </button>
-          </div>
-        )}
+        {/* 源/目标左右分栏(dbx transfer 同构): 中缝交换按钮 */}
+        <div className="db-sync-layout">
+          <div className="db-sync-panel db-sync-src">
+            <div className="db-sync-head db-sync-head-src">
+              <span className="db-sync-role">源 · 读取</span>
+              {srcConn && <span className="db-sync-eng">{srcConn.engine}</span>}
+            </div>
         {/* 第一行: 源连接 → 源范围(库|模式) → 表 */}
-        <div className="db-form-row">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           {eff.db ? (
-            <div className="db-form-grow">
-              源连接 · 固定
+            <div className="db-sync-field">
+              <span className="db-sync-lbl">源连接 · 固定</span>
               <div className="input" style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: 0.75 }} title="已由入口(库/模式/表右键)固定; 同步其他连接请从对应节点进入或用顶部同步按钮">
                 <b>{srcConn?.name || eff.db}</b>
                 <span className="dim">{srcConn?.engine}</span>
               </div>
             </div>
           ) : (
-            <label className="db-form-grow">
-              源连接
+            <label className="db-sync-field">
+              <span className="db-sync-lbl">源连接</span>
               <select className="input" value={sourceId}
                 onChange={e => { setSourceId(e.target.value); setSourceDb(''); setSrcSchema(''); resetDownstream() }}>
                 <option value="">(选择连接)</option>
@@ -350,8 +347,9 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
               </select>
             </label>
           )}
-          <label className="db-form-grow">
-            源范围{srcThree ? ' (模式)' : ' (库)'}{srcScopeFixed ? ' · 固定' : ''}
+          <label className="db-sync-field">
+            <span className="db-sync-lbl">源范围</span>
+            {srcThree ? ' (模式)' : ' (库)'}{srcScopeFixed ? ' · 固定' : ''}
             {srcThree ? (
               <>
                 <select className="input" value={srcSchema} disabled={srcScopeFixed}
@@ -388,11 +386,34 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             </button>
           </div>
         </div>
-
+          </div>
+          <div className="db-sync-mid">
+            <button
+              type="button"
+              className="btn-glass-soft btn-glass-soft-sm"
+              style={{ borderRadius: '50%', width: '2.2rem', height: '2.2rem', padding: 0 }}
+              disabled={!!eff.db}
+              title={eff.db ? '入口预设模式下源/目标固定' : '交换源与目标(含已选范围)'}
+              onClick={() => {
+                const s0 = sourceId, t0 = targetId
+                setSourceId(t0); setTargetId(s0)
+                setSourceDb(''); setTargetDb('')
+                setSrcSchema(''); setTargetSchema('')
+                resetDownstream()
+              }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 16V4m0 0L3 8m4-4 4 4" /><path d="M17 8v12m0 0 4-4m-4 4-4-4" /></svg>
+            </button>
+          </div>
+          <div className="db-sync-panel db-sync-dst">
+            <div className="db-sync-head db-sync-head-dst">
+              <span className="db-sync-role">目标 · 写入</span>
+              {dstConn && <span className="db-sync-eng">{dstConn.engine}</span>}
+            </div>
         {/* 第二行: 目标连接 → 目标范围(库|模式) → 同步模式 */}
-        <div className="db-form-row">
-          <label className="db-form-grow">
-            目标连接
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <label className="db-sync-field">
+            <span className="db-sync-lbl">目标连接</span>
+            
             <select className="input" value={targetId} onChange={e => { setTargetId(e.target.value); setTargetDb(''); setTargetSchema(''); setPlan(null) }}>
               <option value="">(选择连接)</option>
               {dbOptions.filter(c => c.id !== sourceId).map(c => {
@@ -401,8 +422,9 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
               })}
             </select>
           </label>
-          <label className="db-form-grow">
-            目标范围{dstThree ? ' (模式)' : ' (库)'}
+          <label className="db-sync-field">
+            <span className="db-sync-lbl">目标范围</span>
+            {dstThree ? ' (模式)' : ' (库)'}
             {dstThree ? (
               <>
                 <select className="input" value={targetDb} disabled title="三级命名引擎: 库即连接库(驱动按连接定库), 实际写入位置由下方模式决定" style={{ opacity: 0.65 }}>
@@ -420,8 +442,9 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
               </select>
             )}
           </label>
-          <label className="db-form-grow">
-            同步模式
+          <label className="db-sync-field">
+            <span className="db-sync-lbl">同步模式</span>
+            
             <select className="input" value={mode} onChange={e => { setMode(e.target.value as SyncMode); setPlan(null) }}>
               {(Object.keys(MODE_LABELS) as SyncMode[]).map(m => (
                 <option key={m} value={m}>{MODE_LABELS[m].text}</option>
@@ -429,6 +452,17 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
             </select>
             <span className="dim" style={{ fontSize: '0.6875rem' }}>{MODE_LABELS[mode].desc}</span>
           </label>
+        </div>
+        <label>
+          目标表名大小写
+          <select className="input" value={nameCase} onChange={e => { setNameCase(e.target.value as 'keep' | 'lower' | 'upper'); setPlan(null) }}>
+            <option value="keep">保持源表名</option>
+            <option value="lower">全部小写</option>
+            <option value="upper">全部大写</option>
+          </select>
+          <span className="dim" style={{ fontSize: '0.6875rem' }}>对目标表名(含自定义名)统一应用</span>
+        </label>
+          </div>
         </div>
 
         <div className="db-form-actions" style={{ justifyContent: 'flex-start' }}>

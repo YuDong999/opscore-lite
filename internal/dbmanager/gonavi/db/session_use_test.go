@@ -32,7 +32,9 @@ func TestMySQLSessionUseQuery(t *testing.T) {
 		t.Fatalf("USE: %v", err)
 	}
 	qsess, ok2 := sess.(StatementQueryExecer)
-	if !ok2 { t.Fatal("no StatementQueryExecer") }
+	if !ok2 {
+		t.Fatal("no StatementQueryExecer")
+	}
 	rows, cols, err := qsess.Query("SELECT DATABASE() AS db, COUNT(*) AS n FROM users")
 	if err != nil {
 		t.Fatalf("Query: %v", err)

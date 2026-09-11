@@ -257,7 +257,6 @@ func TestDriverRuntimeSupportStatusUsesCurrentLanguageForMissingOptionalDriverAg
 	}
 }
 
-
 func TestResolveExternalDriverRootUsesCurrentLanguageForCreateDirectoryFailure(t *testing.T) {
 	SetBackendLanguage(i18n.LanguageEnUS)
 	t.Cleanup(func() {

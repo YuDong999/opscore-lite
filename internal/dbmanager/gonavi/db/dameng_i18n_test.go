@@ -6,10 +6,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"sync"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 type damengI18nEmptyRowsDriver struct{}
@@ -96,4 +96,3 @@ func TestDamengCreateStatementNotFoundUsesCurrentLanguage(t *testing.T) {
 		t.Fatalf("expected no raw Chinese create-statement text, got %q", err.Error())
 	}
 }
-

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"opscore/internal/dbmanager/gonavi/appdata"
 )
@@ -51,6 +52,12 @@ var optionalGoDrivers = map[string]struct{}{
 	"clickhouse":    {},
 	"elasticsearch": {},
 	"trino":         {},
+}
+
+// embeddedGoDrivers 是实现直接内嵌在主二进制(纯 Go 驱动, sql.Open 直连)的可选驱动,
+// 不依赖 driver-agent 可执行文件, 运行时就绪检查对其跳过 agent 存在性。
+var embeddedGoDrivers = map[string]struct{}{
+	"sqlite": {},
 }
 
 // optionalDriverAgentRevisions 记录 GoNavi 对各可选 driver-agent 包装逻辑的兼容版本。
@@ -270,6 +277,35 @@ func ResolveOptionalGoDriverMarkerPath(downloadDir string, driverType string) (s
 	return filepath.Join(root, normalized, "installed.json"), nil
 }
 
+// InstallOptionalGoDriverMarker 写入驱动"安装启用"标记(installed.json)。
+// 可选驱动的实现已随主二进制编译, 写标记即完成安装; 返回标记文件路径。
+func InstallOptionalGoDriverMarker(driverType, downloadDir string) (string, error) {
+	normalized := normalizeRuntimeDriverType(driverType)
+	if !IsOptionalGoDriver(normalized) {
+		return "", fmt.Errorf("%s 不是可选 Go 驱动", driverDisplayName(normalized))
+	}
+	if !IsOptionalGoDriverBuildIncluded(normalized) {
+		return "", fmt.Errorf("%s 未包含在当前构建中", driverDisplayName(normalized))
+	}
+	markerPath, err := ResolveOptionalGoDriverMarkerPath(downloadDir, normalized)
+	if err != nil {
+		return "", err
+	}
+	payload := fmt.Sprintf(`{"installedAt":%d,"driver":%q}`, time.Now().Unix(), normalized)
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(markerPath, []byte(payload), 0o644); err != nil {
+		return "", err
+	}
+	return markerPath, nil
+}
+
+// IsOptionalGoDriverInstalled 返回标记文件是否已写(真实安装状态)。
+func IsOptionalGoDriverInstalled(driverType string) bool {
+	return optionalGoDriverInstalled(driverType)
+}
+
 func optionalGoDriverInstalled(driverType string) bool {
 	markerPath, err := ResolveOptionalGoDriverMarkerPath("", driverType)
 	if err != nil {
@@ -283,6 +319,9 @@ func optionalGoDriverRuntimeReady(driverType string) (bool, string) {
 	normalized := normalizeRuntimeDriverType(driverType)
 	if !IsOptionalGoDriver(normalized) {
 		return true, ""
+	}
+	if _, embedded := embeddedGoDrivers[normalized]; embedded {
+		return true, "" // 内嵌实现: 驱动代码在主二进制内, 无 agent 可执行文件需求
 	}
 	displayName := driverDisplayName(normalized)
 	executablePath, err := ResolveOptionalDriverAgentExecutablePath("", normalized)

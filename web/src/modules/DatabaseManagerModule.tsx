@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
   listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
+  listTables, fetchTableDDL,
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
 import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
@@ -19,6 +20,9 @@ import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
 import QuickOpen from '../components/DatabaseManager/QuickOpen'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
+import ErGraphPanel from '../components/DatabaseManager/ErGraphPanel'
+import TableOverviewPanel from '../components/DatabaseManager/TableOverviewPanel'
+import ServerDashboardPanel from '../components/DatabaseManager/ServerDashboardPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 import DriverManagement from '../components/DatabaseManager/DriverManagement'
 import SlowSQLPanel from '../components/DatabaseManager/SlowSQLPanel'
@@ -28,7 +32,7 @@ import SavedQueriesPanel from '../components/DatabaseManager/SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash'
   connId: string
   db?: string
   table?: string
@@ -164,6 +168,49 @@ export default function DatabaseManagerModule() {
   const handleSyncDb = (c: ConnectionInfo, db: string) => openSyncTab({ connId: c.id, db })
   const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => openSyncTab({ connId: c.id, db, table })
   const handleSyncSchema = (c: ConnectionInfo, db: string, schema: string) => openSyncTab({ connId: c.id, db, schema })
+
+  const handleOpenDash = (c: ConnectionInfo) => {
+    setConn(c)
+    openTab({ key: `dash:${c.id}`, kind: 'dash', connId: c.id, label: '服务器仪表盘' })
+  }
+  const handleOpenOverview = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    openTab({ key: `overview:${c.id}:${db}`, kind: 'overview', connId: c.id, db, label: `表概览 ${db}` })
+  }
+  const handleNewTable = (c: ConnectionInfo, db: string) => {
+    const NL = String.fromCharCode(10)
+    handleNewQueryWithSQL(c, db, `CREATE TABLE ${db}.new_table (${NL}  id INT PRIMARY KEY AUTO_INCREMENT,${NL}  name VARCHAR(255) NOT NULL,${NL}  created_at DATETIME DEFAULT CURRENT_TIMESTAMP${NL});`)
+  }
+  const handleExportSchema = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    toast.success(`正在导出 ${db} 全部表结构...`)
+    ;(async () => {
+      const ts = await listTables(c.id, db)
+      const parts: string[] = [`-- ${db} 表结构导出
+-- ${new Date().toLocaleString()}
+`]
+      for (const t of ts.filter(x => x.type !== 'VIEW')) {
+        try {
+          const ddl = await fetchTableDDL(c.id, db, t.name)
+          parts.push(`
+-- ── ${t.name} ──
+${ddl};
+`)
+        } catch { /* 单表失败跳过 */ }
+      }
+      const blob = new Blob([parts.join('\n')], { type: 'text/sql' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${db}-schema.sql`
+      a.click()
+      URL.revokeObjectURL(a.href)
+      toast.success(`已导出 ${ts.filter(x => x.type !== 'VIEW').length} 张表结构`)
+    })()
+  }
+  const handleOpenEr = (c: ConnectionInfo, db: string, table?: string) => {
+    setConn(c)
+    openTab({ key: `er:${c.id}:${db}`, kind: 'er', connId: c.id, db, table, label: table ? `ER ${table}` : 'ER 关系图' })
+  }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
   // 新建/编辑连接通过自定义事件交给 ConnectionPanel (其内部用 portal 渲染向导浮层)
@@ -226,7 +273,11 @@ export default function DatabaseManagerModule() {
           )}
           <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>审计</button>
           {conn && (
-            <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
+            <>
+              <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" title="服务器仪表盘" onClick={() => handleOpenDash(conn)}>仪表盘</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!conn.config?.database} title={conn.config?.database ? 'ER 关系图' : '该连接未指定默认库, 请从树中库节点右键进入'} onClick={() => openTab({ key: `er:${conn.id}:${conn.config?.database || ''}`, kind: 'er', connId: conn.id, db: conn.config?.database || '', label: 'ER 关系图' })}>关系图</button>
+            </>
           )}
         </div>
         {activeConn && (
@@ -291,6 +342,11 @@ export default function DatabaseManagerModule() {
               onSyncDb={handleSyncDb}
               onSyncTable={handleSyncTable}
               onSyncSchema={handleSyncSchema}
+              onOpenEr={handleOpenEr}
+              onOpenDash={handleOpenDash}
+              onNewTable={handleNewTable}
+              onExportSchema={handleExportSchema}
+              onOpenOverview={handleOpenOverview}
               onOpenStatus={handleOpenStatus}
               onOpenExplain={handleOpenExplain}
               onNewQueryWithSQL={handleNewQueryWithSQL}
@@ -369,7 +425,15 @@ export default function DatabaseManagerModule() {
                     )
                   }
                   case 'doc':
-                    return <DocPanel key={t.key} connId={c!.id} database={t.db!} table={t.table!} />
+                    return <DocPanel key={t.key} connId={c!.id} engine={c!.engine} database={t.db!} table={t.table!} onStructureChanged={() => { listConnections().then(setConns).catch(() => {}) }} />
+                  case 'er':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0 }} key={t.key}><ErGraphPanel connId={c!.id} database={t.db!} focusTable={t.table} /></div>
+                  case 'overview':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0, display: 'flex' }} key={t.key}>
+                      <TableOverviewPanel connId={c!.id} database={t.db!} onOpenTable={table => handleOpenTable(c!, t.db!, table)} />
+                    </div>
+                  case 'dash':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0, display: 'flex' }} key={t.key}><ServerDashboardPanel connId={c!.id} engine={c!.engine} /></div>
                   case 'sync':
                     return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={t.db} presetSchema={t.schema} presetTable={t.table} /></div>
                   case 'audit':

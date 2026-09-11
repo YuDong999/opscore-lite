@@ -4,10 +4,10 @@ package db
 
 import (
 	"context"
-	"strings"
-	"testing"
 	"opscore/internal/dbmanager/gonavi/connection"
 	"opscore/internal/dbmanager/gonavi/shared/i18n"
+	"strings"
+	"testing"
 )
 
 const rawElasticsearchConnectionNotOpenText = "\u8fde\u63a5\u672a\u6253\u5f00"
@@ -108,4 +108,3 @@ func TestElasticsearchConnectionNotOpenUsesCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-

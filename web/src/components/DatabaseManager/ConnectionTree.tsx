@@ -103,7 +103,7 @@ interface TreeNode {
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
-  onSyncDb, onSyncTable, onSyncSchema, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
+  onSyncDb, onSyncTable, onSyncSchema, onOpenEr, onOpenOverview, onNewTable, onExportSchema, onOpenDash, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
   onRefresh, onToggleSide,
 }: {
   conns: ConnectionInfo[]
@@ -119,6 +119,11 @@ export default function ConnectionTree({
   onSyncDb: (conn: ConnectionInfo, db: string) => void
   onSyncTable?: (conn: ConnectionInfo, db: string, table: string) => void
   onSyncSchema?: (conn: ConnectionInfo, db: string, schema: string) => void
+  onOpenEr?: (conn: ConnectionInfo, db: string, table?: string) => void
+  onNewTable?: (conn: ConnectionInfo, db: string) => void
+  onOpenDash?: (conn: ConnectionInfo) => void
+  onExportSchema?: (conn: ConnectionInfo, db: string) => void
+  onOpenOverview?: (conn: ConnectionInfo, db: string) => void
   onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
   onOpenExplain: (conn: ConnectionInfo, db: string, table: string) => void
   onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
@@ -293,7 +298,7 @@ export default function ConnectionTree({
       >
         {canExpand ? (
           <button
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent p-0 text-muted-foreground outline-none hover:text-foreground"
             onClick={e => { e.stopPropagation(); onNodeClick(node) }}
             aria-label={isOpen ? '收起' : '展开'}
           >
@@ -312,6 +317,7 @@ export default function ConnectionTree({
   const buildMenuItems = (node: TreeNode): ContextMenuItem[] => {
     if (node.level === 'conn' && node.conn) {
       return [
+        ...(onOpenDash ? [{ label: '服务器仪表盘', icon: <ActionIcon kind="chart" />, onClick: () => onOpenDash(node.conn!) }] : []),
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db || '') },
         { label: '测试连接', icon: <ActionIcon kind="test" />, onClick: () => quickTest(node.conn!) },
         { divider: true },
@@ -350,7 +356,11 @@ export default function ConnectionTree({
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
         { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
         { divider: 'heavy' },
+        { label: '新建表', icon: <ActionIcon kind="plus" />, onClick: () => onNewTable?.(node.conn!, node.db!) },
+        { label: '导出表结构 (SQL)', icon: <ActionIcon kind="download" />, onClick: () => onExportSchema?.(node.conn!, node.db!) },
         { label: '跨库同步此库', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncDb(node.conn!, node.db!) },
+        ...(onOpenEr ? [{ label: '关系图 (ER)', icon: <ActionIcon kind="chart" />, onClick: () => onOpenEr(node.conn!, node.db!) }] : []),
+        ...(onOpenOverview ? [{ label: '表概览', icon: <ActionIcon kind="chart" />, onClick: () => onOpenOverview(node.conn!, node.db!) }] : []),
         { divider: 'heavy' },
         { label: '复制库名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.db!); notify(true, `已复制 ${node.db}`) } },
         { divider: 'light' },
@@ -365,12 +375,40 @@ export default function ConnectionTree({
         { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
         { label: '表统计 / 状态', icon: <ActionIcon kind="gear" />, onClick: () => onOpenStatus(node.conn!, node.db!, node.table!) },
         ...(isTable && onSyncTable ? [{ label: '跨库同步此表', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncTable(node.conn!, node.db!, node.table!) }] : []),
+        ...(isTable && onOpenEr ? [{ label: '关系图 (此表为中心)', icon: <ActionIcon kind="chart" />, onClick: () => onOpenEr(node.conn!, node.db!, node.table!) }] : []),
       ]
       // ── SQL 与结构 ──
       const sqlItems: ContextMenuItem[] = [
         { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
         ...(isTable ? [
-          { label: '生成 SELECT 模板', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) },
+          { label: '生成 SQL', icon: <ActionIcon kind="query" />, children: [
+            { label: '生成 SELECT', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) },
+          { label: '生成 INSERT', icon: <ActionIcon kind="query" />, onClick: () => {
+              // 列清单异步拉取 describe, 生成带占位值的 INSERT 模板
+              describeTable(node.conn!.id, node.db!, node.table!).then(d => {
+                const cols = d.columns.map(c => c.name)
+                const vals = d.columns.map(c => (c.key === 'PRI' ? '/* 自增 */' : '?'))
+                const sqlText = `INSERT INTO ${node.table} (${cols.join(', ')}) VALUES (${vals.join(', ')})`
+                onNewQueryWithSQL(node.conn!, node.db!, sqlText)
+              }).catch((e: any) => notify(false, '生成失败: ' + (e.message || e)))
+            } },
+          { label: '生成 UPDATE', icon: <ActionIcon kind="query" />, onClick: () => {
+              describeTable(node.conn!.id, node.db!, node.table!).then(d => {
+                const pk = d.columns.filter(c => c.key === 'PRI').map(c => c.name)
+                const cols = d.columns.map(c => c.name)
+                const where = pk.length ? pk.map(pk => `${pk} = ?`).join(' AND ') : '/* 无主键, 请补 WHERE */'
+                onNewQueryWithSQL(node.conn!, node.db!, `UPDATE ${node.table} SET\n  ${cols.map(c => `${c} = ?`).join(',\n  ')}\nWHERE ${where}`)
+              }).catch((e: any) => notify(false, '生成失败: ' + (e.message || e)))
+            } },
+          { label: '生成 DELETE', icon: <ActionIcon kind="query" />, onClick: () => {
+              describeTable(node.conn!.id, node.db!, node.table!).then(d => {
+                const pk = d.columns.filter(c => c.key === 'PRI').map(c => c.name)
+                const where = pk.length ? pk.map(pk => `${pk} = ?`).join(' AND ') : '/* 无主键, 请补 WHERE */'
+                onNewQueryWithSQL(node.conn!, node.db!, `DELETE FROM ${node.table} WHERE ${where}`)
+              }).catch((e: any) => notify(false, '生成失败: ' + (e.message || e)))
+            } },
+          ],
+          title: '生成常用 SQL 模板到查询窗口' },
           { label: '在新标签打开数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!) },
           { label: '执行计划 (EXPLAIN)', icon: <ActionIcon kind="search" />, onClick: () => onOpenExplain(node.conn!, node.db!, node.table!) },
         ] : []),
@@ -466,6 +504,13 @@ export default function ConnectionTree({
     setDbCache({}); setTablesCache({}); setSchemaCache({}); setExpanded(new Set())
     notify(true, '已刷新, 重新展开连接加载')
   }
+
+  // 同步完成等外部动作触发的静默刷新(不走手动 notify)
+  useEffect(() => {
+    const h = () => { setDbCache({}); setTablesCache({}); setSchemaCache({}); setExpanded(new Set()) }
+    window.addEventListener('dbmanager:tree-refresh', h)
+    return () => window.removeEventListener('dbmanager:tree-refresh', h)
+  }, [])
 
   const onExportConns = () => {
     const payload = conns.map(c => ({ name: c.name, engine: c.engine, config: { ...c.config, password: undefined } }))

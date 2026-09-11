@@ -91,7 +91,6 @@ func TestRequireSingleRowAffectedUsesLocalizedText(t *testing.T) {
 	}
 }
 
-
 func TestDatabaseRowAffectedCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()
 	if err != nil {
@@ -184,7 +183,6 @@ func TestSQLConnTransactionExecerUsesCurrentLanguageForConnectionNotOpen(t *test
 	}
 }
 
-
 func TestDatabaseConnectionNotOpenCatalogKeyExists(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()
 	if err != nil {
@@ -242,7 +240,6 @@ func TestWrapDatabaseConnectionErrorsUseCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-
 
 func TestDatabaseConnectionWrapperSourcesUseI18nHelpers(t *testing.T) {
 	type sourceCheck struct {
@@ -373,7 +370,6 @@ func TestFormatCustomDriverOpenErrorUsesCurrentLanguageForUnknownDrivers(t *test
 	}
 }
 
-
 func TestCustomDriverOpenErrorCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()
 	if err != nil {
@@ -415,7 +411,6 @@ func TestNewDatabaseUnsupportedTypeUsesCurrentLanguage(t *testing.T) {
 		t.Fatalf("expected no Chinese unsupported database type text, got %q", err.Error())
 	}
 }
-
 
 func TestNewDatabaseUnsupportedTypeCatalogKeyExists(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()
@@ -493,7 +488,6 @@ func TestTransactionExecerStateErrorsUseCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-
 
 func TestDatabaseTransactionStateCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()

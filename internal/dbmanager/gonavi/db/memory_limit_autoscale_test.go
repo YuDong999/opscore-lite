@@ -35,7 +35,7 @@ func TestShouldGrowMemoryLimit_NoActionAtExactThreshold(t *testing.T) {
 }
 
 func TestShouldGrowMemoryLimit_StepByGB(t *testing.T) {
-	current := int64(2 * 1024 * 1024 * 1024) // 2GB
+	current := int64(2 * 1024 * 1024 * 1024)   // 2GB
 	heapAlloc := int64(3 * 1024 * 1024 * 1024) // 3GB > 2GB * 80% = 1.6GB
 
 	grown, next := shouldGrowMemoryLimit(current, heapAlloc)
@@ -65,7 +65,7 @@ func TestShouldGrowMemoryLimit_CapAtMax(t *testing.T) {
 func TestShouldGrowMemoryLimit_CapWhenStepExceedsMax(t *testing.T) {
 	// 当前 limit 距上限不足 1GB 步长：7.5GB
 	current := MemorySoftLimitMaxBytes - 512*1024*1024 // 7.5GB
-	heapAlloc := current + 1 // 超过 80% 阈值
+	heapAlloc := current + 1                           // 超过 80% 阈值
 
 	grown, next := shouldGrowMemoryLimit(current, heapAlloc)
 	if !grown {

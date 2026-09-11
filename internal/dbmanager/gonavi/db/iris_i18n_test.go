@@ -3,9 +3,9 @@
 package db
 
 import (
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 var rawIRISTableNameRequiredText = string([]rune{0x8868, 0x540d, 0x4e0d, 0x80fd, 0x4e3a, 0x7a7a})
@@ -39,7 +39,6 @@ func TestIRISTableRefErrorsUseCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-
 
 func TestIRISTableNameRequiredCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()

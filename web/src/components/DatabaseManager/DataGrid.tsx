@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { type QueryResult, type ColumnInfo, exportQuery, type ExportFormat } from './api'
+import { type QueryResult, type ColumnInfo, exportQuery, runQueryRaw, type ExportFormat } from './api'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { ActionIcon } from './DbIcons'
 
@@ -23,7 +23,7 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase }: {
+export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
@@ -33,6 +33,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   onFilter?: (col: string, op: string, value: string) => void
   onClearFilters?: () => void
   onSortDatabase?: (col: string, dir: 'asc' | 'desc') => void
+  onAfterWrite?: () => void        // 写操作(置NULL等)成功后的刷新回调
   exportSql?: string                 // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
@@ -147,6 +148,18 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
 
   const exportEffective = exportSql?.trim() || sql   // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
 
+  // 写操作辅助: 从 sql 解析目标表(SELECT * FROM x)、主键列、值转义
+  const tableFromSql = useMemo(() => {
+    const m = /FROM\s+([`\"\[\]\w.]+)/i.exec(sql || '')
+    return m ? m[1] : null
+  }, [sql])
+  const pkCols = useMemo(() => (columnMeta || []).filter(c => c.key === 'PRI').map(c => c.name), [columnMeta])
+  const escVal = useCallback((v: any) => {
+    if (v === null) return 'NULL'
+    if (typeof v === 'number') return String(v)
+    return `'${String(v).replace(/'/g, "''")}'`
+  }, [])
+
   const copyCell = useCallback((v: any) => {
     const text = renderCell(v)
     navigator.clipboard?.writeText(text).then(() => {
@@ -183,6 +196,26 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       { label: '行详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setRowDetail(row) } },
       { label: '列详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setColDetail(col) } },
       { label: '转置显示此行', icon: <ActionIcon kind="doc" />, onClick: () => setTranspose({ r: row }) },
+      ...(tableFromSql && pkCols.length && !pkCols.includes(colName) ? [{
+        label: '置为 NULL',
+        icon: <ActionIcon kind="edit" />,
+        onClick: () => {
+          const rowData = result.rows[row] || []
+          const where = pkCols.map(pk => {
+            const idx = result.columns.indexOf(pk)
+            return `${pk} = ${escVal(rowData[idx])}`
+          }).join(' AND ')
+          if (!confirm(`确认将 ${colName} 置为 NULL?
+${tableFromSql} WHERE ${where}`)) return
+          runQueryRaw(connId!, `UPDATE ${tableFromSql} SET ${colName} = NULL WHERE ${where}`)
+            .then(r => {
+              if (r.data.code === 'write_locked') { alert('写操作被拦截: 请先解锁写模式'); return }
+              setCopied('已置 NULL'); setTimeout(() => setCopied(''), 1200)
+              onAfterWrite?.()
+            })
+            .catch((e: any) => alert('置 NULL 失败: ' + (e.message || e)))
+        },
+      }] : []),
       { divider: 'heavy' },
       // ── 排序(dbx 双模式: 数据库排序=后端 ORDER BY, 当前页排序=本地) ──
       ...(onSortDatabase ? [
@@ -211,8 +244,20 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       { divider: true },
     ]
     items.push({ label: '导出当前页 (CSV)', icon: <ActionIcon kind="upload" />, disabled: !connId || !exportEffective, onClick: () => { if (connId && exportEffective) exportQuery(connId, exportEffective, 'csv').catch(() => {}) } })
+    if (tableFromSql) {
+      items.push({ divider: true })
+      items.push({
+        label: '复制行为新行 (INSERT)', icon: <ActionIcon kind="copy" />, disabled: !pkCols.length && !result.columns.length,
+        onClick: () => {
+          const cols = result.columns.filter(c => !pkCols.includes(c))
+          const vals = cols.map(c => escVal(rowData[result.columns.indexOf(c)]))
+          navigator.clipboard?.writeText(`INSERT INTO ${tableFromSql} (${cols.join(', ')}) VALUES (${vals.join(', ')})`)
+        },
+        title: '生成排除主键的 INSERT 语句到剪贴板',
+      })
+    }
     return items
-  }, [result, connId, exportEffective])
+  }, [result, connId, exportEffective, tableFromSql, pkCols])
 
   const [exporting, setExporting] = useState<ExportFormat | null>(null)
   const [exportErr, setExportErr] = useState('')

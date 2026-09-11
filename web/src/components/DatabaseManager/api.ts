@@ -538,6 +538,43 @@ export async function getDrivers(): Promise<DriverInfo[]> {
   return r.drivers || []
 }
 
+export interface FkGraph {
+  tables: string[]
+  edges: Array<{ fromTable: string; fromColumn: string; toTable: string; toColumn: string }>
+}
+
+// 库级表+外键关系(ER 图数据源)
+export async function getFkGraph(id: string, database: string): Promise<FkGraph> {
+  const r = await getJSON<FkGraph>(
+    `/api/dbmanager/fk-graph?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r
+}
+
+export interface TableOverviewRow {
+  name: string; rows: number; dataSize: number; indexSize: number
+  engine: string; comment: string; createdAt: string; updatedAt: string
+}
+
+// 库级表概览(行数/大小/引擎/注释/时间, GoNavi 同款字段)
+export async function getTableOverview(id: string, database: string): Promise<TableOverviewRow[]> {
+  const r = await getJSON<{ overview: TableOverviewRow[] }>(
+    `/api/dbmanager/table-overview?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.overview || []
+}
+
+// CSV 导入(首行=列名, 事务内批量 INSERT, 任一行失败整体回滚)
+export async function importTableCsv(id: string, database: string, table: string, csv: string): Promise<{ imported: number }> {
+  return postJSON('/api/dbmanager/table-import', { id, database, table, csv })
+}
+
+// 安装启用可选驱动(写 installed.json 标记; 驱动实现已随主二进制编译)
+export async function installDriver(type: string): Promise<{ ok: boolean; marker: string }> {
+  return postJSON('/api/dbmanager/drivers/install', { type })
+}
+
+
 export function statusLabel(s: EngineStatus): { text: string; cls: string } {
   switch (s) {
     case 'builtin':  return { text: '内置',  cls: 'pill-ok' }

@@ -1,12 +1,12 @@
 package db
 
 import (
-	"opscore/internal/dbmanager/gonavi/connection"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"opscore/internal/dbmanager/gonavi/connection"
 	"reflect"
 	"strconv"
 	"strings"
@@ -1099,43 +1099,43 @@ func requireSingleRowAffected(result sql.Result, action rowMutationAction) error
 type databaseFactory func() Database
 
 var databaseFactories = map[string]databaseFactory{
-		"mysql": func() Database {
-			return &MySQLDB{}
-		},
-		"goldendb": func() Database {
-			return &MySQLDB{}
-		},
-		"postgres": func() Database {
-			return &PostgresDB{}
-		},
-		"oracle": func() Database {
-			return &OracleDB{}
-		},
-		"chroma": func() Database {
-			return &ChromaDB{}
-		},
-		"qdrant": func() Database {
-			return &QdrantDB{}
-		},
-		"milvus": func() Database {
-			return &MilvusDB{}
-		},
-		"rocketmq": func() Database {
-			return &RocketMQDB{}
-		},
-		"mqtt": func() Database {
-			return &MQTTDB{}
-		},
-		"kafka": func() Database {
-			return &KafkaDB{}
-		},
-		"rabbitmq": func() Database {
-			return &RabbitMQDB{}
-		},
-		"custom": func() Database {
-			return &CustomDB{}
-		},
-	}
+	"mysql": func() Database {
+		return &MySQLDB{}
+	},
+	"goldendb": func() Database {
+		return &MySQLDB{}
+	},
+	"postgres": func() Database {
+		return &PostgresDB{}
+	},
+	"oracle": func() Database {
+		return &OracleDB{}
+	},
+	"chroma": func() Database {
+		return &ChromaDB{}
+	},
+	"qdrant": func() Database {
+		return &QdrantDB{}
+	},
+	"milvus": func() Database {
+		return &MilvusDB{}
+	},
+	"rocketmq": func() Database {
+		return &RocketMQDB{}
+	},
+	"mqtt": func() Database {
+		return &MQTTDB{}
+	},
+	"kafka": func() Database {
+		return &KafkaDB{}
+	},
+	"rabbitmq": func() Database {
+		return &RabbitMQDB{}
+	},
+	"custom": func() Database {
+		return &CustomDB{}
+	},
+}
 
 func init() {
 	registerOptionalDatabaseFactories()

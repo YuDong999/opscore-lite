@@ -5,11 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"opscore/internal/dbmanager/gonavi/connection"
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"sync"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/connection"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 type oracleI18nQueryErrorDriver struct{}
@@ -175,7 +175,6 @@ func TestOracleMetadataErrorsUseCurrentLanguage(t *testing.T) {
 		}
 	})
 }
-
 
 func TestOracleMetadataCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()

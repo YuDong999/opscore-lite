@@ -1,18 +1,28 @@
 import { useEffect, useState } from 'react'
-import { getDrivers, type DriverInfo } from './api'
+import { getDrivers, type DriverInfo , installDriver } from './api'
 
 export default function DriverManagement() {
   const [drivers, setDrivers] = useState<DriverInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
-  useEffect(() => {
+  const reload = () => {
     setLoading(true)
     getDrivers()
       .then(d => setDrivers(d))
       .catch(e => setErr(e.message || '加载驱动列表失败'))
       .finally(() => setLoading(false))
-  }, [])
+  }
+  useEffect(() => { reload() }, [])
+
+  const [installing, setInstalling] = useState<string | null>(null)
+  const handleInstall = (type: string) => {
+    setInstalling(type)
+    installDriver(type)
+      .then(() => reload())
+      .catch(e => setErr(`安装失败: ${e.message || e}`))
+      .finally(() => setInstalling(null))
+  }
 
   if (loading) return <div className="log-loading">加载驱动列表中...</div>
   if (err) return <div className="banner banner-err">{err}</div>
@@ -34,7 +44,7 @@ export default function DriverManagement() {
           <h4>内置驱动</h4>
           <div className="db-drv-grid">
             {builtin.map(d => (
-              <DriverCard key={d.type} driver={d} />
+              <DriverCard key={d.type} driver={d} onInstall={handleInstall} />
             ))}
           </div>
         </div>
@@ -45,7 +55,7 @@ export default function DriverManagement() {
           <h4>可选驱动</h4>
           <div className="db-drv-grid">
             {optional.map(d => (
-              <DriverCard key={d.type} driver={d} />
+              <DriverCard key={d.type} driver={d} onInstall={handleInstall} />
             ))}
           </div>
         </div>
@@ -56,7 +66,7 @@ export default function DriverManagement() {
           <h4>未知 / 未检测</h4>
           <div className="db-drv-grid">
             {unknown.map(d => (
-              <DriverCard key={d.type} driver={d} />
+              <DriverCard key={d.type} driver={d} onInstall={handleInstall} />
             ))}
           </div>
         </div>
@@ -65,9 +75,10 @@ export default function DriverManagement() {
   )
 }
 
-function DriverCard({ driver: d }: { driver: DriverInfo }) {
-  const statusCls = d.builtin ? 'pill-ok' : d.installed ? 'pill-warn' : 'pill-err'
+function DriverCard({ driver: d, onInstall, installing }: { driver: DriverInfo; onInstall?: (type: string) => void; installing?: string | null }) {
+  const statusCls = d.builtin ? 'pill-ok' : d.installed ? 'pill-ok' : 'pill-err'
   const statusText = d.builtin ? '内置' : d.installed ? '已安装' : '未安装'
+  const canInstall = !d.builtin && !d.installed && onInstall
 
   return (
     <div className="db-drv-card">
@@ -82,6 +93,17 @@ function DriverCard({ driver: d }: { driver: DriverInfo }) {
         <span>{d.category}</span>
       </div>
       {d.reason && <div className="db-drv-reason dim">{d.reason}</div>}
+      {canInstall && (
+        <button
+          className="btn-glass-soft btn-glass-soft-sm"
+          style={{ marginTop: 6 }}
+          disabled={installing === d.type}
+          onClick={() => onInstall(d.type)}
+          title="驱动实现已内置, 安装=写入启用标记, 即时生效"
+        >
+          {installing === d.type ? '安装中...' : '安装启用'}
+        </button>
+      )}
     </div>
   )
 }
