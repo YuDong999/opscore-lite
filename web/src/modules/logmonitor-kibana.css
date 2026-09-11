@@ -33,7 +33,7 @@
   padding: 10px 12px;
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .kib-topbar-soon { font-size: 11px; color: var(--text-dim); }
 .kib-topbar label {
@@ -62,7 +62,7 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.08));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   max-width: 220px;
 }
@@ -80,7 +80,7 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.06));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .kib-search input:focus {
   outline: none;
@@ -134,7 +134,7 @@
 .kib-fields {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -161,7 +161,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 5px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
@@ -181,7 +181,7 @@
   color: var(--text-dim);
   background: color-mix(in srgb, var(--text-dim) 15%, transparent);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 .kib-field.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -207,7 +207,7 @@
 .kib-hist-card {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 12px;
   flex: none; /* 直方图固定高度，不参与弹性伸缩 */
 }
@@ -225,7 +225,7 @@
 .kib-docs {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   flex: 1;
   min-height: 0;
@@ -290,7 +290,7 @@
   color: var(--accent);
   font-weight: 700;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-radius: 2px;
+  border-radius: 4px;
   padding: 0 1px;
 }
 
@@ -302,7 +302,7 @@
   font-size: 10px;
   font-weight: 700;
   text-align: center;
-  border-radius: 3px;
+  border-radius: 4px;
   letter-spacing: 0.02em;
 }
 .kib-idx {
@@ -310,7 +310,7 @@
   padding: 0 6px;
   font-size: 10px;
   line-height: 1.5;
-  border-radius: 3px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -435,8 +435,8 @@
   max-width: 360px;
   animation: kib-toast-in 0.2s ease-out;
 }
-.kib-toast-ok { border-left: 3px solid #34c759; }
-.kib-toast-err { border-left: 3px solid #ff4d4f; }
+.kib-toast-ok { border-left: 3px solid var(--ok); }
+.kib-toast-err { border-left: 3px solid var(--danger); }
 .kib-toast-info { border-left: 3px solid var(--accent-2); }
 @keyframes kib-toast-in {
   from { transform: translateX(20px); opacity: 0; }
@@ -459,7 +459,7 @@
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
@@ -479,24 +479,24 @@
   color: var(--text-dim);
 }
 .kib-btn-bare:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
-.kib-btn-bare-danger:hover { color: #ff4d4f; background: color-mix(in srgb, #ff4d4f 10%, transparent); }
+.kib-btn-bare-danger:hover { color: var(--lvl-error); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
 .kib-live {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--border);
   cursor: pointer;
-  background: color-mix(in srgb, #34c759 12%, transparent);
-  color: #34c759;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--lvl-ok);
 }
 .kib-live.on {
-  background: color-mix(in srgb, #ff4d4f 14%, transparent);
-  color: #ff4d4f;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--lvl-error);
 }
 .kib-live-dot {
   width: 8px; height: 8px;
@@ -549,7 +549,7 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.06));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .kib-form-row input:focus, .kib-form-row select:focus {
   outline: none;
@@ -592,7 +592,7 @@
 /* 从已连接资源添加(容器/K8S 发现面板) */
 .kib-discover-panel {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
   background: var(--bg-soft, rgba(127,127,127,0.04));
 }
@@ -610,7 +610,7 @@
   gap: 8px;
   padding: 7px 10px;
   font-size: 13px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -629,18 +629,23 @@
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--accent, #4c7dff);
-  color: #fff;
+  color: var(--panel, #fff);
   font-size: 11px;
   font-weight: 600;
   justify-content: center;
 }
-.kib-badge.kib-multi { background: #22a06b; }
+/* 染色徽章: 同系深字+低饱和底, 明暗主题均满足对比度(浅色文字≥4.6:1) */
+.kib-badge.kib-tint-ok { background: color-mix(in srgb, var(--lvl-ok) 15%, transparent); color: var(--lvl-ok); }
+.kib-badge.kib-tint-danger { background: color-mix(in srgb, var(--lvl-error) 15%, transparent); color: var(--lvl-error); }
+.kib-badge.kib-tint-info { background: color-mix(in srgb, var(--lvl-info) 15%, transparent); color: var(--lvl-info); }
+.kib-badge.kib-tint-accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.kib-badge.kib-multi { background: color-mix(in srgb, var(--lvl-ok) 16%, transparent); color: var(--lvl-ok); }
 
 /* 已接入标记（绿✓）: code 列等宽占位(maxName), √ 紧跟即统一对齐 */
 .kib-joined {
-  color: #22a06b;
+  color: var(--lvl-ok);
   font-weight: 700;
   font-size: 14px;
   line-height: 1;
@@ -656,7 +661,7 @@
   width: 34px;
   height: 18px;
   padding: 2px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--border, rgba(127,127,127,0.35));
   cursor: pointer;
   transition: background 0.15s ease;
@@ -670,7 +675,7 @@
   background: #fff;
   transition: transform 0.15s ease;
 }
-.kib-switch.on { background: #22a06b; }
+.kib-switch.on { background: var(--lvl-ok); }
 .kib-switch.on i { transform: translateX(16px); }
 
 /* 已接入但不在当前发现列表的源（历史/已停止）灰显 */
@@ -718,7 +723,7 @@
   color: var(--text-dim);
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 .kib-field-toggle:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -774,6 +779,6 @@
 
 /* ── 错误横幅 ── */
 .kib-err {
-  border-color: var(--danger, #ff4d4f) !important;
+  border-color: var(--danger) !important;
   background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
 }

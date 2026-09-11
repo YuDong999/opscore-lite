@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
+import { useTheme } from '../theme'
 import EChart from '../charts/EChart'
 import './logmonitor-kibana.css'
 
@@ -155,13 +156,19 @@ const EMPTY_ILM: IlmPolicy = {
 const ILM_STAGES: (keyof IlmPolicy)[] = ['hot', 'warm', 'cold', 'delete']
 const LEVELS = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'FATAL']
 
-const LEVEL_COLOR: Record<string, string> = {
-  ERROR: '#ff4d4f',
-  FATAL: '#a8071a',
-  WARN: '#faad14',
-  INFO: '#1677ff',
-  DEBUG: '#8c8c8c',
+// 级别/阶段色定义在各主题的 --lvl-* 中(浅色加深/暗色提亮, 文字对底色均≥4.5:1)
+const LEVEL_VAR: Record<string, string> = {
+  ERROR: '--lvl-error',
+  FATAL: '--lvl-fatal',
+  WARN: '--lvl-warn',
+  INFO: '--lvl-info',
+  DEBUG: '--lvl-debug',
 }
+
+const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+const levelColor = (lvl: string) => cssVar(LEVEL_VAR[lvl] || '--lvl-debug')
+const STAGE_VAR: Record<string, string> = { hot: '--lvl-error', warm: '--lvl-warn', cold: '--lvl-info', delete: '--lvl-debug' }
+const stageColor = (sg: string) => cssVar(STAGE_VAR[sg] || '--lvl-debug')
 
 function fmtTime(ts: number): string {
   if (!ts) return '-'
@@ -235,6 +242,7 @@ type ToastKind = 'ok' | 'err' | 'info'
 interface Toast { id: number; kind: ToastKind; text: string }
 
 export default function LogMonitorModule() {
+  const { theme } = useTheme()
   const [tab, setTab] = useState<'search' | 'stats' | 'sources' | 'indexes'>('search')
 
   // 顶栏
@@ -1119,7 +1127,7 @@ function clearFilters() {
       },
       legend: {
         top: 0,
-        textStyle: { color: 'var(--text-dim)', fontSize: 11 },
+        textStyle: { color: cssVar('--text-dim'), fontSize: 11 },
         itemWidth: 12,
         itemHeight: 8,
       },
@@ -1127,27 +1135,27 @@ function clearFilters() {
       xAxis: {
         type: 'category',
         data: sorted.map((b) => b.ts),
-        axisLine: { lineStyle: { color: 'var(--border)', type: 'dashed' } },
-        axisLabel: { color: 'var(--text-dim)', fontSize: 10, hideOverlap: true, formatter: (v: number) => histAxisLabel(Number(v), bucketMs) },
+        axisLine: { lineStyle: { color: cssVar('--border'), type: 'dashed' } },
+        axisLabel: { color: cssVar('--text-dim'), fontSize: 10, hideOverlap: true, formatter: (v: number) => histAxisLabel(Number(v), bucketMs) },
         splitLine: { show: false },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: 'var(--text-dim)', fontSize: 10 },
-        splitLine: { lineStyle: { color: 'var(--border)', type: 'dashed' } },
+        axisLabel: { color: cssVar('--text-dim'), fontSize: 10 },
+        splitLine: { lineStyle: { color: cssVar('--border'), type: 'dashed' } },
       },
       series: LEVELS.map((lvl) => ({
         name: lvl,
         type: 'bar',
         stack: 'total',
-        itemStyle: { color: LEVEL_COLOR[lvl] },
-        data: sorted.map((b) => ({ value: b.count[lvl] || 0, itemStyle: { color: LEVEL_COLOR[lvl] } })),
+        itemStyle: { color: levelColor(lvl) },
+        data: sorted.map((b) => ({ value: b.count[lvl] || 0, itemStyle: { color: levelColor(lvl) } })),
         barWidth: '55%',
         animation: false,
         emphasis: { itemStyle: { shadowBlur: 4, shadowColor: 'rgba(0,0,0,0.4)' } },
       })),
     }
-  }, [hist, bucketMs])
+  }, [hist, bucketMs, theme])
 
   const st = stats?.stats
   const activeFields = useMemo(() => {
@@ -1386,7 +1394,7 @@ function clearFilters() {
                               <tr key={e.id} className={detail?.id === e.id ? 'row-on' : ''} onClick={() => viewDetail(e.id)}>
                                 <td className="kib-ts">{fmtTime(e.ts)}</td>
                                 <td>
-                                  <span className="kib-lvl" style={{ color: LEVEL_COLOR[e.level] || '#888', background: (LEVEL_COLOR[e.level] || '#888') + '22' }}>{e.level || '-'}</span>
+                                  <span className="kib-lvl" style={{ color: levelColor(e.level), background: levelColor(e.level) + '22' }}>{e.level || '-'}</span>
                                 </td>
                                 <td className="kib-docs-sum" title={e.summary}>
                                   {highlight(e.summary, highlightWords()) || e.summary}
@@ -1425,7 +1433,7 @@ function clearFilters() {
                   <div className="kib-drawer" onClick={(e) => e.stopPropagation()}>
                     <div className="kib-drawer-head">
                       <span className="kib-drawer-title">日志 #{detail.id}</span>
-                      <span className="kib-lvl" style={{ color: LEVEL_COLOR[detail.level] || '#888', background: (LEVEL_COLOR[detail.level] || '#888') + '22' }}>{detail.level || '-'}</span>
+                      <span className="kib-lvl" style={{ color: levelColor(detail.level), background: levelColor(detail.level) + '22' }}>{detail.level || '-'}</span>
                       <span style={{ flex: 1 }} />
                       <button className="kib-btn kib-btn-bare" onClick={() => setDetail(null)} title="关闭">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -1528,7 +1536,7 @@ function clearFilters() {
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
                   <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 选择归档索引可双写。</div>
-                  {sources.length === 0 && !discLoading && <div style={{ color: '#e5484d', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
+                  {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
@@ -1602,7 +1610,7 @@ function clearFilters() {
         placeholder="搜索 Pod 名 / 命名空间"
         value={podSearch}
         onChange={(e) => setPodSearch(e.target.value)}
-        style={{ flex: 1, minWidth: 180, padding: '4px 8px', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 6 }}
+        style={{ flex: 1, minWidth: 180, padding: '4px 8px', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 8 }}
       />
     </div>
   )}
@@ -1702,9 +1710,9 @@ function clearFilters() {
                 <div className="log-level-bars">
                   {Object.entries(st.levelCounts).map(([lvl, cnt]) => (
                     <div key={lvl} className="log-level-bar-row">
-                      <span className="log-level-bar-lbl" style={{ color: LEVEL_COLOR[lvl] || '#888' }}>{lvl}</span>
+                      <span className="log-level-bar-lbl" style={{ color: levelColor(lvl) }}>{lvl}</span>
                       <div className="log-level-bar-track">
-                        <div className="log-level-bar-fill" style={{ width: (cnt / st.totalCount) * 100 + '%', backgroundColor: LEVEL_COLOR[lvl] || '#888' }} />
+                        <div className="log-level-bar-fill" style={{ width: (cnt / st.totalCount) * 100 + '%', backgroundColor: levelColor(lvl) }} />
                       </div>
                       <span className="log-level-bar-num">{cnt.toLocaleString()}</span>
                     </div>
@@ -1742,7 +1750,7 @@ function clearFilters() {
                           <td className="log-svc">{s.service || '(未标注)'}</td>
                           <td>{s.count.toLocaleString()}</td>
                           {LEVELS.map((l) => (
-                            <td key={l} style={{ color: (s.levels || {})[l] ? LEVEL_COLOR[l] : undefined }}>
+                            <td key={l} style={{ color: (s.levels || {})[l] ? levelColor(l) : undefined }}>
                               {((s.levels || {})[l] || 0).toLocaleString()}
                             </td>
                           ))}
@@ -1791,7 +1799,7 @@ function clearFilters() {
                       <td>{ix.service || '-'}</td>
                       <td>{st?.docCount?.toLocaleString() ?? '-'}</td>
                       <td>{st?.bytes ? fmtBytes(st.bytes) : '-'}</td>
-                      <td><span className="log-level" style={{ color: '#1677ff' }}>{st?.storageStage || 'hot'}</span></td>
+                      <td><span className="log-level" style={{ color: stageColor(st?.storageStage || 'hot') }}>{st?.storageStage || 'hot'}</span></td>
                       <td>{ix.deleteAfter || ix.ilm?.delete?.retentionDays || '-'}</td>
                       <td style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openEdit(ix)}>编辑</button>
@@ -1810,7 +1818,7 @@ function clearFilters() {
         <div className="glass log-card" style={{ marginTop: 14 }}>
           <div className="log-filter-row">
             <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>分片存储 (shards.json)</span>
-            <span className="kib-badge" style={{ background: '#8b5cf6' }}>按月分片 · 自动归档</span>
+            <span className="kib-badge kib-tint-accent">按月分片 · 自动归档</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
             <label>分片粒度</label>
@@ -1825,7 +1833,7 @@ function clearFilters() {
             <input type="number" min={1} value={shardCfg.defaultRetentionDays} onChange={(e) => setShardCfg({ ...shardCfg, defaultRetentionDays: Number(e.target.value) })} style={{ width: 55 }} />
             <button className="btn-glass btn-sm" onClick={saveShardCfg}>保存配置</button>
             <span style={{ flex: 1 }} />
-            <span className="kib-badge" style={{ background: shards.some((x) => x.dropAllowed) ? '#e5484d' : 'var(--border)' }}>
+            <span className={`kib-badge${shards.some((x) => x.dropAllowed) ? ' kib-tint-danger' : ''}`}>
               {shards.filter((x) => x.dropAllowed).length} 片可清理
             </span>
             <span>过期分片整体删除(秒级), 保存即写 shards.json</span>
@@ -1853,7 +1861,7 @@ function clearFilters() {
                   </td>
                   <td>{s.rows.toLocaleString()}</td>
                   <td>
-                    {s.dropAllowed ? <span className="kib-badge" style={{ background: '#e5484d' }}>可清理</span> : <span className="kib-badge" style={{ background: '#22a06b' }}>保留中</span>}
+                    {s.dropAllowed ? <span className="kib-badge kib-tint-danger">可清理</span> : <span className="kib-badge kib-tint-ok">保留中</span>}
                   </td>
                   <td>
                     <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" disabled={!s.dropAllowed} onClick={() => delShard(s.shard)} title={s.dropAllowed ? '删除此分片与数据' : '分片仍在保留期内, 不可删除'}>
@@ -1909,7 +1917,7 @@ function clearFilters() {
             <tbody>
               {ILM_STAGES.map((sg) => (
                 <tr key={sg}>
-                  <td><span className="log-level" style={{ color: sg === 'hot' ? '#ff4d4f' : sg === 'warm' ? '#faad14' : sg === 'cold' ? '#1677ff' : '#8c8c8c' }}>{sg.toUpperCase()}</span></td>
+                  <td><span className="log-level" style={{ color: stageColor(sg) }}>{sg.toUpperCase()}</span></td>
                   <td>
                     <input className="input log-input" type="number" value={editing.ilm[sg].retentionDays} onChange={(e) => setStageField(sg, 'retentionDays', Number(e.target.value))} />
                   </td>
@@ -2032,15 +2040,15 @@ function clearFilters() {
             <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               解析规则 (parsers.json)
               {parserBuiltin ? (
-                <span className="kib-badge" style={{ background: '#3b82f6' }}>内置默认</span>
+                <span className="kib-badge kib-tint-info">内置默认</span>
               ) : (
-                <span className="kib-badge" style={{ background: '#22a06b' }}>自定义</span>
+                <span className="kib-badge kib-tint-ok">自定义</span>
               )}
             </h3>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
               按 source/服务/文件 匹配日志行, 用正则提取 时间/级别/服务。保存即写底层文件并热加载生效（支持自动热重载）。
             </div>
-            {parserErr && <div style={{ color: '#e5484d', fontSize: 12, marginBottom: 6 }}>⚠ {parserErr}</div>}
+            {parserErr && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginBottom: 6 }}>⚠ {parserErr}</div>}
 
             <div className="kib-inline-form">
               <div className="kib-form-row">
@@ -2049,7 +2057,7 @@ function clearFilters() {
                   value={parserJson}
                   onChange={(e) => { setParserJson(e.target.value); setParserResults(null) }}
                   spellCheck={false}
-                  style={{ width: '100%', minHeight: 180, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 6, padding: 8, boxSizing: 'border-box' }}
+                  style={{ width: '100%', minHeight: 180, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, boxSizing: 'border-box' }}
                 />
               </div>
               <div className="kib-form-row">
@@ -2067,7 +2075,7 @@ function clearFilters() {
                   onChange={(e) => setParserSample(e.target.value)}
                   placeholder={'2026-09-09 10:00:01.123 INFO  [order-api] 订单创建成功 id=123\n2026-09-09 10:00:02.456 WARN  [order-api] 重试第 2 次'}
                   spellCheck={false}
-                  style={{ width: '100%', minHeight: 90, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 6, padding: 8, boxSizing: 'border-box' }}
+                  style={{ width: '100%', minHeight: 90, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, boxSizing: 'border-box' }}
                 />
               </div>
 
@@ -2085,7 +2093,7 @@ function clearFilters() {
                     {parserResults.map((res, i) => (
                       <tr key={i}>
                         {res.error ? (
-                          <td colSpan={4} style={{ color: '#e5484d' }}>✗ {res.error}</td>
+                          <td colSpan={4} style={{ color: 'var(--lvl-error)' }}>✗ {res.error}</td>
                         ) : (
                           <>
                             <td className="log-mono">{new Date(res.ts).toLocaleString('zh-CN', { hour12: false })}</td>

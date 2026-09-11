@@ -80,6 +80,12 @@ html {
   --ok: #34c759;
   --warn: #ff9f0a;
   --danger: #ff453a;
+  --lvl-error: #c1271d;
+  --lvl-fatal: #9c0715;
+  --lvl-warn: #8f5200;
+  --lvl-info: #0f62c9;
+  --lvl-debug: #5c5c6e;
+  --lvl-ok: #17692a;
   --shadow: 0 0.5rem 2.5rem rgba(91, 106, 191, 0.12);
   --radius-sm: 0.625rem;
   --radius-md: 1rem;
@@ -108,6 +114,12 @@ html {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --lvl-error: #ff6b63;
+  --lvl-fatal: #ff8a80;
+  --lvl-warn: #ffc53d;
+  --lvl-info: #5aa9ff;
+  --lvl-debug: #9aa0b3;
+  --lvl-ok: #4ade80;
   --shadow: 0 0.5rem 2.5rem rgba(0, 0, 0, 0.6);
 }
 
@@ -132,6 +144,12 @@ html {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --lvl-error: #ff6b63;
+  --lvl-fatal: #ff8a80;
+  --lvl-warn: #ffc53d;
+  --lvl-info: #5aa9ff;
+  --lvl-debug: #9aa0b3;
+  --lvl-ok: #4ade80;
   --shadow: 0 0.5rem 2.5rem rgba(0, 0, 0, 0.55);
   --blur: blur(1.875rem);
 }
