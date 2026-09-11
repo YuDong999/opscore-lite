@@ -23,7 +23,6 @@
   flex-direction: column;
   gap: 10px;
 }
-.kib-err { border-color: var(--danger, #ff4d4f) !important; }
 
 /* 二、顶部查询条（Kibana Discover 顶栏） */
 .kib-topbar {
@@ -151,19 +150,6 @@
   align-items: center;
   gap: 6px;
   background: color-mix(in srgb, var(--bg-soft, #888) 10%, transparent);
-}
-.kib-fields-search {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.kib-fields-search input {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  background: var(--bg-soft, rgba(127,127,127,0.06));
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text);
 }
 .kib-fields-list {
   flex: 1;
@@ -452,7 +438,6 @@
 .kib-toast-ok { border-left: 3px solid #34c759; }
 .kib-toast-err { border-left: 3px solid #ff4d4f; }
 .kib-toast-info { border-left: 3px solid var(--accent-2); }
-.kib-toast::before { content: ''; }
 @keyframes kib-toast-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -790,5 +775,5 @@
 /* ── 错误横幅 ── */
 .kib-err {
   border-color: var(--danger, #ff4d4f) !important;
-  background: color-mix(in srgb, #ff4d4f 10%, transparent) !important;
+  background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
 }
