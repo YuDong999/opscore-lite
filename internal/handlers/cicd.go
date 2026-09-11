@@ -108,11 +108,13 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 			if !reCicdName.MatchString(strings.TrimSpace(sp.Name)) {
 				return fmt.Sprintf("阶段 %q 存在无效步骤名", st.Name)
 			}
-			if strings.TrimSpace(sp.Command) == "" {
-				return fmt.Sprintf("步骤 %q 命令不能为空", sp.Name)
-			}
-			if len(sp.Command) > 8192 {
-				return fmt.Sprintf("步骤 %q 命令过长(≤8KB)", sp.Name)
+			if sp.Action == "" { // 动作步骤的命令由引擎运行时从 Action 编译, 无需 Command
+				if strings.TrimSpace(sp.Command) == "" {
+					return fmt.Sprintf("步骤 %q 命令不能为空", sp.Name)
+				}
+				if len(sp.Command) > 8192 {
+					return fmt.Sprintf("步骤 %q 命令过长(≤8KB)", sp.Name)
+				}
 			}
 			if sp.TimeoutMin < 0 || sp.TimeoutMin > 1440 {
 				return fmt.Sprintf("步骤 %q 超时无效", sp.Name)

@@ -118,6 +118,36 @@ var actionRegistry = map[string]ActionSpec{
 			return fmt.Sprintf("kubectl rollout status deploy/%s%s --timeout=%ss", shq(p["DEPLOYMENT"]), ns, timeout), nil
 		},
 	},
+"test.junit": {
+		Type: "test.junit", Title: "运行测试(JUnit 报告)", Category: "测试",
+		Fields: []ActionField{
+			{Name: "COMMAND", Label: "测试命令", Placeholder: "mvn test / npm test / go test ./...", Required: true},
+			{Name: "REPORT_GLOB", Label: "JUnit 报告位置(find -path 模式)", Placeholder: "*TEST-*.xml"},
+			{Name: "PASS_RATE", Label: "成功率门槛%(可空=有失败即失败)", Placeholder: "95"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "COMMAND"); err != nil {
+				return "", err
+			}
+			glob := p["REPORT_GLOB"]
+			if glob == "" {
+				glob = "*TEST-*.xml"
+			}
+			pr := strings.TrimSpace(p["PASS_RATE"])
+			gate := `if [ "$F" -gt 0 ]; then echo "质量门禁未通过: 失败 $F / $T"; exit 1; fi`
+			if pr != "" {
+				gate += fmt.Sprintf(`; if [ "$T" -gt 0 ]; then PR=$(( (T-F)*100/T )); if [ "$PR" -lt %s ]; then echo "质量门禁未通过: 成功率 ${PR}%%%% < %s%%%%"; exit 1; fi; fi`, shq(pr), shq(pr))
+			}
+			// 统计口径: <testcase=总用例, <failure/<error=失败, <skipped=跳过(JUnit/surefire 标准结构)
+			return fmt.Sprintf("{ %s; }; RC=$?; if [ $RC -ne 0 ]; then exit $RC; fi; "+
+				"T=0; F=0; S=0; for f in $(find . -type f -path %s 2>/dev/null); do "+
+				"T=$((T+$(grep -o '<testcase' \"$f\" 2>/dev/null | wc -l))); "+
+				"F=$((F+$(grep -oE '<failure|<error' \"$f\" 2>/dev/null | wc -l))); "+
+				"S=$((S+$(grep -o '<skipped' \"$f\" 2>/dev/null | wc -l))); done; "+
+				"printf '@@CICD_TESTS@@{\"tests\":%%d,\"failed\":%%d,\"skipped\":%%d}\n' \"$T\" \"$F\" \"$S\"; "+gate,
+				p["COMMAND"], shq(glob)), nil // COMMAND 是用户命令(与 shell 步骤同信任级), 原样展开; 仅 glob 作为值引用
+		},
+	},
 	"health.http": {
 		Type: "health.http", Title: "HTTP 健康检查", Category: "验证",
 		Fields: []ActionField{

@@ -140,6 +140,14 @@ type StepRun struct {
 	FinishedAt time.Time  `json:"finishedAt,omitempty"`
 	DurationMs int64      `json:"durationMs"`
 	Artifacts  []Artifact `json:"artifacts,omitempty"`
+	Quality    *StepQuality `json:"quality,omitempty"` // 质量检查动作(test.junit)解析出的测试汇总
+}
+
+// StepQuality 质量检查动作(test.junit)的测试汇总(JUnit 报告统计)
+type StepQuality struct {
+	Tests   int `json:"tests"`
+	Failed  int `json:"failed"`
+	Skipped int `json:"skipped"`
 }
 
 type StageRun struct {
@@ -322,6 +330,25 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride, co
 
 // commitMarkerPrefix 拉取代码步骤输出的 commit 标记行前缀, 引擎捕获后写入 Run.Commit
 const commitMarkerPrefix = "@@CICD_COMMIT@@"
+
+const testsMarkerPrefix = "@@CICD_TESTS@@"
+
+// parseTestsMarker 从步骤输出行解析质量检查动作的测试汇总(非标记行返回 nil)
+func parseTestsMarker(line string) *StepQuality {
+	idx := strings.Index(line, testsMarkerPrefix)
+	if idx < 0 {
+		return nil
+	}
+	var q struct {
+		Tests   int `json:"tests"`
+		Failed  int `json:"failed"`
+		Skipped int `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line[idx+len(testsMarkerPrefix):])), &q); err != nil {
+		return nil
+	}
+	return &StepQuality{Tests: q.Tests, Failed: q.Failed, Skipped: q.Skipped}
+}
 
 // cloneCommand 首阶段自动拉取代码: 已有仓库则重置到远端分支, 否则浅克隆。
 // commit 非空时钉住到该提交(回滚场景): 本地缺失则尝试 unshallow 补全历史。
@@ -1115,16 +1142,17 @@ overall:
 				}
 				stepOnLine := writeLine
 				isCloneStep := i == 0 && rt.clone != nil && j == 0
-				if isCloneStep {
-					// 拉取代码步骤: 工作目录不存在时自动创建(克隆目标), 再捕获 commit 标记
-					if stage.Workspace != "" {
-						if stage.Host == "" {
-							os.MkdirAll(stage.Workspace, 0755)
-						} else {
-							writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
-							e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
-						}
+				if j == 0 && stage.Workspace != "" {
+					// 阶段首个步骤: 工作目录不存在时自动创建(cd 前置要求, 不再仅限克隆步骤)
+					if stage.Host == "" {
+						os.MkdirAll(stage.Workspace, 0755)
+					} else {
+						writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
+						e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
 					}
+				}
+				if isCloneStep {
+					// 拉取代码步骤: 捕获 commit 标记
 					stepOnLine = func(line string) {
 						if c := parseCommitMarker(line); c != "" {
 							e.mu.Lock()
@@ -1133,6 +1161,17 @@ overall:
 							e.persistRuns()
 						}
 						writeLine(line)
+					}
+				}
+				if step.Action == "test.junit" {
+					// 质量检查步骤: 捕获测试汇总标记行(命令自身失败时标记可能不出现, 不影响失败语义)
+					prev := stepOnLine
+					stepOnLine = func(line string) {
+						prev(line)
+						// 只写内存; 持久化走步骤/运行结束时的 persistRuns(此处持回调链, 禁止再触锁)
+						if q := parseTestsMarker(line); q != nil {
+							spr.Quality = q
+						}
 					}
 				}
 				stepCtx, stepCancel := context.WithCancel(ctx)

@@ -1778,6 +1778,14 @@ function RunDetail({ runId, initialStep, onStepSelect, onClose, onChanged, onRer
                   <span className="text-xs text-muted-foreground tabular-nums">exit {sp.status === 'pending' ? '-' : sp.exitCode}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">{fmtDur(sp.durationMs)}</span>
                 </div>
+                {sp.quality && (
+                  <div className="text-[11px] pl-7 -mt-0.5 mb-1 flex items-center gap-2">
+                    <span className="font-medium">测试 {sp.quality.tests}</span>
+                    <span className="text-ok">✓ {sp.quality.tests - sp.quality.failed - sp.quality.skipped}</span>
+                    <span className={sp.quality.failed > 0 ? 'text-destructive font-medium' : ''}>✗ {sp.quality.failed}</span>
+                    {sp.quality.skipped > 0 && <span className="text-muted-foreground">↷ {sp.quality.skipped}</span>}
+                  </div>
+                )}
               ))}
             </div>
           </div>
