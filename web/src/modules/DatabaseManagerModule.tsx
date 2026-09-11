@@ -11,6 +11,7 @@ import {
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
 import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
+import { ActionIcon } from '../components/DatabaseManager/DbIcons'
 import DocPanel from '../components/DatabaseManager/DocPanel'
 import QueryEditor from '../components/DatabaseManager/QueryEditor'
 import DataGrid from '../components/DatabaseManager/DataGrid'
@@ -54,6 +55,15 @@ export default function DatabaseManagerModule() {
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
   const [showQuickOpen, setShowQuickOpen] = useState(false)
+  // 侧栏收纳状态(localStorage 记忆, 对齐 dbx/goNavi 的侧栏折叠)
+  const [sideCollapsed, setSideCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('dbmanager:side-collapsed') === '1' } catch { return false }
+  })
+  const toggleSide = () => setSideCollapsed(v => {
+    const next = !v
+    try { localStorage.setItem('dbmanager:side-collapsed', next ? '1' : '0') } catch { /* ignore */ }
+    return next
+  })
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
@@ -109,8 +119,8 @@ export default function DatabaseManagerModule() {
   const tabLabel = (c: ConnectionInfo, db: string, table?: string) =>
     table ? `${table}@${db}` : db ? `查询@${db}` : c.name
 
-  // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填)
-  const querySeedRef = useRef<string>('')
+  // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填) — 记录目标标签 key, 精确投递到那一个标签
+  const querySeedRef = useRef<{ key: string; sql: string } | null>(null)
   const explainSqlRef = useRef<string>('')
 
   // ── 树交互 ──
@@ -137,8 +147,9 @@ export default function DatabaseManagerModule() {
   }
   const handleNewQueryWithSQL = (c: ConnectionInfo, db: string, sql: string) => {
     setConn(c)
-    querySeedRef.current = sql
-    openTab({ key: `query:${c.id}.${db}.${Date.now()}`, kind: 'query', connId: c.id, db, label: `${db} 查询` })
+    const key = `query:${c.id}.${db}.${Date.now()}`
+    querySeedRef.current = { key, sql }
+    openTab({ key, kind: 'query', connId: c.id, db, label: `${db} 查询` })
   }
   const handleExportTable = (c: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => {
     exportQuery(c.id, `SELECT * FROM ${db}.${table}`, format)
@@ -261,32 +272,39 @@ export default function DatabaseManagerModule() {
         onNewQuery={handleNewQuery}
       />
       <div className="db-layout">
-        <aside className="db-side">
-          <ConnectionTree
-            conns={conns}
-            selectedConnId={conn?.id}
-            onOpenTable={handleOpenTable}
-            onNewQuery={handleNewQuery}
-            onOpenDoc={handleOpenDoc}
-            onSelectConn={handleSelectConn}
-            onEditConn={handleEditConn}
-            onNewConn={handleNewConn}
-            onConnsChange={setConns}
-            notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
-            onSyncDb={handleSyncDb}
-            onSyncTable={handleSyncTable}
-            onSyncSchema={handleSyncSchema}
-            onOpenStatus={handleOpenStatus}
-            onOpenExplain={handleOpenExplain}
-            onNewQueryWithSQL={handleNewQueryWithSQL}
-            onExportTable={handleExportTable}
-            onRefresh={() => listConnections().then(setConns).catch(() => {})}
-          />
-          <ConnectionPanel
-            selected={null}
-            onSelect={handleSelectConn}
-            onConnsChange={setConns}
-          />
+        <aside className={`db-side${sideCollapsed ? ' db-side-collapsed' : ''}`}>
+          {sideCollapsed ? (
+            <div className="db-side-rail" title="展开侧栏">
+              <button className="db-side-rail-btn" onClick={toggleSide}><ActionIcon kind="panel" size={15} /></button>
+            </div>
+          ) : (<>
+            <ConnectionTree
+              conns={conns}
+              selectedConnId={conn?.id}
+              onOpenTable={handleOpenTable}
+              onNewQuery={handleNewQuery}
+              onOpenDoc={handleOpenDoc}
+              onSelectConn={handleSelectConn}
+              onEditConn={handleEditConn}
+              onNewConn={handleNewConn}
+              onConnsChange={setConns}
+              notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
+              onSyncDb={handleSyncDb}
+              onSyncTable={handleSyncTable}
+              onSyncSchema={handleSyncSchema}
+              onOpenStatus={handleOpenStatus}
+              onOpenExplain={handleOpenExplain}
+              onNewQueryWithSQL={handleNewQueryWithSQL}
+              onExportTable={handleExportTable}
+              onRefresh={() => listConnections().then(setConns).catch(() => {})}
+              onToggleSide={toggleSide}
+            />
+            <ConnectionPanel
+              selected={null}
+              onSelect={handleSelectConn}
+              onConnsChange={setConns}
+            />
+          </>)}
         </aside>
 
         <main className="db-main">
@@ -304,13 +322,24 @@ export default function DatabaseManagerModule() {
             )
           ) : (
             <>
-              <div className="db-main-tabs db-worktabs">
-                {tabs.map(t => (
-                  <div key={t.key} className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
-                    onClick={() => setActiveTab(t.key)} title={t.label}>
+              <div className="db-main-tabs db-worktabs" role="tablist" aria-label="工作区标签">
+                {tabs.map((t, i) => (
+                  <div key={t.key} role="tab" aria-selected={activeTab === t.key} tabIndex={0}
+                    className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
+                    onClick={() => setActiveTab(t.key)} title={t.label}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTab(t.key) }
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        e.preventDefault()
+                        const dir = e.key === 'ArrowRight' ? 1 : -1
+                        const next = tabs[(i + dir + tabs.length) % tabs.length]
+                        if (next) setActiveTab(next.key)
+                      }
+                    }}>
                     <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
-                    <span className="db-worktab-close" onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</span>
+                    <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
+                      onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
                   </div>
                 ))}
               </div>
@@ -323,15 +352,15 @@ export default function DatabaseManagerModule() {
                   case 'data':
                     return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView} />
                   case 'query': {
-                    const seed = querySeedRef.current
-                    const isSeedTab = !!seed && t.key.endsWith(String(seed.length)) === false || !!seed
+                    const seedTab = querySeedRef.current
+                    const isSeedTab = seedTab != null && seedTab.key === t.key
                     return (
                       <div className="db-query-section" key={t.key}>
                         <QueryEditor
                           connId={c!.id}
                           engine={c!.engine}
                           db={t.db}
-                          defaultSQL={isSeedTab ? seed : undefined}
+                          defaultSQL={isSeedTab ? seedTab.sql : undefined}
                           onResult={handleResult}
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={setLastSQL}

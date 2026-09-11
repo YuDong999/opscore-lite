@@ -390,6 +390,37 @@ export async function listTables(id: string, database: string): Promise<TableInf
   return r.tables || []
 }
 
+// ── 对象级枚举(视图/函数/存储过程/事件/触发器/序列) ──
+export type DbObjectKind =
+  | 'VIEW' | 'MATERIALIZED VIEW'
+  | 'FUNCTION' | 'PROCEDURE'
+  | 'EVENT' | 'TRIGGER' | 'SEQUENCE'
+
+export interface DbObject {
+  name: string
+  kind: DbObjectKind
+  table?: string // 触发器所属表(可选, 部分引擎提供)
+}
+
+export async function listObjects(id: string, database: string): Promise<DbObject[]> {
+  const r = await getJSON<{ objects: DbObject[] }>(
+    `/api/dbmanager/metadata?type=objects&id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.objects || []
+}
+
+export async function getObjectDefinition(
+  id: string,
+  database: string,
+  object: string,
+  kind: DbObjectKind,
+): Promise<string> {
+  const r = await getJSON<{ ddl: string }>(
+    `/api/dbmanager/metadata?type=object-ddl&id=${id}&database=${encodeURIComponent(database)}&object=${encodeURIComponent(object)}&kind=${kind}`,
+  )
+  return r.ddl || ''
+}
+
 export async function describeTable(
   id: string,
   database: string,

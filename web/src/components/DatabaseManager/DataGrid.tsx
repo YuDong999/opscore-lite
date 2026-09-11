@@ -377,11 +377,11 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
           {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n} 行/页</option>)}
         </select>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(1)} title="首页">«</button>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} title="上一页">‹</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(1)} title="首页" aria-label="首页">«</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} title="上一页" aria-label="上一页">‹</button>
         <span className="dim">{page} / {Math.max(1, Math.ceil(viewRows.length / pageSize))}</span>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(p => p + 1)} title="下一页">›</button>
-        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(Math.ceil(viewRows.length / pageSize))} title="末页">»</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(p => p + 1)} title="下一页" aria-label="下一页">›</button>
+        <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(Math.ceil(viewRows.length / pageSize))} title="末页" aria-label="末页">»</button>
         {isEditable && (
           <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
             <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>

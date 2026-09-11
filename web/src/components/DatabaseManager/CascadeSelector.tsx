@@ -228,6 +228,7 @@ export default function CascadeSelector({
                     className="db-tbl-card-close"
                     onClick={e => { e.stopPropagation(); onTableChange('') }}
                     title="关闭"
+                    aria-label="关闭表卡片"
                   >
                     ×
                   </button>

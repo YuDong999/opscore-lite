@@ -91,7 +91,7 @@ export function EngineIcon({ engine, size = 16 }: { engine: string | EngineType 
 }
 
 /** 树节点图标: db / folder / table / view */
-export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'connGroup' | 'schema' | 'table' | 'view'; size?: number }) {
+export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'connGroup' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'event' | 'trigger' | 'sequence'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (level) {
     case 'conn':
@@ -126,6 +126,17 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
           <circle cx="12" cy="12" r="3" />
         </svg>
       )
+    case 'function':
+    case 'procedure':
+    case 'event':
+    case 'trigger':
+    case 'sequence':
+      return (
+        <svg {...common} className="dbx-node-icon icon-code">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+      )
     default:
       return (
         <svg {...common} className="dbx-node-icon icon-table">
@@ -137,7 +148,8 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
 }
 
 /** 小操作图标(全部为 SVG, 禁止 emoji/dingbat): 测试/编辑/删除/刷新/关闭/新建查询/查看数据/复制/齿轮/表结构 */
-export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus'; size?: number }) {
+export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right'
+export function ActionIcon({ kind, size = 13 }: { kind: ActionIconKind; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (kind) {
     case 'test':
@@ -247,6 +259,20 @@ export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delet
       return (
         <svg {...common}>
           <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+        </svg>
+      )
+    case 'panel':
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="7" height="16" rx="1.5" />
+          <rect x="13" y="4" width="8" height="16" rx="1.5" />
+        </svg>
+      )
+    case 'chevrons-right':
+      return (
+        <svg {...common}>
+          <path d="m6 17 5-5-5-5" />
+          <path d="m13 17 5-5-5-5" />
         </svg>
       )
     default:

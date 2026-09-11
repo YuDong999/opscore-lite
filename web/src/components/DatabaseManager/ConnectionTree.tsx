@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  type ConnectionInfo, listConnections, listDatabases, listSchemas, listTables, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
+  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -27,9 +27,69 @@ function fmtCount(n: number): string {
   return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// ── 第二层导航页签(GoNavi 类别过滤): 全部/表/视图/序列/函数/存储包/事件 ──
+type ObjCategory = 'all' | 'table' | 'view' | 'sequence' | 'function' | 'procedure' | 'event'
+const OBJ_CATEGORY_ORDER: ObjCategory[] = ['all', 'table', 'view', 'sequence', 'function', 'procedure', 'event']
+const OBJ_CATEGORY_LABEL: Record<ObjCategory, string> = {
+  all: '全部', table: '表', view: '视图', sequence: '序列', function: '函数', procedure: '存储包', event: '事件',
+}
+const DB_KIND_PER_GROUP: Partial<Record<ObjCategory, DbObject['kind']>> = {
+  view: 'VIEW', function: 'FUNCTION', procedure: 'PROCEDURE', event: 'EVENT', sequence: 'SEQUENCE',
+}
+const GROUP_ITEM_LEVEL: Record<Exclude<ObjCategory, 'all'>, TreeNodeLevel> = {
+  table: 'table', view: 'view', sequence: 'sequence', function: 'function', procedure: 'procedure', event: 'event',
+}
+// 单击可查看 DDL 的对象级(单击打开 DDL 新窗口)
+const OBJ_LEVEL_TO_KIND: Partial<Record<TreeNodeLevel, DbObject['kind']>> = {
+  view: 'VIEW', function: 'FUNCTION', procedure: 'PROCEDURE', event: 'EVENT', trigger: 'TRIGGER', sequence: 'SEQUENCE',
+}
+
+type TreeNodeLevel = 'conn' | 'db' | 'group' | 'schema' | 'table' | 'view' | 'connGroup' | 'function' | 'procedure' | 'event' | 'trigger' | 'sequence'
+
+interface DbObjectsCache {
+  tables: string[]
+  views: string[]
+  objects: DbObject[]
+}
+
+// 按第二层类别页签过滤对象名(+行层级): 全部=表/视图/序列/函数/存储包/事件合并平铺
+function itemsForCategory(objs: DbObjectsCache | undefined, cat: ObjCategory, pfx: string, f: string): Array<{ name: string; level: TreeNodeLevel }> {
+  if (!objs) return []
+  const out: Array<{ name: string; level: TreeNodeLevel }> = []
+  const seen = new Set<string>()
+  const push = (n: string, level: TreeNodeLevel) => {
+    if (seen.has(n)) return
+    const okName = (!pfx || n.startsWith(pfx)) && (!f || n.toLowerCase().includes(f))
+    if (okName) { seen.add(n); out.push({ name: n, level }) }
+  }
+  if (cat === 'all' || cat === 'table') for (const n of objs.tables) push(n, 'table')
+  if (cat === 'all' || cat === 'view') for (const n of objs.views) push(n, 'view')
+  if (cat === 'all') {
+    for (const o of objs.objects) push(o.name, objKindLevel(o.kind))
+  } else {
+    const k = DB_KIND_PER_GROUP[cat]
+    if (k) for (const o of objs.objects) if (o.kind === k) push(o.name, GROUP_ITEM_LEVEL[cat])
+  }
+  return out
+}
+function objKindLevel(kind: string): TreeNodeLevel {
+  const k = kind.toUpperCase()
+  if (k === 'VIEW' || k === 'MATERIALIZED VIEW') return 'view'
+  if (k === 'FUNCTION') return 'function'
+  if (k === 'PROCEDURE') return 'procedure'
+  if (k === 'EVENT') return 'event'
+  if (k === 'TRIGGER') return 'trigger'
+  if (k === 'SEQUENCE') return 'sequence'
+  return 'table'
+}
+
 interface TreeNode {
   key: string
-  level: 'conn' | 'db' | 'group' | 'schema' | 'table' | 'view' | 'connGroup'
+  level: TreeNodeLevel
   label: string
   conn?: ConnectionInfo
   db?: string
@@ -44,7 +104,7 @@ interface TreeNode {
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
   onSyncDb, onSyncTable, onSyncSchema, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
-  onRefresh,
+  onRefresh, onToggleSide,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -64,14 +124,24 @@ export default function ConnectionTree({
   onNewQueryWithSQL: (conn: ConnectionInfo, db: string, sql: string) => void
   onExportTable: (conn: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => void
   onRefresh: () => void
+  onToggleSide?: () => void
 }) {
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // 钻取模式(=类别页签非"全部")下默认展开、但允许手动收起: 记录被收起的节点
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [dbCache, setDbCache] = useState<Record<string, string[]>>({})
-  const [tablesCache, setTablesCache] = useState<Record<string, { tables: string[]; views: string[] }>>({})
+  const [tablesCache, setTablesCache] = useState<Record<string, DbObjectsCache>>({})
   const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
+  // GoNavi 第二层类别页签: 全部/表/视图/序列/函数/存储包/事件(过滤树显示)
+  const [category, setCategory] = useState<ObjCategory>('all')
+  // 非"全部"类别 = 自动钻取模式: 强制展开并只显示该类对象及其直系上级链, 无匹配的库/模式/连接整段隐藏(对齐 GoNavi filterV2ExplorerTreeByKind)
+  const drill = category !== 'all'
+  // dbx 式分组移动面板(替代 prompt): 右键"移动到分组…"时展开
+  const [moveToGroupTarget, setMoveToGroupTarget] = useState<ConnectionInfo | null>(null)
+  const [newGroupName, setNewGroupName] = useState('')
 
   // 置顶表(localStorage)
   const [pins, setPins] = useState<string[]>(() => {
@@ -114,16 +184,24 @@ export default function ConnectionTree({
       return
     }
     try {
-      const ts = await listTables(connId, db)
+      const [ts, objs] = await Promise.all([
+        listTables(connId, db),
+        listObjects(connId, db).catch(() => [] as DbObject[]),
+      ])
+      const objects = Array.isArray(objs) ? objs : []
       setTablesCache(prev => ({
         ...prev,
         [ck]: {
           tables: ts.filter(t => t.type !== 'VIEW').map(t => t.name),
-          views: ts.filter(t => t.type === 'VIEW').map(t => t.name),
+          views: Array.from(new Set([
+            ...ts.filter(t => t.type === 'VIEW').map(t => t.name),
+            ...objects.filter(o => o.kind === 'VIEW' || o.kind === 'MATERIALIZED VIEW').map(o => o.name),
+          ])),
+          objects,
         },
       }))
       getTableCounts(connId, db).then(counts => setRowCounts(prev => ({ ...prev, [ck]: counts }))).catch(() => {})
-    } catch { setTablesCache(prev => ({ ...prev, [ck]: { tables: [], views: [] } })) }
+    } catch { setTablesCache(prev => ({ ...prev, [ck]: { tables: [], views: [], objects: [] } })) }
   }
 
   // 模式能力探测(dbx loadSchemas 同构): 列模式非空 → 库下渲染模式层级; 空/失败 → 平铺对象
@@ -136,6 +214,15 @@ export default function ConnectionTree({
   }
 
   const toggle = (key: string) => {
+    if (drill) {
+      // 钻取模式: 默认展开, 点击切换进 collapsed 反向集合
+      setCollapsed(prev => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key); else next.add(key)
+        return next
+      })
+      return
+    }
     setExpanded(prev => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
@@ -143,12 +230,38 @@ export default function ConnectionTree({
     })
   }
 
+  // 函数/存储过程/事件/触发器/序列: 单击在新窗口打开 DDL(轻量, 便于复制)
+  const viewObjectDdl = async (node: TreeNode) => {
+    if (!node.conn || !node.db || !node.table) return
+    const kind = OBJ_LEVEL_TO_KIND[node.level]
+    if (!kind) return
+    try {
+      const ddl = await getObjectDefinition(node.conn.id, node.db, node.table, kind)
+      const win = window.open('', '_blank')
+      if (win) {
+        win.document.write(
+          `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(node.table)} — DDL</title>` +
+          `<style>body{margin:24px;background:#0f1115;color:#d4d4d4;font:13px/1.7 Consolas,Menlo,monospace;white-space:pre-wrap;word-break:break-all;}</style></head>` +
+          `<body>${escapeHtml(ddl || '(无 DDL)')}</body></html>`,
+        )
+        win.document.close()
+        notify(true, '已在新窗口打开 DDL')
+      } else {
+        await navigator.clipboard?.writeText(ddl)
+        notify(true, '已复制 DDL 到剪贴板')
+      }
+    } catch (e: any) {
+      notify(false, '获取 DDL 失败: ' + (e?.message || e))
+    }
+  }
+
   const onNodeClick = (node: TreeNode) => {
     setActiveKey(node.key)
     if (node.level === 'conn' && node.conn) {
       onSelectConn(node.conn)
       toggle(node.key)
-      if (!expanded.has(node.key)) loadDbs(node.conn.id)
+      // 钻取模式: 默认加载由懒加载 effect 全量负责, 手动展开时再按需补齐缓存即可
+      if (drill ? !dbCache[node.conn.id] : !expanded.has(node.key)) loadDbs(node.conn.id)
       return
     }
     if (node.level === 'connGroup') { toggleGroup(node.key); return }
@@ -156,13 +269,16 @@ export default function ConnectionTree({
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
       onOpenTable(node.conn, node.db, node.table, node.level === 'view')
     }
+    if (OBJ_LEVEL_TO_KIND[node.level] && node.level !== 'view' && node.conn && node.db && node.table) {
+      viewObjectDdl(node)
+    }
   }
 
   // dbx TreeItem 原版行类: group flex items-center gap-2 min-h-7 py-1 px-2 relative
   const renderRow = (node: TreeNode, depth: number, children: React.ReactNode) => {
     const selected = activeKey === node.key
     const canExpand = !node.leaf
-    const isOpen = node.level === 'connGroup' ? !collapsedGroups.has(node.key) : expanded.has(node.key)
+    const isOpen = node.level === 'connGroup' ? !collapsedGroups.has(node.key) : (drill ? !collapsed.has(node.key) : expanded.has(node.key))
     return (
       <div
         className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
@@ -200,16 +316,22 @@ export default function ConnectionTree({
         { label: '测试连接', icon: <ActionIcon kind="test" />, onClick: () => quickTest(node.conn!) },
         { divider: true },
         { label: '移动到分组…', icon: <ActionIcon kind="transfer" />, onClick: () => {
-            const g = prompt('输入分组名称(留空=移出分组)', node.conn!.config.group || '')
-            if (g === null) return
-            const group = g.trim()
-            updateConnection(node.conn!.id, node.conn!.name, { ...node.conn!.config, group }, '')
-              .then(() => listConnections())
-              .then(list => { onConnsChange(list); notify(true, group ? `已移入分组「${group}」` : '已移出分组') })
-              .catch((e: any) => notify(false, '移动失败: ' + e.message))
+            setMoveToGroupTarget(node.conn!)
+            setNewGroupName(node.conn!.config.group || '')
           } },
         { label: '编辑连接', icon: <ActionIcon kind="edit" />, onClick: () => onEditConn(node.conn!) },
         { label: '删除连接', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => remove(node.conn!) },
+      ]
+    }
+    if (OBJ_LEVEL_TO_KIND[node.level] && node.level !== 'view' && node.conn && node.db && node.table) {
+      const kindLabel = node.level === 'function' ? '函数' : node.level === 'procedure' ? '存储包' : node.level === 'event' ? '事件' : node.level === 'trigger' ? '触发器' : node.level === 'sequence' ? '序列' : '对象'
+      return [
+        { label: '查看 DDL', icon: <ActionIcon kind="doc" />, onClick: () => viewObjectDdl(node) },
+        { divider: 'heavy' },
+        { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+        { divider: 'light' },
+        { label: `复制${kindLabel}名`, icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!); notify(true, `已复制 ${node.table}`) } },
+        { label: '复制对象路径', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(`${node.db}.${node.table}`); notify(true, `已复制 ${node.db}.${node.table}`) } },
       ]
     }
     if (node.level === 'schema' && node.conn && node.db && node.schema) {
@@ -404,62 +526,151 @@ export default function ConnectionTree({
       await updateConnection(c.id, c.name, { ...c.config, group: group.trim() }, '')
       notify(true, group.trim() ? `已移入分组「${group.trim()}」` : '已移出分组')
       onConnsChange(await listConnections())
+      setMoveToGroupTarget(null)
     } catch (e: any) {
       notify(false, '移动失败: ' + e.message)
     }
   }
 
+  // 连接唯一分组名(用于 drawer 面板列表)
+  const uniqueGroups = useMemo(() => {
+    const s = new Set<string>()
+    for (const c of conns) { const g = c.config.group?.trim(); if (g) s.add(g) }
+    return [...s].sort()
+  }, [conns])
+
   // 组装可见行
   const rows: TreeNode[] = []
 
-  const renderConn = (c: ConnectionInfo, groupName: string) => {
+  // 组装单个连接的可见行(钻取模式=只返回"匹配对象+直系上级"链, 无匹配整段隐藏, 对齐 GoNavi filterV2ExplorerTreeByKind)
+  const buildConnRows = (c: ConnectionInfo, groupName: string): TreeNode[] => {
     const ckey = `conn:${c.id}`
-    const isConnOpen = expanded.has(ckey)
-    rows.push({ key: ckey, level: 'conn', label: c.name, conn: c, group: groupName })
-    if (!isConnOpen) return
+    const isConnOpen = drill || expanded.has(ckey)
     const dbs = [...(dbCache[c.id] || [])].sort((a, b) => Number(isSysDbName(a)) - Number(isSysDbName(b)))
-    const sysPrefix = dbs.filter(d => isSysDbName(d)).length
+    const out: TreeNode[] = []
+
+    if (drill) {
+      // 先筛出有匹配对象的库(模式层级/平铺二选一判定), 无则可整段跳过本连接
+      const matchedDbs: string[] = []
+      for (const db of dbs) {
+        const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
+        const objs = tablesCache[`${c.id}|${db}`]
+        if (schemas.length > 0) {
+          if (schemas.some(sc => itemsForCategory(objs, category, sc + '.', f).length > 0)) matchedDbs.push(db)
+        } else if (objs && itemsForCategory(objs, category, '', f).length > 0) {
+          matchedDbs.push(db)
+        }
+      }
+      if (matchedDbs.length === 0) return out
+      out.push({ key: ckey, level: 'conn', label: c.name, conn: c, group: groupName })
+      // 用户手动收起该连接 → 只保留连接行, 不展开子节点
+      if (collapsed.has(ckey)) return out
+      for (const db of matchedDbs) {
+        const sys = isSysDbName(db)
+        const dkey = `${ckey}|db:${db}`
+        out.push({ key: dkey, level: 'db', label: db, conn: c, db, sys })
+        // 用户手动收起该库 → 跳过该库的模式/对象
+        if (collapsed.has(dkey)) continue
+        const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
+        const objs = tablesCache[`${c.id}|${db}`]
+        if (schemas.length > 0) {
+          // 三级命名: 库 → 模式 → 对象(只保留有匹配对象的模式)
+          for (const sc of schemas) {
+            const skey = `${dkey}|schema:${sc}`
+            const pfx = sc + '.'
+            const items = itemsForCategory(objs, category, pfx, f)
+            if (items.length === 0) continue
+            out.push({ key: skey, level: 'schema', label: sc, conn: c, db, schema: sc })
+            // 用户手动收起该模式 → 跳过该模式下的对象
+            if (collapsed.has(skey)) continue
+            for (const it of items) {
+              const shortName = it.name.startsWith(pfx) ? it.name.slice(pfx.length) : it.name
+              out.push({ key: `${skey}|${it.name}`, level: it.level, label: shortName, conn: c, db, table: it.name, leaf: true, sys: isSysObjName(shortName) })
+            }
+          }
+          continue
+        }
+        if (!objs) continue
+        // 库下平铺该类对象(页签选中即只显示该类对象)
+        for (const it of itemsForCategory(objs, category, '', f)) {
+          out.push({ key: `${dkey}|${it.name}`, level: it.level, label: it.name, conn: c, db, table: it.name, leaf: true, sys: isSysObjName(it.name) })
+        }
+      }
+      return out
+    }
+
+    out.push({ key: ckey, level: 'conn', label: c.name, conn: c, group: groupName })
+    if (!isConnOpen) return out
     for (const db of dbs) {
       const sys = isSysDbName(db)
       const dkey = `${ckey}|db:${db}`
-      rows.push({ key: dkey, level: 'db', label: db, conn: c, db, sys })
-      if (!expanded.has(dkey)) continue
-      const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
-      const ck2 = `${c.id}|${db}`
-      const objs = tablesCache[ck2]
-      if (schemas.length > 0) {
-        // 三级命名(dbx loadSchemas 同构): 库 → 模式(真层级节点) → 表/视图分组
-        for (const sc of schemas) {
-          const skey = `${dkey}|schema:${sc}`
-          rows.push({ key: skey, level: 'schema', label: sc, conn: c, db, schema: sc })
-          if (!expanded.has(skey) || !objs) continue
-          const pfx = sc + '.'
-          const sTables = objs.tables.filter(t => t.startsWith(pfx) && (!f || t.toLowerCase().includes(f)))
-          const sViews = objs.views.filter(t => t.startsWith(pfx) && (!f || t.toLowerCase().includes(f)))
-          if (sTables.length > 0) rows.push({ key: `${skey}|group:table`, level: 'group', label: `表 (${sTables.length})`, conn: c, db, schema: sc, count: sTables.length })
-          if (sViews.length > 0) rows.push({ key: `${skey}|group:view`, level: 'group', label: `视图 (${sViews.length})`, conn: c, db, schema: sc, count: sViews.length })
+      out.push({ key: dkey, level: 'db', label: db, conn: c, db, sys })
+      if (expanded.has(dkey)) {
+        const schemas = (schemaCache[c.id] || []).filter(sc => !f || sc.toLowerCase().includes(f))
+        const ck2 = `${c.id}|${db}`
+        const objs = tablesCache[ck2]
+        if (schemas.length > 0) {
+          // 三级命名: 库 → 模式 → 对象(按第二层类别页签过滤)
+          for (const sc of schemas) {
+            const skey = `${dkey}|schema:${sc}`
+            out.push({ key: skey, level: 'schema', label: sc, conn: c, db, schema: sc })
+            if (!expanded.has(skey) || !objs) continue
+            const pfx = sc + '.'
+            for (const it of itemsForCategory(objs, category, pfx, f)) {
+              const shortName = it.name.startsWith(pfx) ? it.name.slice(pfx.length) : it.name
+              out.push({ key: `${skey}|${it.name}`, level: it.level, label: shortName, conn: c, db, table: it.name, leaf: true, sys: isSysObjName(shortName) })
+            }
+          }
+          continue
         }
-        continue
+        if (!objs) continue
+        // 库下按第二层类别页签过滤后平铺(GoNavi: 页签选中即只显示该类对象)
+        for (const it of itemsForCategory(objs, category, '', f)) {
+          out.push({ key: `${dkey}|${it.name}`, level: it.level, label: it.name, conn: c, db, table: it.name, leaf: true, sys: isSysObjName(it.name) })
+        }
       }
-      if (!objs) continue
-      const tables = objs.tables.filter(t => !f || t.toLowerCase().includes(f))
-      const views = objs.views.filter(t => !f || t.toLowerCase().includes(f))
-      if (tables.length > 0) rows.push({ key: `${dkey}|group:table`, level: 'group', label: `表 (${tables.length})`, conn: c, db, count: tables.length })
-      if (views.length > 0) rows.push({ key: `${dkey}|group:view`, level: 'group', label: `视图 (${views.length})`, conn: c, db, count: views.length })
     }
+    return out
   }
 
-  // 未分组连接平铺在前, 分组按名渲染(组头可折叠)
-  for (const c of connGroups.ungrouped) renderConn(c, '')
+  for (const c of connGroups.ungrouped) rows.push(...buildConnRows(c, ''))
   for (const g of connGroups.byGroup) {
     const gkey = `cgroup:${g.name}`
+    if (drill) {
+      // 钻取模式: 分组同样可手动收起(默认展开)
+      const isOpen = !collapsedGroups.has(gkey)
+      const childRows: TreeNode[] = []
+      for (const c of g.conns) childRows.push(...buildConnRows(c, g.name))
+      if (!isOpen) {
+        // 分组被收起: 若无匹配连接则整组隐藏, 否则仅显示分组行
+        if (childRows.length === 0) continue
+        rows.push({ key: gkey, level: 'connGroup', label: g.name, group: g.name, count: childRows.length })
+        continue
+      }
+      if (childRows.length === 0) continue
+      rows.push({ key: gkey, level: 'connGroup', label: g.name, group: g.name, count: childRows.length })
+      rows.push(...childRows)
+      continue
+    }
     const isOpen = !collapsedGroups.has(gkey)
     rows.push({ key: gkey, level: 'connGroup', label: g.name, group: g.name, count: g.conns.length })
-    if (isOpen) for (const c of g.conns) renderConn(c, g.name)
+    if (isOpen) for (const c of g.conns) rows.push(...buildConnRows(c, g.name))
   }
 
-  // 懒加载触发
+  // 懒加载触发: 常规=只加载已展开节点; 钻取模式(=类别页签非"全部")=全量加载所有连接/库/模式
   useEffect(() => {
+    if (drill) {
+      for (const c of visibleConns) {
+        if (!dbCache[c.id]) loadDbs(c.id)
+        if (!schemaCache[c.id]) probeSchemas(c.id)
+      }
+      for (const conn of visibleConns) {
+        for (const db of (dbCache[conn.id] || [])) {
+          if (!tablesCache[`${conn.id}|${db}`]) loadTables(conn.id, db)
+        }
+      }
+      return
+    }
     for (const key of expanded) {
       const [connPart, dbPart] = key.split('|')
       if (key.startsWith('conn:') && !dbPart) {
@@ -474,7 +685,7 @@ export default function ConnectionTree({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded])
+  }, [expanded, drill, visibleConns, dbCache, schemaCache, tablesCache])
 
   useEffect(() => {
     if (!menu) return
@@ -486,87 +697,56 @@ export default function ConnectionTree({
   return (
     <div className="db-tree" style={{ fontSize: '14px' }}>
       <div className="db-tree-header">
-        <input
-          className="db-tree-search w-full h-6 rounded border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1"
-          placeholder="搜索连接 / 库 / 表..."
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-        />
-        <div className="db-tree-header-actions">
-          <button className="db-tree-tool" onClick={() => { refreshAll(); onRefresh() }} title="刷新全部缓存"><ActionIcon kind="refresh" /></button>
-          <button className="db-tree-tool" onClick={onExportConns} title="导出连接配置 (JSON)"><ActionIcon kind="upload" /></button>
-          <label className="db-tree-tool" title="导入连接配置 (JSON)">
-            <ActionIcon kind="download" />
-            <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
-              const f = e.target.files?.[0]
-              if (f) onImportConns(f)
-              e.target.value = ''
-            }} />
-          </label>
-          <button className="db-tree-add" onClick={onNewConn} title="新建连接"><ActionIcon kind="plus" /></button>
+        <div className="db-tree-row-1">
+          <div className="db-tree-search-row">
+            <span className="db-tree-search-ico"><ActionIcon kind="search" size={12} /></span>
+            <input
+              className="db-tree-search"
+              placeholder="搜索连接 / 库 / 表..."
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+            />
+          </div>
+          <div className="db-tree-header-actions">
+            <button className="db-tree-tool" onClick={() => { refreshAll(); onRefresh() }} title="刷新全部缓存"><ActionIcon kind="refresh" /></button>
+            <button className="db-tree-tool" onClick={onExportConns} title="导出连接配置 (JSON)"><ActionIcon kind="upload" /></button>
+            <label className="db-tree-tool" title="导入连接配置 (JSON)">
+              <ActionIcon kind="download" />
+              <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
+                const f = e.target.files?.[0]
+                if (f) onImportConns(f)
+                e.target.value = ''
+              }} />
+            </label>
+            <button className="db-tree-add" onClick={onNewConn} title="新建连接"><ActionIcon kind="plus" /></button>
+            {onToggleSide && (
+              <button className="db-tree-tool" onClick={onToggleSide} title="收纳 / 展开侧栏"><ActionIcon kind="panel" /></button>
+            )}
+          </div>
+        </div>
+        <div className="db-tree-catbar" role="tablist">
+          {OBJ_CATEGORY_ORDER.map(cat => (
+            <button
+              key={cat}
+              role="tab"
+              aria-selected={category === cat}
+              className={category === cat ? 'cat-on' : ''}
+              onClick={() => setCategory(cat)}
+            >{OBJ_CATEGORY_LABEL[cat]}</button>
+          ))}
         </div>
       </div>
       <div className="db-tree-body">
         {rows.length === 0 && <div className="db-empty-sm">{conns.length === 0 ? '暂无连接, 点右上 + 新建' : '无匹配对象'}</div>}
         {rows.map(node => {
           const depth = node.key.split('|').length - 1
-          const isObj = node.level === 'table' || node.level === 'view'
           const isConn = node.level === 'conn'
           const isDb = node.level === 'db'
-          const isGroup = node.level === 'group'
           const isConnGroup = node.level === 'connGroup'
           const selected = activeKey === node.key
 
-          // group 节点(表/视图分组) + 展开后的表行(dbx: 表就是普通行)
-          if (isGroup && node.conn && node.db) {
-            const ck2 = `${node.conn.id}|${node.db}`
-            const objs = tablesCache[ck2]
-            const pfx = node.schema ? node.schema + '.' : ''
-            const inScope = (t: string) => (!pfx || t.startsWith(pfx)) && (!f || t.toLowerCase().includes(f))
-            const tables = objs ? objs.tables.filter(inScope) : []
-            const views = objs ? objs.views.filter(inScope) : []
-            const isTableGroup = node.label.startsWith('表')
-            const allItems = isTableGroup ? tables : views
-            const items = [...allItems].sort((a, b) => {
-              const pa = (isPinned(node.conn!.id, node.db!, a) ? 0 : 1) + (isSysObjName(a) ? 2 : 0)
-              const pb = (isPinned(node.conn!.id, node.db!, b) ? 0 : 1) + (isSysObjName(b) ? 2 : 0)
-              return pa - pb
-            })
-            const rowNums = rowCounts[`${node.conn.id}|${node.db}`] || {}
-            const itemLevel = isTableGroup ? 'table' : 'view'
-
-            return (
-              <React.Fragment key={node.key}>
-                {renderRow(node, depth, (
-                  <>
-                    <NodeIcon level={node.level} />
-                    <span className="truncate">{node.label}</span>
-                    {node.count !== undefined && (
-                      <span className="ml-0.5 inline-flex h-4 items-center rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{node.count}</span>
-                    )}
-                  </>
-                ))}
-                {expanded.has(node.key) && items.map(t => {
-                  const tblKey = `${node.key}|${t}`
-                  const tblNode: TreeNode = { key: tblKey, level: itemLevel, label: t, conn: node.conn, db: node.db, table: t, leaf: true, sys: isSysObjName(t) }
-                  return renderRow(tblNode, depth + 1, (
-                    <>
-                      <span className="db-tree-rcount" title={rowNums[t] != null ? `约 ${rowNums[t]} 行` : undefined}>
-                        {rowNums[t] != null ? fmtCount(rowNums[t]) : ''}
-                      </span>
-                      <span className="relative flex h-3.5 w-3.5 shrink-0">
-                        {itemLevel === 'view' ? <NodeIcon level="view" /> : <NodeIcon level="table" />}
-                      </span>
-                      <span className="truncate">
-                        {pfx ? t.slice(pfx.length) : t}{isPinned(node.conn!.id, node.db!, t) ? ' 📌' : ''}
-                      </span>
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground opacity-0 group-hover:opacity-100">@{node.db}</span>
-                    </>
-                  ))
-                })}
-              </React.Fragment>
-            )
-          }
+          // group 节点(表/视图分组) — 已移除固定类别,此分支不再触发
+          if (node.level === 'group') return null
 
           if (isConnGroup) {
             return renderRow(node, depth, (
@@ -608,6 +788,46 @@ export default function ConnectionTree({
           items={buildMenuItems(menu.node)}
           onClose={() => setMenu(null)}
         />
+      )}
+      {moveToGroupTarget && (
+        <div className="db-group-drawer">
+          <div className="db-group-drawer-head">
+            <span className="db-group-drawer-title">移动到分组</span>
+            <button className="db-group-drawer-close" onClick={() => setMoveToGroupTarget(null)}><ActionIcon kind="close" /></button>
+          </div>
+          <div className="db-group-drawer-body">
+            <div className="db-group-drawer-row db-group-drawer-new">
+              <input
+                className="db-group-drawer-input"
+                placeholder="新建分组名…"
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && newGroupName.trim()) { moveToGroup(moveToGroupTarget!, newGroupName.trim()) } }}
+              />
+              <button
+                className="db-group-drawer-go"
+                disabled={!newGroupName.trim()}
+                onClick={() => moveToGroup(moveToGroupTarget!, newGroupName.trim())}
+              >移入</button>
+            </div>
+            <div className="db-group-drawer-sep" />
+            {uniqueGroups.map(g => (
+              <button
+                key={g}
+                className={`db-group-drawer-row${moveToGroupTarget.config.group?.trim() === g ? ' active' : ''}`}
+                onClick={() => moveToGroup(moveToGroupTarget!, g)}
+              >
+                <span className="db-group-drawer-gname">{g}</span>
+                {moveToGroupTarget.config.group?.trim() === g && <span className="db-group-drawer-check">✓</span>}
+              </button>
+            ))}
+            {moveToGroupTarget.config.group?.trim() && (
+              <button className="db-group-drawer-row danger" onClick={() => moveToGroup(moveToGroupTarget!, '')}>
+                <span className="db-group-drawer-gname">移出分组</span>
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

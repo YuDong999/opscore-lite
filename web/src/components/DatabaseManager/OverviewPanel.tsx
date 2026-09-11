@@ -34,10 +34,10 @@ export default function OverviewPanel({
   const stats: Array<{ label: string; value: number; color: string }> = [
     { label: '连接总数', value: total, color: 'var(--accent)' },
     { label: '关系型', value: byCategory('relational'), color: 'var(--accent-2)' },
-    { label: '文档/时序', value: byCategory('document') + byCategory('timeseries'), color: '#10b981' },
-    { label: '向量库', value: byCategory('vector'), color: '#a78bfa' },
-    { label: '搜索/MQ', value: byCategory('search') + byCategory('mq'), color: '#fb923c' },
-    { label: '自定义', value: byCategory('custom'), color: '#94a3b8' },
+    { label: '文档/时序', value: byCategory('document') + byCategory('timeseries'), color: 'var(--ok)' },
+    { label: '向量库', value: byCategory('vector'), color: 'color-mix(in srgb, var(--accent) 65%, var(--accent-2))' },
+    { label: '搜索/MQ', value: byCategory('search') + byCategory('mq'), color: 'var(--warn)' },
+    { label: '自定义', value: byCategory('custom'), color: 'var(--text-dim)' },
   ]
 
   const grouped: Record<EngineCategory, EngineMeta[]> = { relational: [], document: [], vector: [], timeseries: [], search: [], mq: [], custom: [] }
