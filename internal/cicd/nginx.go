@@ -264,6 +264,7 @@ func (e *Engine) nxWalkFile(host string, filePath, text string, depth int, probe
 					pattern = path.Join(path.Dir(filePath), pattern)
 				}
 				out, rc, err := e.ExecLineOutput(host, "ls -1 "+shq(pattern)+" 2>/dev/null")
+				log.Printf("[nginx-probe] ls glob=%s rc=%d err=%v out=%q", pattern, rc, err, strings.TrimSpace(out)[:min(60, len(strings.TrimSpace(out)))])
 				if err != nil || rc != 0 {
 					continue
 				}
@@ -292,6 +293,7 @@ func (e *Engine) nxWalkFile(host string, filePath, text string, depth int, probe
 func (e *Engine) nxFetch(host, filePath string) (string, error) {
 	out, rc, err := e.ExecLineOutput(host, "base64 < "+shq(filePath)+" 2>/dev/null | tr -d '\\n'")
 	if err != nil || rc != 0 {
+		log.Printf("[nginx-probe] nxFetch 失败: %s rc=%d err=%v", filePath, rc, err)
 		return "", fmt.Errorf("读取失败: %s", filePath)
 	}
 	dec, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
