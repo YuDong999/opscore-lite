@@ -231,8 +231,7 @@ export default function DatabaseManagerModule() {
         </div>
         {activeConn && (
           <div className="db-head-info">
-            <span className="pill">
-              <span className={`db-engine-badge db-engine-${activeConn.engine}`}>{activeConn.engine}</span>
+            <span className="pill" title={activeConn.engine}>
               {activeConn.name}
             </span>
             {isProd && <span className="pill pill-err">生产</span>}
