@@ -2006,7 +2006,6 @@ body {
 
 /* ── 查询工作台 ── */
 .db-query-section { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
-.db-query-editor { display: flex; flex-direction: column; gap: 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; }
 
 /* ═══════════ DatabaseManager 数据库管理模块 ═══════════ */
 
@@ -2289,7 +2288,6 @@ body {
 .db-export-controls button { min-width: 2.6rem; }
 
 /* 查询编辑器卡片化 */
-.db-query-editor { box-shadow: var(--shadow); }
 .db-query-textarea { min-height: 9rem; }
 
 /* V2.1 caret 修复: 清除 V1 残留 border, 放大图标 */
