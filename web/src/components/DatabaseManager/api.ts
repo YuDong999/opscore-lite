@@ -296,6 +296,10 @@ export interface InterceptionBody {
   reason?: string
 }
 
+export async function getEngineConfig(engine: EngineType): Promise<{ engine: string; config: ConnectionConfig }> {
+  return getJSON('/api/dbmanager/engine-config?engine=' + encodeURIComponent(engine))
+}
+
 export async function listConnections(): Promise<ConnectionInfo[]> {
   const r = await getJSON<{ connections: ConnectionInfo[] }>('/api/dbmanager/connections')
   return r.connections || []
@@ -606,6 +610,6 @@ export async function applyCellEdit(
   id: string, database: string, table: string,
   pkCols: string[], row: Record<string, any>,
   setCol: string, setValue: any, confirm = false,
-): Promise<{ ok: boolean; affected: number; error?: string }> {
+): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
   return postJSON('/api/dbmanager/apply-edit', { id, database, table, pkCols, row, setCol, setValue, confirm })
 }

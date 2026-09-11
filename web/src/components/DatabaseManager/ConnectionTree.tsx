@@ -1,6 +1,6 @@
-// 树状对象侧栏（对�?GoNavi Sidebar / dbx sidebar�?
-//   连接(引擎图标+状态点+hover 操作�? �?�?�?[�?N)/视图(N)] �?对象(行数徽标)
-// 懒加�? 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单�?
+// 树状对象侧栏(对齐 GoNavi Sidebar / dbx sidebar 的连接树形态)。
+//   连接(引擎图标+状态点+hover 操作) -> 库 -> [模式(三级引擎)] -> 表/视图(行数徽标) 等对象节点。
+// 懒加载: 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单提供更多操作。
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import {

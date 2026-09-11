@@ -6,7 +6,8 @@
 import { useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { sql as sqlLang } from '@codemirror/lang-sql'
-import { runQueryRaw, type QueryResult, type InterceptionBody } from './api'
+import { runQueryRaw, saveQuery, type QueryResult, type InterceptionBody } from './api'
+import { useToast } from '../Toast'
 import { formatSQL } from './sqlFormat'
 
 const SAMPLE_QUERIES = [
@@ -52,9 +53,27 @@ export default function QueryEditor({
   onWriteLocked?: (msg: string) => void
   onExecuted?: (sql: string) => void
 }) {
+  const toast = useToast()
   const [sql, setSql] = useState(defaultSQL)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<string[]>(loadHistory)
+  // 保存当前 SQL 到已保存查询(补全 🕳️: 后端 /queries/save + api.saveQuery 一直在, 缺保存入口)
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+
+  const doSave = async () => {
+    const name = saveName.trim()
+    if (!name) { toast.error('请填写查询名称'); return }
+    if (!sql.trim()) { toast.error('当前 SQL 为空'); return }
+    try {
+      await saveQuery({ name, sql, engine })
+      toast.success(`已保存查询「${name}」`)
+      setSaveOpen(false)
+      setSaveName('')
+    } catch (e: any) {
+      toast.error('保存失败: ' + (e.message || e))
+    }
+  }
 
   useEffect(() => {
     if (defaultSQL) setSql(defaultSQL)
@@ -134,6 +153,22 @@ export default function QueryEditor({
           </button>
           <button onClick={doFormat} className="btn-glass-soft btn-glass-soft-sm" title="按当前引擎方言格式化 SQL">格式化</button>
           <button onClick={() => setSql('')} className="btn-glass-soft btn-glass-soft-sm">清空</button>
+          <button onClick={() => setSaveOpen(v => !v)} disabled={busy || !sql.trim()} className="btn-glass-soft btn-glass-soft-sm" title="保存当前 SQL 到已保存查询" aria-label="保存当前 SQL">保存</button>
+          {saveOpen && (
+            <span className="db-save-inline">
+              <input
+                className="input btn-glass-soft-sm"
+                style={{ maxWidth: '11rem', fontSize: '0.75rem' }}
+                placeholder="查询名称..."
+                value={saveName}
+                autoFocus
+                aria-label="查询名称"
+                onChange={e => setSaveName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveOpen(false) }}
+              />
+              <button onClick={doSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">确定</button>
+            </span>
+          )}
           {history.length > 0 && (
             <select
               className="input btn-glass-soft-sm"

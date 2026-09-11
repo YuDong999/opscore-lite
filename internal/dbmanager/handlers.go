@@ -67,6 +67,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
 			{Path: "/api/dbmanager/data", Handler: h.handleData},
 			{Path: "/api/dbmanager/table-inserts", Handler: h.handleTableInserts},
+			{Path: "/api/dbmanager/apply-edit", Handler: h.handleApplyEdit},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
@@ -525,8 +526,42 @@ func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"tables": tables})
+	case "objects":
+		database := r.URL.Query().Get("database")
+		if !reDBName.MatchString(database) {
+			writeErr(w, "database 格式非法", http.StatusBadRequest)
+			return
+		}
+		objs, err := h.svc.ListObjects(ctx, id, database)
+		if err != nil {
+			writeErr(w, "列出对象失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"objects": objs})
+	case "object-ddl":
+		database := r.URL.Query().Get("database")
+		objectName := r.URL.Query().Get("object")
+		kind := r.URL.Query().Get("kind")
+		if !reDBName.MatchString(database) || !reTableName.MatchString(objectName) {
+			writeErr(w, "database/object 格式非法", http.StatusBadRequest)
+			return
+		}
+		switch kind {
+		case gonavistatus.KindView, gonavistatus.KindMaterializedView,
+			gonavistatus.KindFunction, gonavistatus.KindProcedure,
+			gonavistatus.KindEvent, gonavistatus.KindTrigger, gonavistatus.KindSequence:
+		default:
+			writeErr(w, "kind 必须是视图/函数/存储过程/事件/触发器/序列", http.StatusBadRequest)
+			return
+		}
+		ddl, err := h.svc.GetObjectDefinition(ctx, id, database, objectName, kind)
+		if err != nil {
+			writeErr(w, "获取 DDL 失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ddl": ddl})
 	default:
-		writeErr(w, "type 必须是 databases 或 tables", http.StatusBadRequest)
+		writeErr(w, "type 必须是 databases/tables/objects/object-ddl", http.StatusBadRequest)
 	}
 }
 

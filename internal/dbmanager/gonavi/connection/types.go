@@ -480,6 +480,13 @@ type ChangeSet struct {
 	LocatorStrategy string                   `json:"locatorStrategy,omitempty"`
 }
 
+// DbObject 描述数据库中可枚举的对象(视图/函数/存储过程/事件/触发器/序列等)。
+type DbObject struct {
+	Name  string `json:"name"`            // 对象名(必要时带 schema / owner 前缀, 如 schema.name)
+	Kind  string `json:"kind"`            // VIEW / FUNCTION / PROCEDURE / EVENT / TRIGGER / SEQUENCE ...
+	Table string `json:"table,omitempty"` // 关联表(触发器所属表; 其他类型为空)
+}
+
 // MongoMemberInfo 描述 MongoDB 副本集成员的信息。
 type MongoMemberInfo struct {
 	Host      string `json:"host"`

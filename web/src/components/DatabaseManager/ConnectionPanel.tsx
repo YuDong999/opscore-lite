@@ -23,6 +23,7 @@ import {
   deleteConnection,
   testConnection,
   loadEngines,
+  getEngineConfig,
 } from './api'
 
 const CATEGORY_LABELS: Record<EngineCategory, string> = {
@@ -123,6 +124,7 @@ export default function ConnectionPanel({
   const onEnginePicked = (eng: EngineType) => {
     const meta = getEngineMeta(eng)!
     setPickedEngine(eng)
+    // 本地默认先行(离线可用), 再异步对齐后端 engine-config 单一事实源 —— 两边默认值不再漂移
     setEditing((prev) => ({
       ...prev,
       engine: eng,
@@ -136,6 +138,27 @@ export default function ConnectionPanel({
       },
     }))
     setStep('fill-config')
+    getEngineConfig(eng)
+      .then(({ config }) => {
+        setEditing((prev) => {
+          if (!prev || prev.engine !== eng) return prev // 用户已切换引擎, 丢弃过期响应
+          return {
+            ...prev,
+            config: {
+              ...config,
+              host: prev.config?.host || config.host,
+              database: prev.config?.database || config.database,
+              username: prev.config?.username || config.username,
+              sslMode: prev.config?.sslMode || config.sslMode,
+              envTag: prev.config?.envTag || config.envTag || '',
+              dsn: prev.config?.dsn || config.dsn,
+              driver: prev.config?.driver || config.driver,
+              port: prev.config?.port || config.port,
+            },
+          }
+        })
+      })
+      .catch(() => { /* 后端不可达时保持本地默认 */ })
   }
 
   const save = async () => {

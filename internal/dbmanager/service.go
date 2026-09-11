@@ -28,6 +28,11 @@ type DBService interface {
 	GetTableMeta(ctx context.Context, connID, database, table string) (*TableMetaDetail, error)
 	// ListTables 列出指定库下的表/视图。
 	ListTables(ctx context.Context, connID, database string) ([]TableInfo, error)
+	// ListObjects 列出指定库下表之外的对象(视图/函数/存储过程/事件/触发器/序列)。
+	// 驱动不支持对象枚举时返回空集合。
+	ListObjects(ctx context.Context, connID, database string) ([]gonaviConnection.DbObject, error)
+	// GetObjectDefinition 返回非表对象的 DDL 定义(kind 取值见 DbObject.Kind)。
+	GetObjectDefinition(ctx context.Context, connID, database string, objectName, kind string) (string, error)
 	// DescribeTable 返回列/索引/DDL。
 	DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error)
 	// ExecQuery 执行 SQL：SELECT 返回结果集(截断到 maxRows)，其他返回受影响行数。
@@ -162,6 +167,39 @@ func (s *GonaviService) ListTables(ctx context.Context, connID, database string)
 		out = append(out, ti)
 	}
 	return out, nil
+}
+
+// ListObjects 返回库内非表对象。驱动未实现 ObjectEnumerator 时返回空集合。
+func (s *GonaviService) ListObjects(ctx context.Context, connID, database string) ([]gonaviConnection.DbObject, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	enumerator, ok := db.(gonavibase.ObjectEnumerator)
+	if !ok {
+		return []gonaviConnection.DbObject{}, nil
+	}
+	objs, err := enumerator.GetObjects(database)
+	if err != nil {
+		return nil, err
+	}
+	if objs == nil {
+		return []gonaviConnection.DbObject{}, nil
+	}
+	return objs, nil
+}
+
+// GetObjectDefinition 返回非表对象的 DDL。驱动不支持时返回友好错误。
+func (s *GonaviService) GetObjectDefinition(ctx context.Context, connID, database string, objectName, kind string) (string, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return "", err
+	}
+	provider, ok := db.(gonavibase.ObjectDefinitionProvider)
+	if !ok {
+		return "", fmt.Errorf("当前驱动不支持查看对象 DDL")
+	}
+	return provider.GetObjectDefinition(database, objectName, kind)
 }
 
 // 表信息定义: DescribeTable 附带外键/触发器(索引已含), 供前端表信息页签。

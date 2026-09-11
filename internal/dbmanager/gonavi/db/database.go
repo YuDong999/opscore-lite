@@ -180,6 +180,22 @@ type TableCommentProvider interface {
 	GetTableComment(dbName, tableName string) (string, error)
 }
 
+// ObjectEnumerator is an optional metadata interface for drivers that can
+// enumerate database objects beyond base tables (views, functions, stored
+// procedures, events, triggers, sequences). Drivers without the capability
+// return no objects; the caller falls back to an empty collection.
+type ObjectEnumerator interface {
+	GetObjects(dbName string) ([]connection.DbObject, error)
+}
+
+// ObjectDefinitionProvider is an optional metadata interface for drivers that
+// can produce the DDL definition of a non-table object (view, function,
+// procedure, trigger, event). Kind values follow the DbObject.Kind contract;
+// unsupported kinds return a friendly error instead of panicking.
+type ObjectDefinitionProvider interface {
+	GetObjectDefinition(dbName, objectName, kind string) (string, error)
+}
+
 // TableExistsChecker is an optional point lookup for a table's canonical
 // metadata identity. Callers must pass the exact name returned by driver
 // metadata; this interface does not parse arbitrary SQL identifiers.

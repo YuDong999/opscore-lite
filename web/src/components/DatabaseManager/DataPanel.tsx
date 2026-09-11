@@ -2,7 +2,8 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, type TableData, type ColumnInfo, type TableMeta } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, type TableData, type ColumnInfo, type TableMeta } from './api'
+import { useToast } from '../Toast'
 import DataGrid from './DataGrid'
 
 type ViewMode = 'table' | 'json' | 'text'
@@ -15,6 +16,7 @@ export default function DataPanel({
   table: string
   isView?: boolean
 }) {
+  const toast = useToast()
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
   const [colMeta, setColMeta] = useState<ColumnInfo[] | undefined>(undefined)
@@ -82,6 +84,7 @@ export default function DataPanel({
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
+
   const toggleCol = (idx: number) => {
     setVisibleCols(prev => {
       const next = new Set(prev)
@@ -94,6 +97,37 @@ export default function DataPanel({
     if (!data || !data.columns) return []
     return data.columns.filter((_, i) => visibleCols.has(i))
   }, [data, visibleCols])
+
+  // 单元格编辑落库: 变更 → 后端按方言拼 UPDATE(主键定位) → 预览确认 → 执行 → 回读。
+  // 无主键的表直接拒绝(后端同样拒绝)。行索引与 data.rows 对齐(DataGrid 保证), 列名取可见列投影。
+  const handleEditChanges = useCallback(async (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => {
+    if (!data?.rows || !data.columns) return
+    const pkCols = (colMeta ?? []).filter(c => c.key === 'PRI').map(c => c.name)
+    if (pkCols.length === 0) { toast.error('该表无主键, 无法安全定位行, 已拒绝编辑'); return }
+    const rowObjAt = (rowIdx: number) => {
+      const obj: Record<string, any> = {}
+      data.columns.forEach((name, i) => { obj[name] = data.rows![rowIdx]?.[i] })
+      return obj
+    }
+    try {
+      // 第一刀: confirm=false 拿到后端生成的 SQL 预览, 展示后再执行(透明原则)
+      const previews = await Promise.all(changes.map(ch =>
+        applyCellEdit(conn.id, database, table, pkCols, rowObjAt(ch.row), visibleColumns[ch.col], ch.newValue, false)
+      ))
+      const sqls = previews.map(p => p.sql).filter(Boolean)
+      if (sqls.length && !window.confirm('将执行以下语句:\n\n' + sqls.join('\n\n'))) return
+      let done = 0
+      for (const ch of changes) {
+        const r = await applyCellEdit(conn.id, database, table, pkCols, rowObjAt(ch.row), visibleColumns[ch.col], ch.newValue, true)
+        if (!r.ok) throw new Error(r.error || '写入失败')
+        done += r.affected ?? 0
+      }
+      toast.success(`已更新 ${changes.length} 个单元格 (影响 ${done} 行)`)
+      load()
+    } catch (e: any) {
+      toast.error('更新失败: ' + (e.message || e))
+    }
+  }, [data, colMeta, visibleColumns, conn.id, database, table, load, toast])
 
   // JSON 视图
   const jsonRows = useMemo(() => {
@@ -239,6 +273,7 @@ export default function DataPanel({
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
             exportSql={`SELECT * FROM ${database}.${table} LIMIT ${pageSize} OFFSET ${(page - 1) *pageSize}`}
+            onEdit={handleEditChanges}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}

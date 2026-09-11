@@ -5,7 +5,7 @@ import { type AuditEntry, getAudit, type ConnectionInfo, getEngineMeta } from '.
 
 const RISK_LABEL: Record<string, string> = {
   safe: '✓ 只读',
-  medium: '⚡ 写操作',
+  medium: '◆ 写操作',
   high: '⚠ 结构变更',
   critical: '✗ 高危',
 }
@@ -66,7 +66,7 @@ export default function AuditPanel({ conns }: { conns: ConnectionInfo[] }) {
           <select className="input db-audit-filter" value={filterRisk} onChange={e => setFilterRisk(e.target.value)}>
             <option value="">全部风险</option>
             <option value="safe">✓ 只读</option>
-            <option value="medium">⚡ 写操作</option>
+            <option value="medium">◆ 写操作</option>
             <option value="high">⚠ 结构变更</option>
             <option value="critical">✗ 高危</option>
           </select>

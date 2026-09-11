@@ -124,6 +124,12 @@ func formatLiteral(v interface{}) string {
 	})
 }
 
+// FormatLiteralForDialect 导出版: 按目标方言格式化值字面量,
+// 供 apply-edit 等需要在服务端拼执行 SQL 的路径复用(与预览生成同一套转义规则)。
+func FormatLiteralForDialect(dbType string, v interface{}) string {
+	return formatLiteralForDialect(dbType, v)
+}
+
 func formatLiteralForDialect(dbType string, v interface{}) string {
 	normalizedType := strings.ToLower(strings.TrimSpace(dbType))
 	switch normalizedType {
