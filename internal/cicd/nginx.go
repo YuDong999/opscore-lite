@@ -1,23 +1,19 @@
 package cicd
 
-// ── nginx 流量分发可视化: 远端配置探测 + upstream 块改写应用 ──
-// 解析器: 词法级(注释剥离 + ;/{/} 切分), 支持 include 递归(相对目录 + glob, 深度≤3)。
+// ── nginx 流量分发可视化: 基于 `nginx -T` 全量转储的结构化探测 + upstream 块改写应用 ──
+// 转储由 nginx 自身解析 include 链(比自研递归抓文件更准), 本文件只做分段与结构化。
 // 应用: 引擎侧改写 upstream 块文本 → base64 推远端临时文件 → nginx -t 通过才原子替换+reload, 失败自动回滚。
 
 import (
 	"encoding/base64"
-	"log"
-	"encoding/json"
 	"fmt"
-	"path"
-	"sort"
 	"strings"
 )
 
 // NginxUpstreamServer upstream 内单个 server 行的结构化视图
 type NginxUpstreamServer struct {
-	Addr    string `json:"addr"`    // 127.0.0.1:9001
-	Weight  int    `json:"weight"`  // 0 = 未写 weight(nginx 默认 1, 展示按 1)
+	Addr    string `json:"addr"`   // 127.0.0.1:9001
+	Weight  int    `json:"weight"` // 0 = 未写 weight(nginx 默认 1, 展示按 1)
 	Down    bool   `json:"down"`
 	Backup  bool   `json:"backup"`
 	RawArgs string `json:"rawArgs"` // 原始参数串(保底展示)
@@ -25,11 +21,11 @@ type NginxUpstreamServer struct {
 
 // NginxUpstream 一个 upstream 块
 type NginxUpstream struct {
-	Name   string               `json:"name"`
-	LB     string               `json:"lb"` // 轮询="" / least_conn / ip_hash / random / hash …
-	File   string               `json:"file"`
+	Name    string               `json:"name"`
+	LB      string               `json:"lb"` // 轮询="" / least_conn / ip_hash / random / hash …
+	File    string               `json:"file"`
 	Servers []NginxUpstreamServer `json:"servers"`
-	Raw    string               `json:"raw"` // 原始块文本(应用时按此定位替换)
+	Raw     string               `json:"raw"` // 原始块文本(应用时按此定位替换)
 }
 
 // NginxServerBlock server 块(只读展示: 监听与转发目标)
@@ -42,16 +38,17 @@ type NginxServerBlock struct {
 
 // NginxConfFile 一个配置文件及其解析结果
 type NginxConfFile struct {
-	Path      string            `json:"path"`
-	Upstreams []NginxUpstream   `json:"upstreams"`
+	Path      string             `json:"path"`
+	Upstreams []NginxUpstream    `json:"upstreams"`
 	Servers   []NginxServerBlock `json:"servers"`
 }
 
 // NginxProbe 探测结果
 type NginxProbe struct {
-	Host    string         `json:"host"`
-	MainConf string        `json:"mainConf"`
-	Files   []NginxConfFile `json:"files"`
+	Host        string          `json:"host"`
+	MainConf    string          `json:"mainConf"`
+	NginxActive bool            `json:"nginxActive"` // systemd is-active == active
+	Files       []NginxConfFile `json:"files"`
 }
 
 // NginxApplyEdit 单个文件的改写: 原 upstream 块文本 → 新块文本
@@ -63,9 +60,9 @@ type NginxApplyEdit struct {
 
 // NginxApplyRequest 应用请求
 type NginxApplyRequest struct {
-	Host    string          `json:"host"`
-	MainConf string         `json:"mainConf"`
-	Edits   []NginxApplyEdit `json:"edits"`
+	Host     string           `json:"host"`
+	MainConf string           `json:"mainConf"`
+	Edits    []NginxApplyEdit `json:"edits"`
 }
 
 // ── 极简 nginx 词法: 剥注释, 按 ; / { / } 切分 ──
@@ -103,27 +100,24 @@ func nxStripComments(text string) string {
 	return b.String()
 }
 
-// nxParse 切分一层语句; block 内容以原始文本递归解析
+// nxParse 切分一层语句; block 内容递归解析
 func nxParse(text string) []nxStmt {
 	text = nxStripComments(text)
 	var out []nxStmt
 	i := 0
 	for i < len(text) {
-		// 跳空白
 		for i < len(text) && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == '\r') {
 			i++
 		}
 		if i >= len(text) {
 			break
 		}
-		// 读 token 到 ; 或 {
 		start := i
 		for i < len(text) && text[i] != ';' && text[i] != '{' && text[i] != '}' {
 			i++
 		}
 		tok := strings.TrimSpace(text[start:i])
 		if i < len(text) && text[i] == '}' {
-			// 当前层结束, 剩余交还上层
 			if tok != "" {
 				out = append(out, nxStmt{args: strings.Fields(tok)})
 			}
@@ -140,7 +134,6 @@ func nxParse(text string) []nxStmt {
 			}
 			continue
 		}
-		// block: '{' → 找配对 '}'
 		depth := 1
 		i++
 		bodyStart := i
@@ -181,14 +174,17 @@ func min(a, b int) int {
 	return b
 }
 
-// nxWalkFile 递归提取文件内所有层级的 upstream/server 块, 并解析 include(深度≤3)
-func (e *Engine) nxWalkFile(host string, filePath, text string, depth int, probe *NginxProbe, seen map[string]bool) {
-	file := NginxConfFile{Path: filePath}
+// nxExtractFile 从单文件文本提取 upstream/server 块(含嵌套块遍历)
+func nxExtractFile(filePath, text string) NginxConfFile {
+	file := NginxConfFile{Path: filePath, Upstreams: []NginxUpstream{}, Servers: []NginxServerBlock{}}
 	var walk func(stmts []nxStmt)
 	walk = func(stmts []nxStmt) {
 		for i := range stmts {
 			st := &stmts[i]
 			if len(st.args) == 0 {
+				if st.hasBlock {
+					walk(st.children)
+				}
 				continue
 			}
 			switch st.args[0] {
@@ -254,74 +250,60 @@ func (e *Engine) nxWalkFile(host string, filePath, text string, depth int, probe
 				if sv.Listen != "" {
 					file.Servers = append(file.Servers, sv)
 				}
-			case "include":
-				log.Printf("[nginx-probe] include 命中: %v depth=%d", st.args, depth)
-				if depth >= 3 || len(st.args) < 2 {
-					continue
-				}
-				pattern := st.args[1]
-				if !strings.HasPrefix(pattern, "/") {
-					pattern = path.Join(path.Dir(filePath), pattern)
-				}
-				out, rc, err := e.ExecLineOutput(host, "ls -1 "+shq(pattern)+" 2>/dev/null")
-				log.Printf("[nginx-probe] ls glob=%s rc=%d err=%v out=%q", pattern, rc, err, strings.TrimSpace(out)[:min(60, len(strings.TrimSpace(out)))])
-				if err != nil || rc != 0 {
-					continue
-				}
-				for _, f := range strings.Split(strings.TrimSpace(out), "\\n") {
-					f = strings.TrimSpace(f)
-					if f == "" || seen[f] {
-						continue
-					}
-					seen[f] = true
-					if content, ferr := e.nxFetch(host, f); ferr == nil {
-						e.nxWalkFile(host, f, content, depth+1, probe, seen)
-					}
-				}
-			default:
-				if st.hasBlock {
-					walk(st.children) // 深入 http/events 等块继续找
-				}
+			}
+			if st.hasBlock {
+				walk(st.children)
 			}
 		}
 	}
 	walk(nxParse(text))
-	probe.Files = append(probe.Files, file)
+	return file
 }
 
-// nxFetch 远端取文件内容(base64 传输防编码问题)
-func (e *Engine) nxFetch(host, filePath string) (string, error) {
-	out, rc, err := e.ExecLineOutput(host, "base64 < "+shq(filePath)+" 2>/dev/null | tr -d '\\n'")
-	if err != nil || rc != 0 {
-		log.Printf("[nginx-probe] nxFetch 失败: %s rc=%d err=%v", filePath, rc, err)
-		return "", fmt.Errorf("读取失败: %s", filePath)
+// splitNginxTDump 按 `# configuration file <path>:` 标记切分 nginx -T 转储
+func splitNginxTDump(dump string) []NginxConfFile {
+	const marker = "# configuration file "
+	files := []NginxConfFile{}
+	var cur *NginxConfFile
+	var buf []string
+	flush := func() {
+		if cur == nil {
+			return
+		}
+		f := nxExtractFile(cur.Path, strings.Join(buf, "\n"))
+		files = append(files, f)
 	}
-	dec, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
-	if derr != nil {
-		return "", derr
-	}
-	return string(dec), nil
-}
-
-// NginxProbe 探测目标主机 nginx 配置结构
-func (e *Engine) NginxProbe(hostID string) (*NginxProbe, error) {
-	// 主配置定位: nginx -V 的 --conf-path, 兜底 /etc/nginx/nginx.conf
-	out, _, err := e.ExecLineOutput(hostID, "nginx -V 2>&1 | grep -oE '\\-\\-conf-path=[^ ]+' | head -1 | cut -d= -f2")
-	main := "/etc/nginx/nginx.conf"
-	if err == nil {
-		if v := strings.TrimSpace(out); v != "" {
-			main = v
+	for _, line := range strings.Split(dump, "\n") {
+		if strings.HasPrefix(line, marker) {
+			flush()
+			cur = &NginxConfFile{Path: strings.TrimSpace(strings.TrimPrefix(line, marker))}
+			buf = nil
+			continue
+		}
+		if cur != nil {
+			buf = append(buf, line)
 		}
 	}
-	probe := &NginxProbe{Host: hostID, MainConf: main}
-	text, ferr := e.nxFetch(hostID, main)
-	if ferr != nil {
-		return nil, fmt.Errorf("读取主配置失败: %w", ferr)
+	flush()
+	return files
+}
+
+// NginxProbe 探测目标主机 nginx: 运行状态 + nginx -T 全量转储结构化
+func (e *Engine) NginxProbe(hostID string) (*NginxProbe, error) {
+	out, _, err := e.ExecLineOutput(hostID, "systemctl is-active nginx 2>/dev/null || true; echo ---CONF-DUMP---; nginx -T 2>&1")
+	if err != nil {
+		return nil, err
 	}
-	seen := map[string]bool{main: true}
-	e.nxWalkFile(hostID, main, text, 0, probe, seen)
-	// 文件按路径排序稳定输出
-	sort.Slice(probe.Files, func(i, j int) bool { return probe.Files[i].Path < probe.Files[j].Path })
+	state, dump := out, ""
+	if idx := strings.Index(out, "---CONF-DUMP---"); idx >= 0 {
+		state = strings.TrimSpace(out[:idx])
+		dump = out[idx+len("---CONF-DUMP---"):]
+	}
+	probe := &NginxProbe{Host: hostID, MainConf: "/etc/nginx/nginx.conf", NginxActive: strings.TrimSpace(state) == "active", Files: []NginxConfFile{}}
+	if strings.Contains(dump, "nginx: [emerg]") || strings.Contains(dump, "command not found") || strings.TrimSpace(dump) == "" {
+		return probe, nil // nginx 未安装/配置不可读: 返回空结构(前端给出明确提示)
+	}
+	probe.Files = splitNginxTDump(dump)
 	return probe, nil
 }
 
@@ -351,7 +333,6 @@ func (e *Engine) NginxApply(hostID string, req *NginxApplyRequest) error {
 		return err
 	}
 	if rc != 0 || !strings.Contains(out, "APPLY_OK") {
-		// nginx -t 失败: .bak 尚未删(脚本 set -e 中断), 回滚还原
 		rollback := "set -e; "
 		for i, ed := range req.Edits {
 			bak := fmt.Sprintf("%s.opscore-bak-%d", ed.File, i)
@@ -365,10 +346,4 @@ func (e *Engine) NginxApply(hostID string, req *NginxApplyRequest) error {
 		return fmt.Errorf("应用失败(已回滚): %s", detail)
 	}
 	return nil
-}
-
-// marshalNginxJSON 便捷封装(避免到处 json.Marshal 错误处理)
-func marshalNginxJSON(v any) []byte {
-	b, _ := json.Marshal(v)
-	return b
 }

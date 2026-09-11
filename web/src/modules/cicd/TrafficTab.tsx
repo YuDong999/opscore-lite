@@ -18,7 +18,7 @@ import { useToast } from '../../components/Toast'
 interface NginxUpstreamSrv { addr: string; weight: number; down: boolean; backup: boolean; rawArgs: string }
 interface NginxUpstream { name: string; lb: string; file: string; servers: NginxUpstreamSrv[]; raw: string }
 interface NginxConfFile { path: string; upstreams: NginxUpstream[]; servers: { listen: string; serverName: string; proxyPass: string[]; file: string }[] }
-interface NginxProbeT { host: string; mainConf: string; files: NginxConfFile[] }
+interface NginxProbeT { host: string; mainConf: string; nginxActive: boolean; files: NginxConfFile[] }
 
 const LB_OPTIONS = [
   { value: '', label: '轮询(默认)' },
@@ -59,7 +59,7 @@ export default function TrafficTab() {
       .then(d => {
         setProbe(d)
         const f = d.files.find(f => f.upstreams.length > 0) || d.files[0]
-        if (f) { setConfPath(f.path); setDraft(f.upstreams.map(u => ({ ...u, servers: u.servers.map(s => ({ ...s })) }))) }
+        if (f) { setConfPath(f.path); setDraft((f.upstreams || []).map(u => ({ ...u, servers: u.servers.map(s => ({ ...s })) }))) }
       })
       .catch(e => setErr('探测失败: ' + e.message))
       .finally(() => setProbing(false))
@@ -68,7 +68,7 @@ export default function TrafficTab() {
   const selectConf = (p: string) => {
     setConfPath(p)
     const f = probe?.files.find(f => f.path === p)
-    setDraft(f ? f.upstreams.map(u => ({ ...u, servers: u.servers.map(s => ({ ...s })) })) : [])
+    setDraft(f ? (f.upstreams || []).map(u => ({ ...u, servers: u.servers.map(s => ({ ...s })) })) : [])
     setDirty(false)
   }
 
@@ -135,6 +135,11 @@ export default function TrafficTab() {
             <div className="text-xs">自动解析 include 链 → upstream 结构 → 级联编辑流量参数(模式/权重/下线/备用)</div>
           </CardContent>
         </Card>
+      )}
+      {probe && !probe.nginxActive && (
+        <Card><CardContent className="py-5 text-sm text-muted-foreground text-center">
+          该主机上 nginx 未在运行(systemctl is-active ≠ active)或未安装 —— 无法可视化流量分发; 安装/启动后重新检测
+        </CardContent></Card>
       )}
 
       {probe && (
