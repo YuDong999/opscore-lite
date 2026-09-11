@@ -26,7 +26,7 @@ import {
   Star, Settings2, Filter,
 } from 'lucide-react'
 import {
-  API, SELECT_NONE, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
+  API, SELECT_NONE, STATUS_COLOR, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
   fmtDur, fmtTime, fmtSize, TRIGGER_TEXT, useTableSort, SortHead, statusWeight, useLocalJSON,
   type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
   type Credential, type Repo, type Registry, type Script,
@@ -70,10 +70,7 @@ const STEP_TEMPLATES: { name: string; steps: Step[] }[] = [
 const STICKY_THEAD = "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead_th]:bg-card"
 
 // ── Blue Ocean 式阶段节点 ──
-const STAGE_COLOR: Record<string, string> = {
-  success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
-  canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--border)',
-}
+const STAGE_COLOR = STATUS_COLOR // 全模块唯一状态色映射(shared)
 
 // 阶段耗时: 已完成步骤累加 + 运行中步骤按 now 实时计算
 function stageElapsedMs(st: StageRun, now: number): number {
@@ -119,10 +116,7 @@ function StepDot({ status }: { status: string }) {
 // 详情页横向节点流(Blue Ocean 式): 阶段节点 + 纵向步骤链(可点击跳日志), 实时耗时
 function StageFlow({ stages, now, onStepClick }: { stages: StageRun[]; now: number; onStepClick?: (si: number, j: number) => void }) {
   // 步骤级节点流: 每个步骤一个节点, 连线按该步骤状态着色(绿=过/红=挂/灰=未到), 阶段名作分组标注
-  const STEP_C: Record<string, string> = {
-    success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
-    canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--border)',
-  }
+  const STEP_C = STAGE_COLOR
   const items = stages.flatMap((st, si) => st.steps.map((sp, j) => ({ st, sp, si, j })))
   if (items.length === 0) return null
   const dur = (sp: StepRun) => sp.status === 'running' ? fmtDur(Math.max(0, now - (sp.startedAt ? new Date(sp.startedAt).getTime() : now))) : fmtDur(sp.durationMs)
@@ -1824,10 +1818,7 @@ function RunDetail({ runId, initialStep, onStepSelect, onClose, onChanged, onRer
 
 // ==================== Stage View(Jenkins 式阶段矩阵) ====================
 
-const STAGE_CELL_COLOR: Record<string, string> = {
-  success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)', waiting: 'var(--warn)',
-  canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--text-dim)',
-}
+const STAGE_CELL_COLOR = STAGE_COLOR
 
 function StageViewCard({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   const pipes = useResource<PipelineView[]>(API.pipelines)

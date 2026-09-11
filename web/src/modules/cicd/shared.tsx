@@ -149,7 +149,7 @@ export const STATUS_TEXT: Record<string, string> = {
   queued: '排队中', running: '运行中', waiting: '等待审批', success: '成功', failed: '失败',
   canceled: '已取消', skipped: '已跳过', pending: '等待',
 }
-const STATUS_COLOR: Record<string, string> = {
+export const STATUS_COLOR: Record<string, string> = {  // 状态→色 全模块唯一权威
   success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)',
   queued: 'var(--warn)', waiting: 'var(--warn)',
   canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--text-dim)',
