@@ -809,6 +809,12 @@ export default function ConnectionTree({
             <>
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} size={14} /> : <NodeIcon level={node.level} />}
               <span className="truncate">{node.label}</span>
+              {(node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table && (() => {
+                const cnt = rowCounts[`${node.conn.id}|${node.db}`]?.[node.table]
+                return cnt != null && cnt >= 0 ? (
+                  <span className="db-tree-rcount" title={`约 ${cnt} 行`}>{fmtCount(cnt)}</span>
+                ) : null
+              })()}
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>

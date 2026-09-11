@@ -216,6 +216,28 @@ ${tableFromSql} WHERE ${where}`)) return
             .catch((e: any) => alert('置 NULL 失败: ' + (e.message || e)))
         },
       }] : []),
+      ...(tableFromSql && pkCols.length ? [{
+        label: '删除行',
+        icon: <ActionIcon kind="delete" />,
+        danger: true,
+        onClick: () => {
+          const rowData = result.rows[row] || []
+          const where = pkCols.map(pk => {
+            const idx = result.columns.indexOf(pk)
+            return `${pk} = ${escVal(rowData[idx])}`
+          }).join(' AND ')
+          if (!confirm(`确认删除该行?
+${tableFromSql} WHERE ${where}
+不可撤销。`)) return
+          runQueryRaw(connId!, `DELETE FROM ${tableFromSql} WHERE ${where}`)
+            .then(r => {
+              if (r.data.code === 'write_locked') { alert('写操作被拦截: 请先解锁写模式'); return }
+              setCopied('已删除'); setTimeout(() => setCopied(''), 1200)
+              onAfterWrite?.()
+            })
+            .catch((e: any) => alert('删除失败: ' + (e.message || e)))
+        },
+      }] : []),
       { divider: 'heavy' },
       // ── 排序(dbx 双模式: 数据库排序=后端 ORDER BY, 当前页排序=本地) ──
       ...(onSortDatabase ? [
