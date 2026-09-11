@@ -153,6 +153,64 @@ const EMPTY_ILM: IlmPolicy = {
   delete: { retentionDays: 180, readonly: false, compress: false, freeze: false, priority: 0 },
 }
 
+// ── 告警(字段对齐 internal/logmonitor/model.go) ──
+interface AlertRuleRow {
+  id: string
+  name: string
+  enabled: boolean
+  condition: string   // level=ERROR / service=order-api
+  countThresh: number
+  windowMs: number
+  cooldownMs: number
+  channels: string[]
+  state?: string      // firing/ok
+  lastFired?: number
+}
+
+interface AlertChannelRow {
+  id: string
+  name: string
+  type: string
+  url: string
+  method: string
+  headers: string
+  enabled: boolean
+}
+
+interface AlertEventRow {
+  id: string
+  ruleId: string
+  ruleName: string
+  level: string
+  service: string
+  count: number
+  firedAt: number
+  resolvedAt?: number
+  status: string      // firing/resolved
+}
+
+interface RuleDraft {
+  id: string
+  name: string
+  enabled: boolean
+  condField: 'level' | 'service'
+  condValue: string
+  countThresh: number
+  windowMs: number
+  cooldownMs: number
+  channels: string[]
+}
+
+interface ChanDraft {
+  id: string
+  name: string
+  type: string
+  url: string
+  method: string
+  headers: string
+  enabled: boolean
+}
+
 const ILM_STAGES: (keyof IlmPolicy)[] = ['hot', 'warm', 'cold', 'delete']
 const LEVELS = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'FATAL']
 
@@ -243,7 +301,7 @@ interface Toast { id: number; kind: ToastKind; text: string }
 
 export default function LogMonitorModule() {
   const { theme } = useTheme()
-  const [tab, setTab] = useState<'search' | 'stats' | 'sources' | 'indexes'>('search')
+  const [tab, setTab] = useState<'search' | 'stats' | 'sources' | 'indexes' | 'alerts'>('search')
 
   // 顶栏
   const [indexView, setIndexView] = useState('') // 数据视图/索引
@@ -351,6 +409,12 @@ const [selCluster, setSelCluster] = useState('1')
   // 分片存储(shards.json)
   const [shardCfg, setShardCfg] = useState<{ shardBy: string; hotShards: number; defaultRetentionDays: number } | null>(null)
   const [shards, setShards] = useState<Array<{ shard: string; indexId: string; startTs: number; endTs: number; rows: number; dropAllowed: boolean }>>([])
+  // 告警: 规则/通道/事件 + 编辑草稿
+  const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([])
+  const [alertChannels, setAlertChannels] = useState<AlertChannelRow[]>([])
+  const [alertEvents, setAlertEvents] = useState<AlertEventRow[]>([])
+  const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
+  const [chanDraft, setChanDraft] = useState<ChanDraft | null>(null)
 
   const latestHist = useRef<HistogramBucket[]>([])
 
@@ -961,17 +1025,19 @@ const [selCluster, setSelCluster] = useState('1')
     if (tab === 'stats') loadStats('')
     if (tab === 'sources') loadSources()
     if (tab === 'indexes') { loadIndexes(); loadShards() }
+    if (tab === 'alerts') loadAlerts()
   }, [tab])
 
   // Live: stats/sources/indexes 每 3s 轮询（避免手动刷新才看到新采集数据）
   useEffect(() => {
-    if (tab !== 'stats' && tab !== 'sources' && tab !== 'indexes') return
-    // 统计总览聚合重(百万行级 GROUP BY), 轮询降到 15s; 源列表/索引列表保持 3s 轻量刷新
-    const intervalMs = tab === 'stats' ? 15000 : 3000
+    if (tab !== 'stats' && tab !== 'sources' && tab !== 'indexes' && tab !== 'alerts') return
+    // 统计总览聚合重(百万行级 GROUP BY), 轮询降到 15s; 源列表/索引列表保持 3s 轻量刷新; 告警跟随 15s
+    const intervalMs = tab === 'stats' || tab === 'alerts' ? 15000 : 3000
     const t = setInterval(() => {
       if (tab === 'stats') loadStats(statsService)
       if (tab === 'sources') loadSources()
 if (tab === 'indexes') { loadIndexes(); loadShards() }
+      if (tab === 'alerts') loadAlerts()
     }, intervalMs)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -998,6 +1064,83 @@ if (tab === 'indexes') { loadIndexes(); loadShards() }
     }
     setPage(1)
     setSuggestOpen(false)
+  }
+
+  // ── 告警: 规则/通道/事件 ──
+  function loadAlerts() {
+    getJSON('/api/logmonitor/alerts/events?limit=50').then((d) => setAlertEvents(d.events || [])).catch(() => {})
+    getJSON('/api/logmonitor/alerts/rules').then((d) => setAlertRules(d.rules || [])).catch(() => {})
+    getJSON('/api/logmonitor/alerts/channels').then((d) => setAlertChannels(d.channels || [])).catch(() => {})
+  }
+
+  const fmtDur = (ms: number) => (!ms || ms <= 0 ? '-' : ms % 3600000 === 0 ? `${ms / 3600000} 小时` : ms % 60000 === 0 ? `${ms / 60000} 分钟` : `${Math.round(ms / 1000)} 秒`)
+
+  function openRuleEdit(r?: AlertRuleRow) {
+    setRuleDraft(r ? {
+      id: r.id, name: r.name, enabled: r.enabled,
+      condField: r.condition.startsWith('service=') ? 'service' : 'level',
+      condValue: r.condition.replace(/^(level|service)=/, ''),
+      countThresh: r.countThresh || 1, windowMs: r.windowMs || 60000, cooldownMs: r.cooldownMs || 300000,
+      channels: r.channels || [],
+    } : { id: '', name: '', enabled: true, condField: 'level', condValue: 'ERROR', countThresh: 1, windowMs: 60000, cooldownMs: 300000, channels: [] })
+  }
+
+  function openChanEdit(c?: AlertChannelRow) {
+    setChanDraft(c ? { id: c.id, name: c.name, type: c.type || 'webhook', url: c.url, method: c.method || 'POST', headers: c.headers || '', enabled: c.enabled }
+      : { id: '', name: '', type: 'webhook', url: '', method: 'POST', headers: '', enabled: true })
+  }
+
+  async function saveRule() {
+    if (!ruleDraft) return
+    if (!ruleDraft.name.trim()) { pushToast('err', '请填写规则名称'); return }
+    if (!ruleDraft.condValue.trim()) { pushToast('err', '请填写条件匹配值'); return }
+    try {
+      await postJSON('/api/logmonitor/alerts/rules/save', {
+        id: ruleDraft.id, name: ruleDraft.name.trim(), enabled: ruleDraft.enabled,
+        condition: `${ruleDraft.condField}=${ruleDraft.condValue.trim()}`,
+        countThresh: ruleDraft.countThresh > 0 ? ruleDraft.countThresh : 1,
+        windowMs: ruleDraft.windowMs, cooldownMs: ruleDraft.cooldownMs, channels: ruleDraft.channels,
+      })
+      pushToast('ok', '告警规则已保存')
+      setRuleDraft(null)
+      loadAlerts()
+    } catch (e: any) { pushToast('err', '保存规则失败: ' + (e?.message || e)) }
+  }
+
+  async function saveChan() {
+    if (!chanDraft) return
+    if (!chanDraft.name.trim()) { pushToast('err', '请填写通道名称'); return }
+    if (!chanDraft.url.trim()) { pushToast('err', '请填写 Webhook URL'); return }
+    try {
+      await postJSON('/api/logmonitor/alerts/channels/save', { ...chanDraft, name: chanDraft.name.trim(), url: chanDraft.url.trim() })
+      pushToast('ok', '通知通道已保存')
+      setChanDraft(null)
+      loadAlerts()
+    } catch (e: any) { pushToast('err', '保存通道失败: ' + (e?.message || e)) }
+  }
+
+  async function toggleRule(r: AlertRuleRow) {
+    try { await postJSON('/api/logmonitor/alerts/rules/save', { ...r, enabled: !r.enabled }); loadAlerts() } catch (e: any) { pushToast('err', '切换失败: ' + (e?.message || e)) }
+  }
+
+  async function toggleChan(c: AlertChannelRow) {
+    try { await postJSON('/api/logmonitor/alerts/channels/save', { ...c, enabled: !c.enabled }); loadAlerts() } catch (e: any) { pushToast('err', '切换失败: ' + (e?.message || e)) }
+  }
+
+  async function delRule(id: string, name: string) {
+    try {
+      await postJSON(`/api/logmonitor/alerts/rules/delete?id=${encodeURIComponent(id)}`, {})
+      pushToast('ok', `规则 ${name} 已删除`)
+      loadAlerts()
+    } catch (e: any) { pushToast('err', '删除失败: ' + (e?.message || e)) }
+  }
+
+  async function delChan(id: string, name: string) {
+    try {
+      await postJSON(`/api/logmonitor/alerts/channels/delete?id=${encodeURIComponent(id)}`, {})
+      pushToast('ok', `通道 ${name} 已删除`)
+      loadAlerts()
+    } catch (e: any) { pushToast('err', '删除失败: ' + (e?.message || e)) }
   }
 
   // 点击字段 → 快捷过滤
@@ -1180,6 +1323,7 @@ function clearFilters() {
         <button className={`tab ${tab === 'stats' ? 'tab-on' : ''}`} onClick={() => setTab('stats')}>统计总览</button>
         <button className={`tab ${tab === 'sources' ? 'tab-on' : ''}`} onClick={() => setTab('sources')}>日志源管理</button>
         <button className={`tab ${tab === 'indexes' ? 'tab-on' : ''}`} onClick={() => setTab('indexes')}>索引与ILM</button>
+        <button className={`tab ${tab === 'alerts' ? 'tab-on' : ''}`} onClick={() => setTab('alerts')}>告警</button>
         <span style={{ flex: 1 }} />
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setScanOpen(true)}>扫描文件入库</button>
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={runIlm}>执行 ILM 清理</button>
@@ -1683,6 +1827,94 @@ function clearFilters() {
         </div>
       )}
 
+      {tab === 'alerts' && (
+        <div className="glass log-card">
+          <div className="log-filter-row">
+            <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>告警</span>
+            <span className="kib-badge kib-tint-danger">{alertEvents.filter((e) => e.status === 'firing').length} 个触发中</span>
+            <span style={{ flex: 1 }} />
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openChanEdit()}>+ 通知通道</button>
+            <button className="btn-glass btn-sm" onClick={() => openRuleEdit()}>+ 告警规则</button>
+          </div>
+
+          <div className="kib-docs-head">告警规则 (评估器每 30s 扫描一次)</div>
+          <table className="log-table">
+            <thead><tr><th>名称</th><th>条件</th><th>阈值</th><th>窗口</th><th>冷却</th><th>通知通道</th><th>状态</th><th style={{ width: 170 }}>操作</th></tr></thead>
+            <tbody>
+              {alertRules.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{r.name}</strong></td>
+                  <td className="log-mono">{r.condition}</td>
+                  <td>≥ {r.countThresh} 条</td>
+                  <td>{fmtDur(r.windowMs)}</td>
+                  <td>{fmtDur(r.cooldownMs)}</td>
+                  <td>{(r.channels || []).length === 0 ? <span style={{ color: 'var(--text-dim)' }}>未配置</span> : r.channels.map((cid) => alertChannels.find((c) => c.id === cid)?.name || cid).join(', ')}</td>
+                  <td>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {r.state === 'firing' ? <span className="kib-badge kib-tint-danger">firing</span> : <span className="kib-badge kib-tint-ok">ok</span>}
+                      <span
+                        className={`kib-switch ${r.enabled ? 'on' : ''}`}
+                        role="switch"
+                        aria-checked={r.enabled}
+                        aria-label={`${r.enabled ? '停用' : '启用'}规则: ${r.name}`}
+                        tabIndex={0}
+                        title={r.enabled ? '停用规则' : '启用规则'}
+                        onClick={() => toggleRule(r)}
+                        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRule(r)}
+                      ><i /></span>
+                    </span>
+                  </td>
+                  <td>
+                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openRuleEdit(r)}>编辑</button>
+                    <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" onClick={() => delRule(r.id, r.name)}>删除</button>
+                  </td>
+                </tr>
+              ))}
+              {alertRules.length === 0 && <tr><td colSpan={8} style={{ color: 'var(--text-dim)' }}>暂无规则 — 点右上角"新增告警规则"开始</td></tr>}
+            </tbody>
+          </table>
+
+          <div className="kib-docs-head">触发事件 (最近 50 条)</div>
+          <table className="log-table">
+            <thead><tr><th>时间</th><th>规则</th><th>级别</th><th>服务</th><th>计数</th><th>状态</th></tr></thead>
+            <tbody>
+              {alertEvents.map((ev) => (
+                <tr key={ev.id}>
+                  <td className="log-mono">{fmtTime(ev.firedAt)}</td>
+                  <td>{ev.ruleName}</td>
+                  <td><span className="log-level" style={{ color: levelColor(ev.level) }}>{ev.level}</span></td>
+                  <td>{ev.service || '-'}</td>
+                  <td>{ev.count}</td>
+                  <td>{ev.status === 'firing' ? <span className="kib-badge kib-tint-danger">触发中</span> : <span className="kib-badge kib-tint-ok">已恢复</span>}</td>
+                </tr>
+              ))}
+              {alertEvents.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>暂无触发事件</td></tr>}
+            </tbody>
+          </table>
+
+          <div className="kib-docs-head">通知通道</div>
+          <table className="log-table">
+            <thead><tr><th>名称</th><th>类型</th><th>地址</th><th>方法</th><th>状态</th><th style={{ width: 170 }}>操作</th></tr></thead>
+            <tbody>
+              {alertChannels.map((c) => (
+                <tr key={c.id}>
+                  <td><strong>{c.name}</strong></td>
+                  <td>{c.type}</td>
+                  <td className="log-mono" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.url}</td>
+                  <td>{c.method || 'POST'}</td>
+                  <td>{c.enabled ? <span className="kib-badge kib-tint-ok">启用</span> : <span className="kib-badge kib-tint-danger">停用</span>}</td>
+                  <td>
+                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openChanEdit(c)}>编辑</button>
+                    <button className="btn-glass-soft btn-glass-soft-danger btn-glass-soft-sm" onClick={() => delChan(c.id, c.name)}>删除</button>
+                  </td>
+                </tr>
+              ))}
+              {alertChannels.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>暂无通道 — 告警以 Webhook POST 推送</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {tab === 'stats' && (
         <div className="glass log-card">
           <div className="log-filter-row">
@@ -1975,6 +2207,122 @@ function clearFilters() {
             ))}
           </div>
           <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginTop: 8 }} onClick={() => setEditing({ ...editing, fields: [...editing.fields, { name: '', type: 'text', indexed: true }] })}>+ 添加字段</button>
+        </div>
+      )}
+
+      {/* 通用表单: 告警规则 */}
+      {ruleDraft && (
+        <div className="kib-modal-mask" onClick={() => setRuleDraft(null)}>
+          <div className="kib-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{ruleDraft.id ? '编辑告警规则' : '新增告警规则'}</h3>
+            <div className="kib-inline-form">
+              <div className="kib-form-row">
+                <label htmlFor="rule-name">名称 *</label>
+                <input id="rule-name" value={ruleDraft.name} onChange={(e) => setRuleDraft({ ...ruleDraft, name: e.target.value })} placeholder="如 生产错误激增" />
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="rule-cond-field">匹配条件</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select id="rule-cond-field" value={ruleDraft.condField} onChange={(e) => setRuleDraft({ ...ruleDraft, condField: e.target.value as 'level' | 'service' })} style={{ width: 110 }}>
+                    <option value="level">级别为</option>
+                    <option value="service">服务为</option>
+                  </select>
+                  <input id="rule-cond-value" aria-label="条件匹配值" value={ruleDraft.condValue} onChange={(e) => setRuleDraft({ ...ruleDraft, condValue: e.target.value })} placeholder={ruleDraft.condField === 'level' ? 'ERROR' : 'order-api'} style={{ flex: 1 }} />
+                </div>
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="rule-thresh">触发阈值(窗口内匹配条数)</label>
+                <input id="rule-thresh" type="number" min={1} value={ruleDraft.countThresh} onChange={(e) => setRuleDraft({ ...ruleDraft, countThresh: Number(e.target.value) })} />
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="rule-window">统计窗口</label>
+                <select id="rule-window" value={ruleDraft.windowMs} onChange={(e) => setRuleDraft({ ...ruleDraft, windowMs: Number(e.target.value) })}>
+                  <option value={60000}>最近 1 分钟</option>
+                  <option value={300000}>最近 5 分钟</option>
+                  <option value={900000}>最近 15 分钟</option>
+                  <option value={3600000}>最近 1 小时</option>
+                </select>
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="rule-cooldown">告警冷却(触发后多久内不重复)</label>
+                <select id="rule-cooldown" value={ruleDraft.cooldownMs} onChange={(e) => setRuleDraft({ ...ruleDraft, cooldownMs: Number(e.target.value) })}>
+                  <option value={300000}>5 分钟</option>
+                  <option value={1800000}>30 分钟</option>
+                  <option value={3600000}>1 小时</option>
+                  <option value={21600000}>6 小时</option>
+                </select>
+              </div>
+              <div className="kib-form-row">
+                <label>通知通道</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {alertChannels.length === 0 && <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>尚无通道, 可先"新增通知通道"</span>}
+                  {alertChannels.map((c) => (
+                    <label key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+                      <input type="checkbox" checked={ruleDraft.channels.includes(c.id)} onChange={(e) => setRuleDraft({ ...ruleDraft, channels: e.target.checked ? [...ruleDraft.channels, c.id] : ruleDraft.channels.filter((x) => x !== c.id) })} />
+                      {c.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="kib-form-row">
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={ruleDraft.enabled} onChange={(e) => setRuleDraft({ ...ruleDraft, enabled: e.target.checked })} />
+                  启用该规则
+                </label>
+              </div>
+            </div>
+            <div className="kib-modal-actions">
+              <button className="kib-btn kib-btn-bare" onClick={() => setRuleDraft(null)}>取消</button>
+              <button className="kib-btn kib-btn-primary" onClick={saveRule}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 通用表单: 通知通道 */}
+      {chanDraft && (
+        <div className="kib-modal-mask" onClick={() => setChanDraft(null)}>
+          <div className="kib-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{chanDraft.id ? '编辑通知通道' : '新增通知通道'}</h3>
+            <div className="kib-inline-form">
+              <div className="kib-form-row">
+                <label htmlFor="chan-name">名称 *</label>
+                <input id="chan-name" value={chanDraft.name} onChange={(e) => setChanDraft({ ...chanDraft, name: e.target.value })} placeholder="如 运维值班群机器人" />
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="chan-url">Webhook URL *</label>
+                <input id="chan-url" value={chanDraft.url} onChange={(e) => setChanDraft({ ...chanDraft, url: e.target.value })} placeholder="https://example.com/hook" />
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="chan-method">请求方法</label>
+                <select id="chan-method" value={chanDraft.method} onChange={(e) => setChanDraft({ ...chanDraft, method: e.target.value })}>
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                </select>
+              </div>
+              <div className="kib-form-row">
+                <label htmlFor="chan-headers">额外请求头(可选, JSON 对象)</label>
+                <textarea
+                  id="chan-headers"
+                  value={chanDraft.headers}
+                  onChange={(e) => setChanDraft({ ...chanDraft, headers: e.target.value })}
+                  placeholder='{"Authorization": "Bearer xxx"}'
+                  spellCheck={false}
+                  style={{ minHeight: 60, fontFamily: 'var(--mono)', fontSize: 12, background: 'var(--bg-soft)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, color: 'var(--text)', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div className="kib-form-row">
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={chanDraft.enabled} onChange={(e) => setChanDraft({ ...chanDraft, enabled: e.target.checked })} />
+                  启用该通道
+                </label>
+              </div>
+            </div>
+            <div className="kib-modal-actions">
+              <button className="kib-btn kib-btn-bare" onClick={() => setChanDraft(null)}>取消</button>
+              <button className="kib-btn kib-btn-primary" onClick={saveChan}>保存</button>
+            </div>
+          </div>
         </div>
       )}
 
