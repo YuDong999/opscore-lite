@@ -46,6 +46,7 @@ export default function TasksModule() {
     { id: 'disks', label: '磁盘挂载' },
     { id: 'lvm', label: 'LVM 存储' },
     { id: 'smart', label: 'SMART 健康' },
+    { id: 'diskclean', label: '磁盘清理' },
   ]
 
   return (
@@ -65,6 +66,7 @@ export default function TasksModule() {
       {tab === 'disks' && <DisksSection onSwitchToLvm={(dev) => { setLvmInitialDevice(dev); setTab('lvm'); }} />}
       {tab === 'lvm' && <LvmSection initialDevice={lvmInitialDevice} onClearInitialDevice={() => setLvmInitialDevice('')} />}
       {tab === 'smart' && <SmartSection />}
+      {tab === 'diskclean' && <DiskCleanSection />}
     </div>
   )
 }
@@ -957,6 +959,172 @@ function SmartSection() {
       </div>
       {err && <div className="banner banner-err">{err}</div>}
       {output && <div className="code-block" style={{ fontSize:'0.7812rem', whiteSpace: 'pre-wrap', maxHeight:'31.25rem', overflowY: 'auto' }}>{output}</div>}
+    </Card>
+  )
+}
+// ================= 磁盘清理 =================
+
+type CleanRule = { id: string; nodePattern: string; path: string; command: string; label: string; description: string; safe: boolean; enabled: boolean }
+type CleanSchedule = { id: string; name: string; cron: string; nodePattern: string; ruleIds: string[]; enabled: boolean; lastRunAt: number; lastStatus: string }
+type CleanLog = { id: string; scheduleId: string; ruleIds: string[]; cluster: string; node: string; beforeAvail: number; afterAvail: number; freedBytes: number; status: string; output: string; createdAt: number; durationMs: number }
+
+function DiskCleanSection() {
+  const [rules, setRules] = useState<CleanRule[]>([])
+  const [schedules, setSchedules] = useState<CleanSchedule[]>([])
+  const [logs, setLogs] = useState<CleanLog[]>([])
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [running, setRunning] = useState(false)
+
+  // 规则表单
+  const blankRule = { nodePattern: '*', path: '', command: '', label: '', description: '', safe: true, enabled: true }
+  const [ruleForm, setRuleForm] = useState<Partial<CleanRule>>(blankRule)
+  const [editingRule, setEditingRule] = useState<string | null>(null)
+
+  // 调度表单
+  const blankSchedule = { name: '', cron: '0 4 * * *', nodePattern: '*', ruleIds: [] as string[], enabled: true }
+  const [schForm, setSchForm] = useState<Partial<CleanSchedule>>(blankSchedule)
+  const [editingSch, setEditingSch] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    getJSON<{ rules: CleanRule[] }>('/api/core/disk-clean/rules').then(d => setRules(d.rules)).catch(e => setErr(String(e)))
+    getJSON<{ schedules: CleanSchedule[] }>('/api/core/disk-clean/schedules').then(d => setSchedules(d.schedules)).catch(e => setErr(String(e)))
+    getJSON<{ logs: CleanLog[] }>('/api/core/disk-clean/logs').then(d => setLogs(d.logs)).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const saveRule = async () => {
+    setErr(''); setMsg('')
+    if (!ruleForm.nodePattern || (!ruleForm.command && !ruleForm.path)) { setErr('nodePattern 与 path/command 不能为空'); return }
+    try {
+      await postJSON('/api/core/disk-clean/rules', { rule: { ...ruleForm, id: editingRule || '' } })
+      setRuleForm(blankRule); setEditingRule(null); setMsg('规则已保存'); load()
+    } catch (e) { setErr(String(e)) }
+  }
+  const delRule = async (id: string) => {
+    if (!confirm('删除该规则?')) return
+    try { await postJSON('/api/core/disk-clean/rules?_method=delete&id=' + id, {}) } catch (e) { setErr(String(e)) }
+    load()
+  }
+  const toggleRule = async (rule: CleanRule) => {
+    try { await postJSON('/api/core/disk-clean/rules', { rule: { ...rule, enabled: !rule.enabled } }) } catch (e) { setErr(String(e)) }
+    load()
+  }
+  const saveSchedule = async () => {
+    setErr(''); setMsg('')
+    if (!schForm.cron || !schForm.nodePattern || !schForm.ruleIds || !schForm.ruleIds.length) { setErr('cron/nodePattern/ruleIds 不能为空'); return }
+    try {
+      await postJSON('/api/core/disk-clean/schedules', { schedule: { ...schForm, id: editingSch || '' } })
+      setSchForm(blankSchedule); setEditingSch(null); setMsg('调度已保存'); load()
+    } catch (e) { setErr(String(e)) }
+  }
+  const delSchedule = async (id: string) => {
+    if (!confirm('删除该调度?')) return
+    try { await postJSON('/api/core/disk-clean/schedules?_method=delete&id=' + id, {}) } catch (e) { setErr(String(e)) }
+    load()
+  }
+  const toggleSchedule = async (s: CleanSchedule) => {
+    try { await postJSON('/api/core/disk-clean/schedules', { schedule: { ...s, enabled: !s.enabled } }) } catch (e) { setErr(String(e)) }
+    load()
+  }
+  const runNow = async (nodePattern: string, ruleIds: string[]) => {
+    if (!confirm(`立即对 ${nodePattern} 执行 ${ruleIds.length} 条规则?`)) return
+    setRunning(true); setErr(''); setMsg('')
+    try {
+      const d = await postJSON<{ ok?: boolean; message?: string; error?: string }>('/api/core/disk-clean/run', { nodePattern, ruleIds })
+      setMsg(d.message || '已触发')
+      setTimeout(load, 3000)
+    } catch (e) { setErr(String(e)) }
+    setRunning(false)
+  }
+
+  const fmtBytes = (b: number) => b >= 1 << 30 ? (b / (1 << 30)).toFixed(2) + ' GiB' : (b / (1 << 20)).toFixed(1) + ' MiB'
+  const fmtTime = (t: number) => t ? new Date(t * 1000).toLocaleString() : '—'
+
+  return (
+    <Card title="磁盘清理" subtitle="规则驱动 + 调试 Pod 通道执行(chroot /host), 针对所有已注册集群">
+      {msg && <div className="banner banner-ok">{msg}</div>}
+      {err && <div className="banner banner-err">{err}</div>}
+
+      <h3 className="section-title">清理规则 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm(blankRule); setEditingRule(null) }}>新建</button></h3>
+      <table className="table" style={{ fontSize: '0.8125rem' }}>
+        <thead><tr><th>名称</th><th>节点</th><th>路径</th><th>命令</th><th>安全级</th><th>启用</th><th>操作</th></tr></thead>
+        <tbody>
+          {(editingRule ? [ruleForm] : rules).map((r, i) => (
+            <tr key={editingRule ? 'edit' + i : r.id}>
+              <td><input className="ipt" style={{ width: 110 }} value={r.label || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, label: e.target.value })} /></td>
+              <td><input className="ipt" style={{ width: 70 }} value={r.nodePattern || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, nodePattern: e.target.value })} /></td>
+              <td><input className="ipt" style={{ width: 150 }} placeholder="/root/.cache/go-build" value={r.path || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, path: e.target.value })} /></td>
+              <td><input className="ipt" style={{ width: 170 }} placeholder="空=rm -rf path" value={r.command || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, command: e.target.value })} /></td>
+              <td>
+                <select className="sel" value={r.safe ? 'safe' : 'risky'} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, safe: e.target.value === 'safe' })}>
+                  <option value="safe">安全</option><option value="risky">高危</option>
+                </select>
+              </td>
+              <td>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => editingRule && editingRule === r.id ? undefined : toggleRule(r as CleanRule)}>
+                  {editingRule && editingRule === r.id ? (r.enabled ? '开' : '关') : (r.enabled ? '开' : '关')}
+                </button>
+              </td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm(r); setEditingRule(r.id) }}>{editingRule === r.id ? '编辑中' : '编辑'}</button>
+                {editingRule === r.id && <button className="btn-glass-soft btn-glass-soft-sm" onClick={saveRule}>保存</button>}
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => r.id && runNow(r.nodePattern, [r.id])}>执行</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => r.id && delRule(r.id)}>删除</button>
+              </td>
+            </tr>
+          ))}
+          {!editingRule && rules.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6 }}>暂无规则, 点击"新建"添加</td></tr>}
+        </tbody>
+      </table>
+
+      <h3 className="section-title" style={{ marginTop: 20 }}>定时调度 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm(blankSchedule); setEditingSch(null) }}>新建</button></h3>
+      <table className="table" style={{ fontSize: '0.8125rem' }}>
+        <thead><tr><th>名称</th><th>cron(分 时 日 月 周)</th><th>节点</th><th>规则</th><th>上次运行</th><th>状态</th><th>启用</th><th>操作</th></tr></thead>
+        <tbody>
+          {(editingSch ? [schForm] : schedules).map((s, i) => (
+            <tr key={editingSch ? 'edit' + i : s.id}>
+              <td><input className="ipt" style={{ width: 100 }} value={s.name || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, name: e.target.value })} /></td>
+              <td><input className="ipt" style={{ width: 130 }} value={s.cron || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, cron: e.target.value })} /></td>
+              <td><input className="ipt" style={{ width: 70 }} value={s.nodePattern || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, nodePattern: e.target.value })} /></td>
+              <td>
+                <select className="sel" multiple style={{ width: 220, height: 90 }} value={s.ruleIds || []} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, ruleIds: Array.from(e.target.selectedOptions).map(o => o.value) })}>
+                  {rules.map(r => <option key={r.id} value={r.id}>{r.label || r.path || r.id}</option>)}
+                </select>
+              </td>
+              <td>{fmtTime(s.lastRunAt)}</td>
+              <td>{s.lastStatus || '—'}</td>
+              <td><button className="btn-glass-soft btn-glass-soft-sm" onClick={() => editingSch && editingSch === s.id ? undefined : toggleSchedule(s as CleanSchedule)}>{s.enabled ? '开' : '关'}</button></td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm(s); setEditingSch(s.id) }}>{editingSch === s.id ? '编辑中' : '编辑'}</button>
+                {editingSch === s.id && <button className="btn-glass-soft btn-glass-soft-sm" onClick={saveSchedule}>保存</button>}
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => s.id && runNow(s.nodePattern, s.ruleIds || [])}>立即执行</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => s.id && delSchedule(s.id)}>删除</button>
+              </td>
+            </tr>
+          ))}
+          {!editingSch && schedules.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', opacity: 0.6 }}>暂无调度, 点击"新建"添加(cron 格式: 分 时 日 月 周)</td></tr>}
+        </tbody>
+      </table>
+      <div className="hint" style={{ opacity: 0.55, fontSize: '0.75rem' }}>示例 cron: 每天 04:00 → 0 4 * * * / 每 30 分钟 → */30 * * * *</div>
+
+      <h3 className="section-title" style={{ marginTop: 20 }}>执行日志 {running && <span style={{ opacity: 0.6 }}>执行中…</span>}</h3>
+      <table className="table" style={{ fontSize: '0.7812rem' }}>
+        <thead><tr><th>时间</th><th>集群/节点</th><th>规则</th><th>释放</th><th>耗时</th><th>状态</th></tr></thead>
+        <tbody>
+          {logs.slice(0, 50).map((l, i) => (
+            <tr key={l.id || i} title={l.output}>
+              <td>{fmtTime(l.createdAt)}</td>
+              <td>{l.cluster}/{l.node}</td>
+              <td>{l.ruleIds.join(',')}</td>
+              <td>{l.freedBytes > 0 ? fmtBytes(l.freedBytes) : '—'}</td>
+              <td>{l.durationMs ? l.durationMs + 'ms' : '—'}</td>
+              <td className={l.status === 'success' ? '' : 'text-danger'}>{l.status === 'success' ? '成功' : '失败'}</td>
+            </tr>
+          ))}
+          {logs.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', opacity: 0.6 }}>暂无执行记录</td></tr>}
+        </tbody>
+      </table>
     </Card>
   )
 }

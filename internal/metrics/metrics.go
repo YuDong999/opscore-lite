@@ -16,7 +16,7 @@ import (
 )
 
 // AgentVersion 是 agent 协议/采集逻辑的版本号,服务端据此识别旧 agent 并自动推送更新。
-const AgentVersion = "v5" // v5: 按服务端隔离产物(共存) + 固定周期心跳 + crontab 采集退避
+const AgentVersion = "v3"
 
 // Snapshot 是一个时间点的全量系统指标快照。
 // 后端用一个后台 goroutine 每 2 秒刷新一次,前端轮询读取,避免每次请求都阻塞采集。
@@ -139,9 +139,10 @@ type ListenInfo struct {
 }
 
 var (
-	mu      sync.RWMutex
-	current Snapshot
-	prevNet map[string]net.IOCountersStat
+	mu       sync.RWMutex
+	current  Snapshot
+	prevNet  map[string]net.IOCountersStat
+	prevTick time.Time
 )
 
 // Start 启动后台采集循环(非阻塞)。
@@ -214,17 +215,20 @@ func tick() {
 
 	if counters, err := net.IOCounters(true); err == nil {
 		prev := prevNet
+		now := time.Now()
+		secs := now.Sub(prevTick).Seconds()
 		cur := map[string]net.IOCountersStat{}
 		for _, c := range counters {
 			cur[c.Name] = c
 			nic := NicIO{Name: c.Name, RxTotal: c.BytesRecv, TxTotal: c.BytesSent}
-			if p, ok := prev[c.Name]; ok {
-				nic.RxRate = subtract(c.BytesRecv, p.BytesRecv)
-				nic.TxRate = subtract(c.BytesSent, p.BytesSent)
+			if p, ok := prev[c.Name]; ok && secs > 0 {
+				nic.RxRate = uint64(float64(subtract(c.BytesRecv, p.BytesRecv)) / secs)
+				nic.TxRate = uint64(float64(subtract(c.BytesSent, p.BytesSent)) / secs)
 			}
 			s.Net.ByNic = append(s.Net.ByNic, nic)
 		}
 		prevNet = cur
+		prevTick = now
 	}
 
 	mu.Lock()

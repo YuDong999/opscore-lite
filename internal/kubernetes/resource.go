@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -192,14 +194,14 @@ func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) 
 	return out, nil
 }
 
-// AggregateEvents 聚合全集群事件: 按 reason+对象 分组, 求和 count, 取最近时间。
-// 返回行含 type/object/reason/namespace/count/lastSeen, 字母序, 由前端按优先级再排。
-func (m *Manager) AggregateEvents(ctx context.Context, clusterID string) ([]map[string]any, error) {
+// AggregateEvents 聚合集群事件: 按 reason+对象 分组, 求和 count, 取最近时间。
+// ns 非空时仅聚合该命名空间。返回行含 type/object/reason/namespace/count/lastSeen/message, 字母序, 由前端按优先级再排。
+func (m *Manager) AggregateEvents(ctx context.Context, clusterID, ns string) ([]map[string]any, error) {
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return nil, err
 	}
-	list, err := dyn.Resource(gvrEvents).Namespace("").List(ctx, metav1.ListOptions{})
+	list, err := dyn.Resource(gvrEvents).Namespace(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list events in %s: %w", clusterID, err)
 	}
@@ -224,6 +226,7 @@ func (m *Manager) AggregateEvents(ctx context.Context, clusterID string) ([]map[
 			agg[k] = &map[string]any{
 				"type": e.Type, "reason": e.Reason, "object": k.obj,
 				"namespace": k.ns, "count": e.Count, "lastSeen": last,
+				"message": e.Message,
 			}
 			order = append(order, k)
 		} else {
@@ -238,6 +241,83 @@ func (m *Manager) AggregateEvents(ctx context.Context, clusterID string) ([]map[
 		out = append(out, *agg[k])
 	}
 	return out, nil
+}
+
+// ObjectEvents 查询某个对象的关联事件(等价 kubectl describe 末尾 Events 段)。
+// res/ns/name 定位对象; 返回行含 type/reason/source/count/message/age, 按最近发生倒序。
+func (m *Manager) ObjectEvents(ctx context.Context, clusterID, res, ns, name string) ([]map[string]any, error) {
+	if res == "overview" || res == "events" || res == "namespaces" {
+		return nil, fmt.Errorf("unsupported resource %q", res)
+	}
+	gvr, effNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return nil, err
+	}
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := dyn.Resource(gvr).Namespace(effNs).Get(ctx, name, metav1.GetOptions{}); err != nil {
+		return nil, fmt.Errorf("get %s %s/%s: %w", res, effNs, name, err)
+	}
+	evs, err := dyn.Resource(gvrEvents).Namespace(effNs).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + name,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list events for %s/%s: %w", effNs, name, err)
+	}
+	now := time.Now()
+	rows := make([]map[string]any, 0, len(evs.Items))
+	for i := range evs.Items {
+		var e corev1.Event
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(evs.Items[i].Object, &e) != nil {
+			continue
+		}
+		age := ""
+		if !e.LastTimestamp.IsZero() {
+			age = humanAge(e.LastTimestamp.Time, now)
+		}
+		rows = append(rows, map[string]any{
+			"type": e.Type, "reason": e.Reason, "count": e.Count,
+			"source": sourceOf(&e), "message": e.Message, "age": age,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		ai, bi := rows[i]["age"].(string), rows[j]["age"].(string)
+		return durationOfAge(ai) > durationOfAge(bi)
+	})
+	return rows, nil
+}
+
+// sourceOf 事件来源: 优先 reportingComponent(新集群), 退化 Source.Component。
+func sourceOf(e *corev1.Event) string {
+	if c := e.ReportingController; c != "" {
+		return c
+	}
+	if c := e.Source.Component; c != "" {
+		return c
+	}
+	return ""
+}
+
+// durationOfAge 把 "47m"/"2h" 之类 age 文本换算为秒, 用于事件排序(解析失败按 0)。
+func durationOfAge(s string) int64 {
+	parts := regexp.MustCompile(`(\d+)([smhd])`).FindAllStringSubmatch(s, -1)
+	var total int64
+	for _, p := range parts {
+		n, _ := strconv.ParseInt(p[1], 10, 64)
+		switch p[2] {
+		case "s":
+			total += n
+		case "m":
+			total += n * 60
+		case "h":
+			total += n * 3600
+		case "d":
+			total += n * 86400
+		}
+	}
+	return total
 }
 
 func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string]any, error) {

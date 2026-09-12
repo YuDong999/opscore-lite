@@ -574,6 +574,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/yaml", Handler: handlers.K8sYamlHandler},
 			{Path: "/api/plugins/containers/k8s/describe", Handler: handlers.K8sDescribeHandler},
 			{Path: "/api/plugins/containers/k8s/events/aggregate", Handler: handlers.K8sEventsAggregateHandler},
+			{Path: "/api/plugins/containers/k8s/events/by-object", Handler: handlers.K8sObjectEventsHandler},
 			{Path: "/api/plugins/containers/k8s/helm/releases", Handler: handlers.K8sHelmReleasesHandler},
 			{Path: "/api/plugins/containers/k8s/helm/history", Handler: handlers.K8sHelmHistoryHandler},
 			{Path: "/api/plugins/containers/k8s/helm/values", Handler: handlers.K8sHelmValuesHandler},
