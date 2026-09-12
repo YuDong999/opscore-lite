@@ -119,7 +119,7 @@ func K8sDescribeHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{"ok": true, "describe": text})
 }
 
-// K8sEventsAggregateHandler GET ?cluster= — 全集群事件按 reason+对象 聚合。
+// K8sEventsAggregateHandler GET ?cluster=&ns= — 集群(或指定命名空间)事件按 reason+对象 聚合。
 func K8sEventsAggregateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -133,9 +133,34 @@ func K8sEventsAggregateHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
 		return
 	}
+	ns := r.URL.Query().Get("ns")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	rows, err := k8sMgr.AggregateEvents(ctx, cluster)
+	rows, err := k8sMgr.AggregateEvents(ctx, cluster, ns)
+	if err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true, "rows": rows})
+}
+
+// K8sObjectEventsHandler GET ?cluster=&res=&ns=&name= — 单个对象的关联事件(describe 风格尾段)。
+func K8sObjectEventsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !pluginGuard(k8sPluginID, w) {
+		return
+	}
+	cluster, res, ns, name, ok := k8sTarget(r)
+	if !ok || res == "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	rows, err := k8sMgr.ObjectEvents(ctx, cluster, res, ns, name)
 	if err != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return

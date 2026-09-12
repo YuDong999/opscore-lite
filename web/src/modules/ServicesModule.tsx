@@ -181,7 +181,7 @@ export default function ServicesModule() {
       )}
       {msg && <div className={`banner ${msg.startsWith('✗') ? 'banner-err' : 'banner-ok'}`}>{msg}</div>}
 
-      <Card title="运行中的服务 / 进程" subtitle="启停 / 重启 · 位置 / 日志">
+      <Card title="运行中的服务 / 进程" subtitle="启停 / 重启 · 位置 / 日志" className="svc-card">
         <div className="table-wrap">
           <table className="data-table svc-table">
             <thead>

@@ -284,7 +284,9 @@ func DockerImagePushHandler(w http.ResponseWriter, r *http.Request) {
 
 // ===================== 容器 stats 监控 =====================
 
-// DockerContainerStatsHandler GET ?host=&name= 单容器实时 stats 快照(兼容 docker/podman 字段归一化)
+// DockerContainerStatsHandler 实时 stats 快照(兼容 docker/podman 字段归一化)
+// GET ?host=&name= 单容器; ?host=&names=c1,c2 批量; ?host= 省略容器 → 全部运行容器。
+// 返回 {ok, stats}: 单容器 → 对象; 批量/全部 → 数组(每项含 name)。
 func DockerContainerStatsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -294,27 +296,72 @@ func DockerContainerStatsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	hostID, name := q.Get("host"), q.Get("name")
-	if !reContainerName.MatchString(name) {
+	hostID := q.Get("host")
+	single := strings.TrimSpace(q.Get("name"))
+	names := strings.TrimSpace(q.Get("names"))
+	if single != "" && !reContainerName.MatchString(single) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "非法容器名"})
 		return
 	}
-	out, err := RunOnTarget(hostID, []string{dockerOrPodman(hostID), "stats", "--no-stream", "--format", `{{json .}}`, name})
+	if names != "" {
+		for _, n := range strings.Split(names, ",") {
+			if n = strings.TrimSpace(n); n != "" && !reContainerName.MatchString(n) {
+				WriteJSON(w, map[string]any{"ok": false, "error": "非法容器名: " + n})
+				return
+			}
+		}
+	}
+
+	cmd := []string{dockerOrPodman(hostID), "stats", "--no-stream", "--format", `{{json .}}`}
+	if single != "" {
+		cmd = append(cmd, single)
+	} else if names != "" {
+		for _, n := range strings.Split(names, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				cmd = append(cmd, n)
+			}
+		}
+	}
+	out, err := RunOnTarget(hostID, cmd)
 	if err != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": lastLines(out, 6)})
 		return
 	}
-	var raw map[string]any
-	if json.Unmarshal([]byte(strings.TrimSpace(out)), &raw) != nil {
-		WriteJSON(w, map[string]any{"ok": true, "stats": nil, "raw": strings.TrimSpace(out)})
+
+	if single != "" {
+		st := parseContainerStatsLine(out)
+		if st == nil {
+			WriteJSON(w, map[string]any{"ok": true, "stats": nil, "raw": strings.TrimSpace(out)})
+			return
+		}
+		WriteJSON(w, map[string]any{"ok": true, "stats": st})
 		return
+	}
+
+	arr := []map[string]any{}
+	for _, l := range nonEmptyLines(out) {
+		if st := parseContainerStatsLine(l); st != nil {
+			arr = append(arr, st)
+		}
+	}
+	WriteJSON(w, map[string]any{"ok": true, "stats": arr})
+}
+
+// parseContainerStatsLine 解析一行 docker/podman `stats --format '{{json .}}'` 输出并归一化.
+// 解析失败返回 nil.
+func parseContainerStatsLine(line string) map[string]any {
+	var raw map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(line)), &raw) != nil {
+		return nil
 	}
 
 	st := map[string]any{}
 
-	// CPU: docker "0.05%"(字符串带%) / podman CPU|AvgCPU(float 0~1)
+	// CPU: docker "0.05%"(字符串带%, 字段 CPUPerc) / podman CPU|AvgCPU(float 0~1)
 	cpu := "—"
-	if v, ok := raw["CPU%"].(string); ok {
+	if v, ok := raw["CPUPerc"].(string); ok {
+		cpu = v
+	} else if v, ok := raw["CPU%"].(string); ok {
 		cpu = v
 	} else {
 		if f, ok := numFloat(raw["CPU"]); ok {
@@ -397,7 +444,13 @@ func DockerContainerStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	st["id"] = id
 
-	WriteJSON(w, map[string]any{"ok": true, "stats": st})
+	name := str(raw["Name"])
+	if name == "" {
+		name = str(raw["name"])
+	}
+	st["name"] = strings.TrimPrefix(name, "/")
+
+	return st
 }
 
 // ===================== 镜像历史层 =====================

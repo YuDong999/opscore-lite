@@ -137,7 +137,7 @@ func K8sNodeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{"ok": true, "nodes": nodes})
 }
 
-// K8sPodMetricsHandler GET ?cluster=&ns=&top=10
+// K8sPodMetricsHandler GET ?cluster=&ns=&top=500
 func K8sPodMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -155,10 +155,10 @@ func K8sPodMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	if ns == "all" {
 		ns = ""
 	}
-	top := 10
+	top := 500
 	fmt.Sscanf(q.Get("top"), "%d", &top)
-	if top < 1 || top > 100 {
-		top = 10
+	if top < 1 || top > 500 {
+		top = 500
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

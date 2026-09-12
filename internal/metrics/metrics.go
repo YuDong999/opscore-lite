@@ -139,9 +139,10 @@ type ListenInfo struct {
 }
 
 var (
-	mu      sync.RWMutex
-	current Snapshot
-	prevNet map[string]net.IOCountersStat
+	mu       sync.RWMutex
+	current  Snapshot
+	prevNet  map[string]net.IOCountersStat
+	prevTick time.Time
 )
 
 // Start 启动后台采集循环(非阻塞)。
@@ -214,17 +215,20 @@ func tick() {
 
 	if counters, err := net.IOCounters(true); err == nil {
 		prev := prevNet
+		now := time.Now()
+		secs := now.Sub(prevTick).Seconds()
 		cur := map[string]net.IOCountersStat{}
 		for _, c := range counters {
 			cur[c.Name] = c
 			nic := NicIO{Name: c.Name, RxTotal: c.BytesRecv, TxTotal: c.BytesSent}
-			if p, ok := prev[c.Name]; ok {
-				nic.RxRate = subtract(c.BytesRecv, p.BytesRecv)
-				nic.TxRate = subtract(c.BytesSent, p.BytesSent)
+			if p, ok := prev[c.Name]; ok && secs > 0 {
+				nic.RxRate = uint64(float64(subtract(c.BytesRecv, p.BytesRecv)) / secs)
+				nic.TxRate = uint64(float64(subtract(c.BytesSent, p.BytesSent)) / secs)
 			}
 			s.Net.ByNic = append(s.Net.ByNic, nic)
 		}
 		prevNet = cur
+		prevTick = now
 	}
 
 	mu.Lock()
