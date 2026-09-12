@@ -402,7 +402,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/core/tasks/crontab", Handler: handlers.CrontabHandler},
 			{Path: "/api/core/tasks/disks", Handler: handlers.DisksHandler},
 			{Path: "/api/core/tasks/disks/action", Handler: handlers.DiskActionHandler},
-			{Path: "/api/core/lvm", Handler: handlers.LvmHandler}
+			{Path: "/api/core/lvm", Handler: handlers.LvmHandler},
 			{Path: "/api/core/disk-clean/rules", Handler: handlers.DiskCleanRulesHandler},
 			{Path: "/api/core/disk-clean/schedules", Handler: handlers.DiskCleanSchedulesHandler},
 			{Path: "/api/core/disk-clean/run", Handler: handlers.DiskCleanRunHandler},
