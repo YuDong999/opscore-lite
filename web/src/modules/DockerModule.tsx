@@ -1,16 +1,18 @@
 // ── Docker 管理视图: 内嵌侧栏布局 ──
-// 容器 / 镜像(含 pull/rmi) / 镜像源(daemon.json) / 构建镜像(Dockerfile) / Compose / Swarm(只读)
+// 容器 / 镜像(含 pull/rmi) / 镜像源(daemon.json) / 构建镜像(Dockerfile) / Compose / Swarm(只读) / 监控
 // 全部操作走既有 RunOnTarget 分发体系, 写操作带回读验证/审计
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Card from '../components/Card'
 import { useHost } from '../components/HostContext'
 import { getJSON, postJSON } from '../api/client'
+import EChart from '../charts/EChart'
 
 // 侧栏图标 — 正式图标库混搭, 均为各库官方 path (16px 与 K8s 侧栏一致)
-type Section = 'containers' | 'images' | 'registries' | 'build' | 'compose' | 'swarm' | 'volumes' | 'networks'
+type Section = 'monitor' | 'containers' | 'images' | 'registries' | 'build' | 'compose' | 'swarm' | 'volumes' | 'networks'
 
 const SECTIONS: { key: Section; title: string; desc: string }[] = [
+  { key: 'monitor', title: '监控', desc: '主机指标 + 容器实时资源' },
   { key: 'containers', title: '容器', desc: '启停 / 删除 / 日志 / 详情' },
   { key: 'images', title: '镜像', desc: '列表 / 拉取 / 删除' },
   { key: 'volumes', title: 'Volumes', desc: '卷列表 / 创建 / 删除' },
@@ -24,6 +26,8 @@ const SECTIONS: { key: Section; title: string; desc: string }[] = [
 const SectionIcon = ({ name }: { name: string }) => {
   const base = (sw: number) => ({ width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: sw, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const })
   switch (name) {
+    // lucide activity — 监控
+    case 'monitor': return <svg {...base(2)}><path d="M22 12h-4l-3 9L9 3l-3 9H2" /><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
     // lucide hard-drive — Volumes
     case 'volumes': return <svg {...base(2)}><path d="M10 16h.01m-7.798-4.423a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11zm19.734.436H2.054M6 16h.01" /></svg>
     // lucide network — Networks
@@ -49,7 +53,7 @@ interface AppContainer {
 }
 
 export default function DockerModule({ onMsg }: { onMsg?: (m: string) => void }) {
-  const [section, setSection] = useState<Section>('containers')
+  const [section, setSection] = useState<Section>('monitor')
   return (
     <div className="k8s-shell">
       <aside className="k8s-side">
@@ -67,6 +71,7 @@ export default function DockerModule({ onMsg }: { onMsg?: (m: string) => void })
         </nav>
       </aside>
       <section className="k8s-main" style={{ minWidth: 0, flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {section === 'monitor' && <MonitorApp onMsg={onMsg} />}
         {section === 'containers' && <ContainersPanel onMsg={onMsg} />}
         {section === 'images' && <ImagesPanel onMsg={onMsg} />}
         {section === 'volumes' && <VolumesPanel onMsg={onMsg} />}
@@ -76,6 +81,223 @@ export default function DockerModule({ onMsg }: { onMsg?: (m: string) => void })
         {section === 'compose' && <ComposePanel onMsg={onMsg} />}
         {section === 'swarm' && <SwarmPanel />}
       </section>
+    </div>
+  )
+}
+
+// ── 监控面板: 主机指标 + 容器实时资源(批量 docker stats) ──
+function MonitorApp({ onMsg }: { onMsg?: (m: string) => void }) {
+  const { selected } = useHost()
+  const [snap, setSnap] = useState<any>(null)
+  const [msg, setMsg] = useState('')
+  const [stats, setStats] = useState<Record<string, any>>({})
+  const [overview, setOverview] = useState<any>(null)
+  const hist = useRef({ cpu: [] as number[], mem: [] as number[], net: [] as number[] })
+  const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
+
+  useEffect(() => {
+    let alive = true
+    const hostUrl = selected?.id ? `/api/core/resources?host=${encodeURIComponent(selected.id)}` : '/api/core/resources'
+    const loadHost = () => {
+      getJSON<any>(hostUrl)
+        .then((s) => {
+          if (!alive || !s || typeof s.cpu?.percent !== 'number') return
+          setSnap(s); setMsg('')
+          const h = hist.current
+          h.cpu.push(s.cpu.percent)
+          h.mem.push(s.memory.usedPercent)
+          const byNic = s.net.byNic || []
+          const rx = byNic.reduce((a: number, n: any) => a + (n.rxRate || 0), 0)
+          const tx = byNic.reduce((a: number, n: any) => a + (n.txRate || 0), 0)
+          h.net.push(rx + tx)
+          if (h.cpu.length > 300) { h.cpu.shift(); h.mem.shift(); h.net.shift() }
+        })
+        .catch(() => setMsg('主机指标不可达'))
+    }
+    const loadStats = () => {
+      getJSON<any>(`/api/plugins/containers/docker/container/stats?_=${Date.now()}${hostQ}`)
+        .then((d) => {
+          if (!alive) return
+          const arr = Array.isArray(d?.stats) ? d.stats : []
+          const m: Record<string, any> = {}
+          arr.forEach((s: any) => { if (s?.name) m[s.name] = s })
+          setStats(m)
+        })
+        .catch(() => {})
+    }
+    const loadOverview = () => {
+      const hostQ2 = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
+      Promise.all([
+        getJSON<any>(`/api/plugins/containers/list?_=${Date.now()}${hostQ2}`),
+        getJSON<any>(`/api/plugins/containers/images?_=${Date.now()}${hostQ2}`),
+      ]).then(([l, im]) => {
+        if (!alive) return
+        const cs: any[] = Array.isArray(l?.containers) ? l.containers : []
+        const projects = new Set<string>()
+        cs.forEach((c: any) => { if (c?.labels?.['com.docker.compose.project']) projects.add(c.labels['com.docker.compose.project']) })
+        const dirty = cs.filter((c: any) => (c?.restartCount || 0) > 0)
+        let healthDown = 0
+        cs.forEach((c: any) => { if (c?.health === 'warn' || c?.health === 'down') healthDown++ })
+        const images: any[] = Array.isArray(im?.images) ? im.images : []
+        const dangling = images.filter((i: any) => !i?.repo || (i?.repo || '').indexOf('<none>') === 0).length
+        setOverview({
+          total: cs.length,
+          running: cs.filter((c: any) => c?.state === 'running').length,
+          paused: cs.filter((c: any) => c?.state?.toLowerCase() === 'paused').length,
+          exited: cs.filter((c: any) => c?.state?.toLowerCase() === 'exited').length,
+          compose: projects.size,
+          unhealthy: healthDown,
+          restarting: dirty.length,
+          dangling: dangling,
+        })
+      }).catch(() => {})
+    }
+    loadHost(); loadStats(); loadOverview()
+    const t1 = setInterval(loadHost, 3000)
+    const t2 = setInterval(loadStats, 3000)
+    const t3 = setInterval(loadOverview, 10000)
+    return () => { alive = false; clearInterval(t1); clearInterval(t2); clearInterval(t3) }
+  }, [selected?.id])
+
+  if (!snap) return <div className="loading">采集主机指标中…</div>
+
+  const totalRxRate = snap.net?.byNic ? snap.net.byNic.reduce((a: number, n: any) => a + (n.rxRate || 0), 0) : 0
+  const totalTxRate = snap.net?.byNic ? snap.net.byNic.reduce((a: number, n: any) => a + (n.txRate || 0), 0) : 0
+  const diskTotal = snap.disks?.reduce((a: number, d: any) => a + (d.total || 0), 0) ?? 0
+  const diskUsed = snap.disks?.reduce((a: number, d: any) => a + (d.used || 0), 0) ?? 0
+  const diskPct = diskTotal ? Math.round(diskUsed / diskTotal * 100) : 0
+  const memPct = snap.memory?.usedPercent ?? 0
+
+  const spark = (arr: number[], color: string) => ({
+    grid: { left: 0, right: 0, top: 4, bottom: 4 },
+    xAxis: { type: 'category', show: false, data: arr.map((_, i) => i) },
+    yAxis: { type: 'value', show: false, min: 0 },
+    series: [{ type: 'line', smooth: true, showSymbol: false, data: arr, lineStyle: { width: 2, color }, areaStyle: { color: color + '22' } }],
+  })
+
+  const usageBar = (pct: number, color: string) => (
+    <div className="usage-bar" style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+      <span className={`usage-fill ${color}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+    </div>
+  )
+
+  return (
+    <div className="monitor-cards" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem', minHeight: 0, overflow: 'auto' }}>
+      <Card title="主机实时指标" subtitle={selected ? `${selected.label || selected.id} · 3s 刷新` : '本机 · 3s 刷新'}>
+        <div className="grid grid-4">
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>CPU 使用率</span>
+              <b style={{ fontSize: '1.25rem' }}>{snap.cpu.percent.toFixed(1)}%</b>
+            </div>
+            <EChart option={spark(hist.current.cpu, '#6366f1')} height={44} />
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>{snap.cpu.cores} 核 · {snap.cpu.model || '—'}</div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>内存使用率</span>
+              <b style={{ fontSize: '1.25rem' }}>{memPct.toFixed(1)}%</b>
+            </div>
+            <EChart option={spark(hist.current.mem, '#06b6d4')} height={44} />
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>
+              {fmtBytes(snap.memory.used)} / {fmtBytes(snap.memory.total)}
+              {snap.memory.swapTotal > 0 && ` · Swap ${fmtBytes(snap.memory.swapUsed)} / ${fmtBytes(snap.memory.swapTotal)}`}
+            </div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>网络吞吐</span>
+              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.8125rem', lineHeight: 1.5, fontVariantNumeric: 'tabular-nums' }}>
+                <b>↓ {fmtBytes(totalRxRate)}/s</b>
+                <b>↑ {fmtBytes(totalTxRate)}/s</b>
+              </span>
+            </div>
+            <EChart option={spark(hist.current.net, '#22c55e')} height={44} />
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>{snap.net.byNic?.length || 0} 网卡</div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>磁盘占用</span>
+              <b style={{ fontSize: '1.25rem' }}>{diskPct}%</b>
+            </div>
+            <usageBar pct={diskPct} color="bg-warn" />
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>
+              已用 {fmtBytes(diskUsed)} / 共 {fmtBytes(diskTotal)} · {snap.disks?.length || 0} 挂载点
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="容器概览" subtitle={overview ? `${overview.total} 个容器 · composer 项目 ${overview.compose} · 10s 刷新` : '10s 刷新'}>
+        <div className="grid grid-4">
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>容器数量</div>
+            <b style={{ fontSize: '1.5rem' }}>{overview?.total ?? '—'}</b>
+            <div className="dim" style={{ fontSize: '0.6875rem', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <span>运行中 <b>{overview?.running ?? '—'}</b></span>
+              <span>暂停 <b>{overview?.paused ?? '—'}</b></span>
+              <span>已结束 <b>{overview?.exited ?? '—'}</b></span>
+            </div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>Compose 项目</div>
+            <b style={{ fontSize: '1.5rem' }}>{overview?.compose ?? '—'}</b>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>已拉起的编排项目数(按 project label)</div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>异常容器</div>
+            <b style={{ fontSize: '1.5rem', color: (overview?.unhealthy || 0) > 0 ? 'var(--danger, #f87171)' : undefined }}>{overview?.unhealthy ?? '—'}</b>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>
+              健康异常 <b>{overview?.unhealthy ?? '—'}</b> · 重启 &gt;0 <b>{overview?.restarting ?? '—'}</b>
+            </div>
+          </div>
+          <div className="stat-mini-card" style={{ border: '1px solid var(--border)', borderRadius: '0.75rem', background: 'var(--surface)', flexDirection: 'column', alignItems: 'stretch', minWidth: 0 }}>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>未使用镜像</div>
+            <b style={{ fontSize: '1.5rem' }}>{overview?.dangling ?? '—'}</b>
+            <div className="dim" style={{ fontSize: '0.6875rem' }}>悬挂(&lt;none&gt;)未打 tag 镜像 · 可清理</div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title={`容器实时资源 (${Object.keys(stats).length})`} subtitle="docker stats --no-stream · 仅运行中容器 · 3s 刷新">
+        <div className="table-wrap">
+          <table className="data-table ops-right">
+            <thead><tr><th>名称</th><th>CPU</th><th>内存%</th><th>内存用量</th><th>网络 IO</th><th>块 IO</th><th>PIDs</th></tr></thead>
+            <tbody>
+              {Object.entries(stats).sort((a, b) => a[0].localeCompare(b[0])).map(([name, s]: [string, any]) => {
+                const cpuN = Number.isFinite(parseFloat(String(s.cpuPct || ''))) ? parseFloat(String(s.cpuPct)) : 0
+                const memN = Number.isFinite(parseFloat(String(s.memPerc || ''))) ? parseFloat(String(s.memPerc)) : 0
+                return (
+                  <tr key={name}>
+                    <td className="mono">{name}</td>
+                    <td>
+                      <div className="usage-cell">
+                        <div className="usage-bar" style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+                          <span className={`usage-fill ${cpuN > 80 ? 'bg-danger' : cpuN > 60 ? 'bg-warn' : 'bg-ok'}`} style={{ width: `${Math.min(100, cpuN)}%` }} />
+                        </div>
+                        <span className="mono small">{s.cpuPct}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="usage-cell">
+                        <div className="usage-bar" style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+                          <span className={`usage-fill ${memN > 80 ? 'bg-danger' : memN > 60 ? 'bg-warn' : 'bg-ok'}`} style={{ width: `${Math.min(100, memN)}%` }} />
+                        </div>
+                        <span className="mono small">{s.memPerc}</span>
+                      </div>
+                    </td>
+                    <td className="mono dim">{s.memUsage} / {s.memLimit}</td>
+                    <td className="mono dim">{s.netIO}</td>
+                    <td className="mono dim">{s.blockIO}</td>
+                    <td className="mono dim">{s.pids ?? '—'}</td>
+                  </tr>
+                )
+              })}
+              {Object.keys(stats).length === 0 && <tr><td colSpan={7} className="dim">暂无运行中容器</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   )
 }
@@ -99,6 +321,14 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [dfOpen, setDfOpen] = useState(false)
   const [pruneOpen, setPruneOpen] = useState(false)
   const [pauseBusy, setPauseBusy] = useState('')
+  const [containerCtx, setContainerCtx] = useState<{ x: number; y: number; name: string; c: AppContainer } | null>(null)
+
+  useEffect(() => {
+    if (!containerCtx) return
+    const h = (e: MouseEvent) => { if (!(e.target as HTMLElement)?.closest('.k8s-cluster-ctxmenu')) setContainerCtx(null) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [containerCtx])
 
   const hostQ = selected?.id ? `&host=${encodeURIComponent(selected.id)}` : ''
   const load = () => getJSON<any>(`/api/plugins/containers/list?_=${Date.now()}${hostQ}`).then(setList).catch(() => setList(null))
@@ -140,15 +370,16 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
     if (!names.length) return
     if (!confirm(`对 ${names.length} 个容器执行「${action}」?`)) return
     setBusy(true)
-    let okN = 0, failN = 0
+    let okN = 0, failN = 0, firstErr = ''
     for (const n of names) {
       try {
         const d = await postJSON('/api/plugins/containers/action', { host: selected?.id || '', name: n, runtime: rt, action })
-        d.ok ? okN++ : failN++
-      } catch { failN++ }
+        if (d.ok) okN++
+        else { failN++; firstErr = firstErr || `${n}: ${d.error || '失败'}` }
+      } catch (e) { failN++; firstErr = firstErr || `${n}: ${String(e)}` }
     }
     setBusy(false); setSel(new Set())
-    onMsg?.(`✓ 批量${action}完成: 成功 ${okN} / 失败 ${failN}`)
+    onMsg?.(`✓ 批量${action}完成: 成功 ${okN} / 失败 ${failN}${firstErr ? ' | 首个错误: ' + firstErr : ''}`)
     setTimeout(load, 400); setTimeout(load, 2500)
   }
 
@@ -219,7 +450,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
         </div>
         {list?.note && <div className="banner banner-warn">{list.note}</div>}
         <div className="table-wrap">
-          <table className="data-table ctable">
+          <table className="data-table ctable ops-right">
             <thead><tr>
               <th><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
               <th>名称</th>
@@ -235,7 +466,8 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
               {containers.map((c) => (
                 <tr key={c.name} style={{ cursor: 'pointer' }}
                   title="双击编辑配置并重建"
-                  onDoubleClick={() => canWrite && openEdit(c)}>
+                  onDoubleClick={() => canWrite && openEdit(c)}
+                  onContextMenu={(e) => { e.preventDefault(); setContainerCtx({ x: e.clientX, y: e.clientY, name: c.name, c }) }}>
                   <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(c.name)} onChange={() => toggleOne(c.name)} /></td>
                   <td className="mono">{c.name}</td>
                   <td className="mono dim">{c.image}</td>
@@ -244,18 +476,9 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                   <td className="row-ops" onClick={(e) => e.stopPropagation()}>
                     <div className="btn-row k8s-row-actions">
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !canWrite || c.state !== 'exited'} onClick={() => runAction(c.name, 'start')}>启动</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => runAction(c.name, 'stop')}>停止</button>
+                      <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !canWrite || c.state !== 'running'} onClick={() => setConfirmAct({ name: c.name, action: 'stop' })}>停止</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={busy || !canWrite} onClick={() => runAction(c.name, 'restart')}>重启</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="编辑配置并重建(端口/卷/环境变量)" onClick={() => openEdit(c)}>编辑</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} title="实时资源监控(CPU/内存/网络)" onClick={() => openStats(c.name)}>监控</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" disabled={!canWrite} onClick={() => setExecView({ name: c.name })}>命令</button>
                       <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} onClick={() => openLogs(c)}>日志</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite || pauseBusy === c.name} title="docker pause / unpause" onClick={() => pauseToggle(c)}>
-                        {pauseBusy === c.name ? '…' : (c.state === 'paused' ? '继续' : '暂停')}
-                      </button>
-                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite} title="进程列表 (docker top)" onClick={() => setTopModal({ name: c.name })}>进程</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" title="在线修改环境变量 (docker update)" onClick={() => setEnvModal({ name: c.name })}>改Env</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={!canWrite || c.state !== 'running'} title="文件互拷 (docker cp)" onClick={() => setCpModal({ name: c.name })}>互拷</button>
                     </div>
                   </td>
                 </tr>
@@ -276,6 +499,19 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                 onClick={() => runAction(confirmAct.name, confirmAct.action)}>确认{confirmAct.action}</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {containerCtx && (
+        <div className="k8s-cluster-ctxmenu" style={{ position: 'fixed', left: Math.min(containerCtx.x, window.innerWidth - 180), top: Math.min(containerCtx.y, window.innerHeight - 280), zIndex: 10000 }}
+          onClick={(e) => e.stopPropagation()}>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); openEdit(containerCtx.c) }}>编辑</div>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); openStats(containerCtx.name) }}>监控</div>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); setExecView({ name: containerCtx.name }) }}>命令</div>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); setTopModal({ name: containerCtx.name }) }}>进程</div>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); setEnvModal({ name: containerCtx.name }) }}>改Env</div>
+          <div className="k8s-ctx-item" onClick={() => { setContainerCtx(null); setCpModal({ name: containerCtx.name }) }}>文件互拷</div>
+          <div className="k8s-ctx-item k8s-ctx-danger" onClick={() => { setContainerCtx(null); setConfirmAct({ name: containerCtx.name, action: 'remove' }) }}>删除</div>
         </div>
       )}
 
@@ -650,6 +886,7 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   }
 
   const removeOne = (image: string) => {
+    if (!confirm(`删除镜像 ${image}?`)) return
     setBusy(true); setOut('')
     postJSON('/api/plugins/containers/docker/image/action', { host: selected?.id || '', image, action: 'remove' })
       .then((d: any) => {
@@ -803,12 +1040,12 @@ function ImagesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
           </select>
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={batchRemove}>删除选中</button>
           <span className="dim" style={{ marginLeft: 'auto' }} />
-          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="导出为 tar 下载 (docker save)" onClick={() => setSaveModal(null)}>导出镜像</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="导出为 tar 下载 (docker save)" onClick={() => setSaveModal('')}>导出镜像</button>
           <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="从 tar 导入 (docker load)" onClick={() => setLoadOpen(true)}>导入镜像</button>
           <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="清理无引用镜像 (docker image prune -f)" onClick={() => setPruneOpen(true)}>清理悬挂镜像</button>
         </div>
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table ops-right">
             <thead><tr>
               <th style={{ width: '4%' }}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
               <th style={{ width: '30%' }}>仓库</th><th style={{ width: '12%' }}>标签</th>
@@ -937,7 +1174,7 @@ function VolumesPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       </Card>
       <Card title={`Volumes (${vols.length})`} subtitle="Docker 数据卷列表 · 删除前需先解绑占用容器">
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table ops-right">
             <thead><tr>
               <th style={{ width: '30%' }}>名称</th><th style={{ width: '14%' }}>Driver</th>
               <th style={{ width: '36%' }}>挂载点</th><th style={{ width: '20%' }}>操作</th>
@@ -1033,7 +1270,7 @@ function NetworksPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       </Card>
       <Card title={`Networks (${nets.length})`} subtitle="内建 bridge/host/none 不可删除">
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table ops-right">
             <thead><tr>
               <th style={{ width: '20%' }}>名称</th><th style={{ width: '16%' }}>Driver</th>
               <th style={{ width: '12%' }}>ID</th><th style={{ width: '28%' }}>子网</th><th style={{ width: '24%' }}>操作</th>
@@ -1326,7 +1563,7 @@ function BuildPanel({ onMsg }: { onMsg?: (m: string) => void }) {
       </div>
 
       {mode === 'form' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'start' }}>
+        <div className="df-grid">
           {/* 左栏: 基础 + 可选指令 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div className="card" style={{ minWidth: 0 }}>
@@ -1514,6 +1751,7 @@ function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const addService = () => {
     const services = [...m.services, blankSvc()]
     set({ services, activeIdx: services.length - 1 })
+    onMsg?.(`✓ 已添加服务 #${services.length}，请在「编辑服务」填写名称和镜像`)
   }
   const removeService = (idx: number) => {
     if (m.services.length <= 1) return
@@ -1569,10 +1807,10 @@ function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
       </div>
 
       {mode === 'form' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'start' }}>
+        <div className="df-grid">
           {/* 左栏: 服务列表 + 编辑 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div className="card" style={{ minWidth: 0 }}>
+            <div className="card" style={{ minWidth: 0, flex: 'none' }}>
               <div className="card-head"><h3>服务列表</h3><span className="card-sub">{m.services.length} 个服务</span></div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {m.services.map((svc, i) => (
@@ -1770,7 +2008,7 @@ function SwarmPanel() {
 
       {isManager && Array.isArray(data.services) && data.services.length > 0 && (
         <Card title={`Swarm Services (${data.services.length})`} subtitle="支持在线调整副本数(scale)">
-          <div className="table-wrap"><table className="data-table">
+          <div className="table-wrap"><table className="data-table ops-right">
             <thead><tr><th>ID</th><th>名称</th><th>模式</th><th>副本</th><th>镜像</th><th>操作</th></tr></thead>
             <tbody>{data.services.map((sv: any, i: number) => (
               <tr key={i}>
