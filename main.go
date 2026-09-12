@@ -556,6 +556,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/certs/binary/renew", Handler: handlers.K8sBinaryRenewHandler},
 			{Path: "/api/plugins/containers/k8s/certs/binary/rollback", Handler: handlers.K8sBinaryRollbackHandler},
 			{Path: "/api/plugins/containers/k8s/kubeconfig/default", Handler: handlers.K8sDefaultKubeconfigHandler},
+			{Path: "/api/plugins/containers/k8s/kubeconfig/remote", Handler: handlers.K8sKubeconfigFromHostHandler},
 			{Path: "/api/plugins/containers/k8s/cluster/action", Handler: handlers.K8sClusterActionHandler},
 			{Path: "/api/plugins/containers/k8s/apply", Handler: handlers.K8sApplyHandler},
 			{Path: "/api/plugins/containers/k8s/overview", Handler: handlers.K8sOverviewHandler},

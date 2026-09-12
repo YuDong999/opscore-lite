@@ -1188,6 +1188,15 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
   const [busy, setBusy] = useState(false)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanInfo, setScanInfo] = useState('')
+  const [hostList, setHostList] = useState<any[]>([])
+  const [pullHost, setPullHost] = useState('')
+  const [pullBusy, setPullBusy] = useState(false)
+
+  useEffect(() => {
+    getJSON<any[]>('/api/ansible/hosts')
+      .then((hs) => setHostList((hs || []).filter((h: any) => !h.isLocal)))
+      .catch(() => {})
+  }, [])
 
   const pickFile = async (f: File | null) => {
     if (f) setKubeconfig(await f.text())
@@ -1211,6 +1220,32 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
       setScanInfo('✗ 读取失败: ' + String(e))
     } finally {
       setScanBusy(false)
+    }
+  }
+
+  const pullFromHost = async () => {
+    if (!pullHost) return
+    setPullBusy(true)
+    setScanInfo('')
+    try {
+      const d: any = await postJSON('/api/plugins/containers/k8s/kubeconfig/remote', { hostID: pullHost })
+      if (!d || !d.ok) {
+        setScanInfo('✗ ' + (d?.error || '拉取失败'))
+        return
+      }
+      if (!d.found) {
+        setScanInfo(d.error || '目标机上未发现 kubeconfig，请粘贴或上传')
+        return
+      }
+      setKubeconfig(d.source || '')
+      if (!name.trim() && d.current) setName(d.current)
+      const n = (d.contexts || []).length
+      const extra = n > 1 ? `（文件含 ${n} 个 context，已默认取 ${d.current || 'current-context'}）` : ''
+      setScanInfo(`✓ 已从主机拉取 ${d.path}${extra}`)
+    } catch (e) {
+      setScanInfo('✗ 拉取失败: ' + String(e))
+    } finally {
+      setPullBusy(false)
     }
   }
 
@@ -1244,16 +1279,26 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
           </label>
           <label style={{ fontSize: '0.8125rem' }}>
             kubeconfig
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0', flexWrap: 'wrap' }}>
               <button className="btn-glass-soft" onClick={loadDefault} disabled={scanBusy}>
                 {scanBusy ? '读取中…' : '读取服务器默认配置'}
+              </button>
+              <select className="input" value={pullHost} onChange={(e) => setPullHost(e.target.value)}
+                style={{ width: 'auto', fontSize: '0.75rem', padding: '5px 8px' }} disabled={hostList.length === 0}>
+                <option value="">{hostList.length ? '从主机组主机拉取…' : '主机组暂无远程主机'}</option>
+                {hostList.map((h: any) => (
+                  <option key={h.id} value={h.id}>{h.alias || h.addr}（{h.user}@{h.addr}）</option>
+                ))}
+              </select>
+              <button className="btn-glass-soft" onClick={pullFromHost} disabled={pullBusy || !pullHost}>
+                {pullBusy ? '拉取中…' : '拉取'}
               </button>
               <input type="file" accept=".yaml,.yml,.conf,.txt" onChange={(e) => pickFile(e.target.files?.[0] || null)}
                 style={{ fontSize: '0.75rem' }} />
             </div>
             {scanInfo && <div style={{ fontSize: '0.75rem', marginBottom: 4 }}>{scanInfo}</div>}
             <textarea className="input" value={kubeconfig} onChange={(e) => setKubeconfig(e.target.value)}
-              placeholder="留空可点上方「读取服务器默认配置」自动加载；或粘贴 kubeconfig YAML（凭据仅保存在服务端 ~/.kube/config, 权限0600）"
+              placeholder="点上方按钮自动加载（服务器本机默认配置 / 从主机组主机拉取）；或粘贴 kubeconfig YAML（凭据仅落盘服务端 data/kubeconfigs/，权限 0600）"
               rows={10} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.6875rem' }} />
           </label>
           <div className="modal-actions">

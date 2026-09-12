@@ -267,9 +267,13 @@ func K8sDefaultKubeconfigHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // discoverDefaultKubeconfig 按固定优先级返回服务器本机第一份存在的 kubeconfig。
-// 顺序: $OPSCORE_KUBECONFIG → $KUBECONFIG(冒号多路径) → ~/.kube/config → /etc/kubernetes/admin.conf
+// 顺序: $OPSCORE_KUBECONFIG → $KUBECONFIG(按平台分隔符多路径) → ~/.kube/config → /root/.kube/config → /etc/kubernetes/admin.conf
+// 仅限部署机本机; 远程主机的凭据走注册面板「从主机拉取」(k8s_kubeconfig_remote.go, RunOnTarget)。
 func discoverDefaultKubeconfig() (string, []byte, error) {
 	var paths []string
+	if v := os.Getenv("OPSCORE_KUBECONFIG"); v != "" {
+		paths = append(paths, v)
+	}
 	if v := os.Getenv("KUBECONFIG"); v != "" {
 		for _, p := range filepath.SplitList(v) {
 			if p = strings.TrimSpace(p); p != "" {
