@@ -106,6 +106,7 @@ func main() {
 		log.Fatalf("init ansible manager: %v", err)
 	}
 	handlers.InitAnsible(ansibleMgr)
+	handlers.InitDiskClean(dataDir)
 	sshPool := remote.NewPool()
 	handlers.InitPool(sshPool)
 	defer sshPool.Close()
@@ -438,6 +439,10 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/core/tasks/disks", Handler: handlers.DisksHandler},
 			{Path: "/api/core/tasks/disks/action", Handler: handlers.DiskActionHandler},
 			{Path: "/api/core/lvm", Handler: handlers.LvmHandler},
+			{Path: "/api/core/disk-clean/rules", Handler: handlers.DiskCleanRulesHandler},
+			{Path: "/api/core/disk-clean/schedules", Handler: handlers.DiskCleanSchedulesHandler},
+			{Path: "/api/core/disk-clean/run", Handler: handlers.DiskCleanRunHandler},
+			{Path: "/api/core/disk-clean/logs", Handler: handlers.DiskCleanLogsHandler},
 			{Path: "/api/core/platform/inventory", Handler: handlers.PlatformInventoryHandler},
 			{Path: "/api/core/platform/profile", Handler: handlers.PlatformProfileHandler},
 		}},
