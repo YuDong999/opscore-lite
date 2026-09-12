@@ -3639,3 +3639,5 @@ body {
 @media (max-width:1400px){.grid-5{grid-template-columns:repeat(3,1fr)}.grid-3{grid-template-columns:repeat(2,1fr)}}
 
 @media (max-width:1100px){.grid-4,.grid-5{grid-template-columns:repeat(2,1fr)}.grid-2,.grid-3{grid-template-columns:1fr}}
+/* K8s 概览三卡恒定一排: 不随断点折叠, 卡片压缩自适应(EChart 带 ResizeObserver 会跟随重绘) */
+.k8s-overview > .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
