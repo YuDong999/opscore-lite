@@ -978,12 +978,12 @@ function DiskCleanSection() {
 
   // 规则表单
   const blankRule = { nodePattern: '*', path: '', command: '', label: '', description: '', safe: true, enabled: true }
-  const [ruleForm, setRuleForm] = useState<Partial<CleanRule>>(blankRule)
+  const [ruleForm, setRuleForm] = useState<Partial<CleanRule> | null>(null)
   const [editingRule, setEditingRule] = useState<string | null>(null)
 
   // 调度表单
   const blankSchedule = { name: '', cron: '0 4 * * *', nodePattern: '*', ruleIds: [] as string[], enabled: true }
-  const [schForm, setSchForm] = useState<Partial<CleanSchedule>>(blankSchedule)
+  const [schForm, setSchForm] = useState<Partial<CleanSchedule> | null>(null)
   const [editingSch, setEditingSch] = useState<string | null>(null)
 
   const load = useCallback(() => {
@@ -994,6 +994,7 @@ function DiskCleanSection() {
   useEffect(() => { load() }, [load])
 
   const saveRule = async () => {
+    if (!ruleForm) return
     setErr(''); setMsg('')
     if (!ruleForm.nodePattern || (!ruleForm.command && !ruleForm.path)) { setErr('nodePattern 与 path/command 不能为空'); return }
     try {
@@ -1011,6 +1012,7 @@ function DiskCleanSection() {
     load()
   }
   const saveSchedule = async () => {
+    if (!schForm) return
     setErr(''); setMsg('')
     if (!schForm.cron || !schForm.nodePattern || !schForm.ruleIds || !schForm.ruleIds.length) { setErr('cron/nodePattern/ruleIds 不能为空'); return }
     try {
@@ -1046,80 +1048,125 @@ function DiskCleanSection() {
       {msg && <div className="banner banner-ok">{msg}</div>}
       {err && <div className="banner banner-err">{err}</div>}
 
-      <h3 className="section-title">清理规则 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm(blankRule); setEditingRule(null) }}>新建</button></h3>
+      <h3 className="section-title" style={{ marginTop: 4 }}>
+        <span>清理规则</span>
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm({ ...blankRule }); setEditingRule(null) }}>新建</button>
+      </h3>
+
+      {ruleForm && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10, padding: '0.6rem 0.75rem', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 10 }}>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>名称<br />
+            <input className="ipt" style={{ width: 130 }} value={ruleForm.label || ''} placeholder="如 go-build 缓存" onChange={e => setRuleForm({ ...ruleForm, label: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>节点匹配<br />
+            <input className="ipt" style={{ width: 100 }} value={ruleForm.nodePattern || ''} placeholder="* 或 km1*" onChange={e => setRuleForm({ ...ruleForm, nodePattern: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>路径<br />
+            <input className="ipt" style={{ width: 180 }} value={ruleForm.path || ''} placeholder="/root/.cache/go-build" onChange={e => setRuleForm({ ...ruleForm, path: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>命令(留空 = rm -rf 路径)<br />
+            <input className="ipt" style={{ width: 210 }} value={ruleForm.command || ''} placeholder="go clean -cache" onChange={e => setRuleForm({ ...ruleForm, command: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>安全级<br />
+            <select className="sel" value={ruleForm.safe ? 'safe' : 'risky'} onChange={e => setRuleForm({ ...ruleForm, safe: e.target.value === 'safe' })}>
+              <option value="safe">安全</option>
+              <option value="risky">高危</option>
+            </select></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>启用<br />
+            <input type="checkbox" checked={ruleForm.enabled !== false} onChange={e => setRuleForm({ ...ruleForm, enabled: e.target.checked })} /></label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveRule}>保存</button>
+            <button className="btn-glass-soft" onClick={() => { setRuleForm(null); setEditingRule(null) }}>取消</button>
+          </div>
+        </div>
+      )}
+
       <table className="table" style={{ fontSize: '0.8125rem' }}>
-        <thead><tr><th>名称</th><th>节点</th><th>路径</th><th>命令</th><th>安全级</th><th>启用</th><th>操作</th></tr></thead>
+        <thead><tr><th>名称</th><th>节点匹配</th><th>路径</th><th>命令</th><th>安全级</th><th>启用</th><th style={{ width: 150 }}>操作</th></tr></thead>
         <tbody>
-          {(editingRule ? [ruleForm] : rules).map((r, i) => (
-            <tr key={editingRule ? 'edit' + i : r.id}>
-              <td><input className="ipt" style={{ width: 110 }} value={r.label || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, label: e.target.value })} /></td>
-              <td><input className="ipt" style={{ width: 70 }} value={r.nodePattern || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, nodePattern: e.target.value })} /></td>
-              <td><input className="ipt" style={{ width: 150 }} placeholder="/root/.cache/go-build" value={r.path || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, path: e.target.value })} /></td>
-              <td><input className="ipt" style={{ width: 170 }} placeholder="空=rm -rf path" value={r.command || ''} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, command: e.target.value })} /></td>
-              <td>
-                <select className="sel" value={r.safe ? 'safe' : 'risky'} disabled={!editingRule || editingRule !== r.id} onChange={e => setRuleForm({ ...ruleForm, safe: e.target.value === 'safe' })}>
-                  <option value="safe">安全</option><option value="risky">高危</option>
-                </select>
-              </td>
-              <td>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => editingRule && editingRule === r.id ? undefined : toggleRule(r as CleanRule)}>
-                  {editingRule && editingRule === r.id ? (r.enabled ? '开' : '关') : (r.enabled ? '开' : '关')}
-                </button>
-              </td>
+          {rules.map(r => (
+            <tr key={r.id}>
+              <td>{r.label || '—'}</td>
+              <td className="mono">{r.nodePattern || '*'}</td>
+              <td className="mono" style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.path}>{r.path}</td>
+              <td className="mono" style={{ maxWidth: 230, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.command || '(默认 rm -rf 路径)'}>{r.command || '(默认 rm -rf 路径)'}</td>
+              <td>{r.safe ? '安全' : <span style={{ color: 'var(--lvl-error, #e5484d)' }}>高危</span>}</td>
+              <td><button className="btn-glass-soft btn-glass-soft-sm" onClick={() => toggleRule(r)}>{r.enabled ? '开' : '关'}</button></td>
               <td style={{ whiteSpace: 'nowrap' }}>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm(r); setEditingRule(r.id) }}>{editingRule === r.id ? '编辑中' : '编辑'}</button>
-                {editingRule === r.id && <button className="btn-glass-soft btn-glass-soft-sm" onClick={saveRule}>保存</button>}
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => r.id && runNow(r.nodePattern, [r.id])}>执行</button>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => r.id && delRule(r.id)}>删除</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => runNow(r.nodePattern, [r.id])}>执行</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setRuleForm({ ...r }); setEditingRule(r.id) }}>编辑</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => delRule(r.id)}>删除</button>
               </td>
             </tr>
           ))}
-          {!editingRule && rules.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6 }}>暂无规则, 点击"新建"添加</td></tr>}
+          {rules.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6 }}>暂无规则, 点击"新建"添加</td></tr>}
         </tbody>
       </table>
 
-      <h3 className="section-title" style={{ marginTop: 20 }}>定时调度 <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm(blankSchedule); setEditingSch(null) }}>新建</button></h3>
+      <h3 className="section-title" style={{ marginTop: 18 }}>
+        <span>定时调度</span>
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm({ ...blankSchedule }); setEditingSch(null) }}>新建</button>
+      </h3>
+
+      {schForm && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10, padding: '0.6rem 0.75rem', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 10 }}>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>名称<br />
+            <input className="ipt" style={{ width: 130 }} value={schForm.name || ''} placeholder="如 每日 4 点清理" onChange={e => setSchForm({ ...schForm, name: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>cron(分 时 日 月 周)<br />
+            <input className="ipt" style={{ width: 140 }} value={schForm.cron || ''} placeholder="0 4 * * *" onChange={e => setSchForm({ ...schForm, cron: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>节点匹配<br />
+            <input className="ipt" style={{ width: 100 }} value={schForm.nodePattern || ''} placeholder="*" onChange={e => setSchForm({ ...schForm, nodePattern: e.target.value })} /></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>规则(Ctrl 多选)<br />
+            <select className="sel" multiple style={{ width: 200, height: 64 }} value={schForm.ruleIds || []} onChange={e => setSchForm({ ...schForm, ruleIds: Array.from(e.target.selectedOptions).map(o => o.value) })}>
+              {rules.map(r => <option key={r.id} value={r.id}>{r.label || r.path || r.id}</option>)}
+            </select></label>
+          <label style={{ fontSize: '0.75rem', opacity: 0.75 }}>启用<br />
+            <input type="checkbox" checked={schForm.enabled !== false} onChange={e => setSchForm({ ...schForm, enabled: e.target.checked })} /></label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveSchedule}>保存</button>
+            <button className="btn-glass-soft" onClick={() => { setSchForm(null); setEditingSch(null) }}>取消</button>
+          </div>
+        </div>
+      )}
+
       <table className="table" style={{ fontSize: '0.8125rem' }}>
-        <thead><tr><th>名称</th><th>cron(分 时 日 月 周)</th><th>节点</th><th>规则</th><th>上次运行</th><th>状态</th><th>启用</th><th>操作</th></tr></thead>
+        <thead><tr><th>名称</th><th>cron(分 时 日 月 周)</th><th>节点匹配</th><th>规则</th><th>上次运行</th><th>状态</th><th>启用</th><th style={{ width: 170 }}>操作</th></tr></thead>
         <tbody>
-          {(editingSch ? [schForm] : schedules).map((s, i) => (
-            <tr key={editingSch ? 'edit' + i : s.id}>
-              <td><input className="ipt" style={{ width: 100 }} value={s.name || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, name: e.target.value })} /></td>
-              <td><input className="ipt" style={{ width: 130 }} value={s.cron || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, cron: e.target.value })} /></td>
-              <td><input className="ipt" style={{ width: 70 }} value={s.nodePattern || ''} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, nodePattern: e.target.value })} /></td>
-              <td>
-                <select className="sel" multiple style={{ width: 220, height: 90 }} value={s.ruleIds || []} disabled={!editingSch || editingSch !== s.id} onChange={e => setSchForm({ ...schForm, ruleIds: Array.from(e.target.selectedOptions).map(o => o.value) })}>
-                  {rules.map(r => <option key={r.id} value={r.id}>{r.label || r.path || r.id}</option>)}
-                </select>
+          {schedules.map(s => (
+            <tr key={s.id}>
+              <td>{s.name || '—'}</td>
+              <td className="mono">{s.cron}</td>
+              <td className="mono">{s.nodePattern || '*'}</td>
+              <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={(s.ruleIds || []).map(id => rules.find(r => r.id === id)?.label || id).join(', ')}>
+                {(s.ruleIds || []).map(id => rules.find(r => r.id === id)?.label || id).join(', ') || '—'}
               </td>
               <td>{fmtTime(s.lastRunAt)}</td>
               <td>{s.lastStatus || '—'}</td>
-              <td><button className="btn-glass-soft btn-glass-soft-sm" onClick={() => editingSch && editingSch === s.id ? undefined : toggleSchedule(s as CleanSchedule)}>{s.enabled ? '开' : '关'}</button></td>
+              <td><button className="btn-glass-soft btn-glass-soft-sm" onClick={() => toggleSchedule(s)}>{s.enabled ? '开' : '关'}</button></td>
               <td style={{ whiteSpace: 'nowrap' }}>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm(s); setEditingSch(s.id) }}>{editingSch === s.id ? '编辑中' : '编辑'}</button>
-                {editingSch === s.id && <button className="btn-glass-soft btn-glass-soft-sm" onClick={saveSchedule}>保存</button>}
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => s.id && runNow(s.nodePattern, s.ruleIds || [])}>立即执行</button>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => s.id && delSchedule(s.id)}>删除</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => runNow(s.nodePattern, s.ruleIds || [])}>立即执行</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSchForm({ ...s }); setEditingSch(s.id) }}>编辑</button>
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => delSchedule(s.id)}>删除</button>
               </td>
             </tr>
           ))}
-          {!editingSch && schedules.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', opacity: 0.6 }}>暂无调度, 点击"新建"添加(cron 格式: 分 时 日 月 周)</td></tr>}
+          {schedules.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', opacity: 0.6 }}>暂无调度, 点击"新建"添加(cron 格式: 分 时 日 月 周)</td></tr>}
         </tbody>
       </table>
-      <div className="hint" style={{ opacity: 0.55, fontSize: '0.75rem' }}>示例 cron: 每天 04:00 → 0 4 * * * / 每 30 分钟 → */30 * * * *</div>
+      <div style={{ opacity: 0.55, fontSize: '0.75rem' }}>示例 cron: 每天 04:00 → <span className="mono">0 4 * * *</span> ｜ 每 30 分钟 → <span className="mono">*/30 * * * *</span></div>
 
-      <h3 className="section-title" style={{ marginTop: 20 }}>执行日志 {running && <span style={{ opacity: 0.6 }}>执行中…</span>}</h3>
+      <h3 className="section-title" style={{ marginTop: 18 }}>
+        <span>执行日志</span>
+        {running && <span style={{ opacity: 0.6, marginLeft: 8 }}>执行中…</span>}
+        <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={load}>刷新</button>
+      </h3>
       <table className="table" style={{ fontSize: '0.7812rem' }}>
-        <thead><tr><th>时间</th><th>集群/节点</th><th>规则</th><th>释放</th><th>耗时</th><th>状态</th></tr></thead>
+        <thead><tr><th>时间</th><th>集群 / 节点</th><th>规则</th><th>释放空间</th><th>耗时</th><th>状态</th></tr></thead>
         <tbody>
           {logs.slice(0, 50).map((l, i) => (
             <tr key={l.id || i} title={l.output}>
               <td>{fmtTime(l.createdAt)}</td>
-              <td>{l.cluster}/{l.node}</td>
-              <td>{l.ruleIds.join(',')}</td>
+              <td className="mono">{l.cluster}/{l.node}</td>
+              <td>{(l.ruleIds || []).map(id => rules.find(r => r.id === id)?.label || id).join(', ') || '—'}</td>
               <td>{l.freedBytes > 0 ? fmtBytes(l.freedBytes) : '—'}</td>
               <td>{l.durationMs ? l.durationMs + 'ms' : '—'}</td>
-              <td className={l.status === 'success' ? '' : 'text-danger'}>{l.status === 'success' ? '成功' : '失败'}</td>
+              <td>{l.status === 'ok' ? '✓ 成功' : <span style={{ color: 'var(--lvl-error, #e5484d)' }}>✗ 失败</span>}</td>
             </tr>
           ))}
           {logs.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', opacity: 0.6 }}>暂无执行记录</td></tr>}
