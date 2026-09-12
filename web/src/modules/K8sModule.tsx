@@ -2,7 +2,7 @@
 // 布局对齐 kubevision: 左侧固定侧栏(集群树 + 可折叠资源分组) + 右侧主内容区
 // 分类: 概览 / 工作负载 / 网络 / 配置 / 存储 / 集群 / 策略
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import CreateResource from './CreateResource'
 import Card from '../components/Card'
@@ -196,8 +196,8 @@ const COLS: Partial<Record<K8sRes, Col[]>> = {
   events: [
     ['type', '级别', 9, 'status'], ['reason', '原因', 14, 'mono'],
     ['object', '对象', 18, 'mono'], ['namespace', '命名空间', 16, 'dim'],
-    ['count', '次数', 8], ['lastSeen', '最近', 12, 'dim'],
-    ['message', '消息', 23, 'dim'],
+    ['count', '次数', 8], ['lastSeen', '最近', 9, 'dim'],
+    ['message', '消息', 26, 'dim'],
   ],
   networkpolicies: [
     ['name', '名称', 45, 'mono'], ['namespace', '命名空间', 30, 'dim'], ['age', '年龄', 25, 'dim'],
@@ -303,6 +303,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const [sortKey, setSortKey] = useState('')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [ns, setNs] = useState('all')
+  const [evTypeFilter, setEvTypeFilter] = useState('')
+  const [evReasonFilter, setEvReasonFilter] = useState('')
   const [namespaces, setNamespaces] = useState<string[]>([])
   const [rows, setRows] = useState<any[]>([])
   const [note, setNote] = useState('')
@@ -317,7 +319,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}') } catch { return {} }
   })
   // 资源弹层: 双击行或行内操作打开
-  const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string } | null>(null)
+  const [modal, setModal] = useState<{ kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe' | 'events'; res: K8sRes; ns: string; name: string } | null>(null)
   const [actionPanel, setActionPanel] = useState<{ res: string; name: string; ns: string; autoOpen?: string } | null>(null)
   // 右键菜单流式操作: exec / logs (port-forward/cp 复用操作面板, 见 CTX_DEFS form:true)
   const [podTools, setPodTools] = useState<{ kind: string; cluster: string; ns: string; pod: string; containers: string[] } | null>(null)
@@ -337,7 +339,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     }
   }
 
-  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe', r: any, resOf?: string) => {
+  const openModal = (kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe' | 'events', r: any, resOf?: string) => {
     if (!clusterID || !r?.name) return
     // 命名空间作用域解析: 集群级资源忽略 ns; 列表为"全部命名空间"时用行内自带的 namespace
     const effRes = resOf || (res as string)
@@ -353,9 +355,18 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     else if (sortDir === 'desc') setSortDir('asc')
     else { setSortKey(''); setSortDir('desc') }
   }
+  // events 视图过滤: 级别 + 原因关键词(前端过滤已加载聚合行)
+  const viewRows = useMemo(() => {
+    if (res !== 'events') return rows
+    const rq = evReasonFilter.trim().toLowerCase()
+    return rows.filter((r) =>
+      (!evTypeFilter || r.type === evTypeFilter) &&
+      (!rq || String(r.reason || '').toLowerCase().includes(rq)))
+  }, [rows, evTypeFilter, evReasonFilter, res])
+
   const sortedRows = useMemo(() => {
-    if (!sortKey) return rows
-    if (!(colsForRes(res, rows) || []).some((c) => c[0] === sortKey)) return rows
+    if (!sortKey) return viewRows
+    if (!(colsForRes(res, viewRows) || []).some((c) => c[0] === sortKey)) return viewRows
     const dir = sortDir === 'desc' ? -1 : 1
     const ageVal = (s: any): number => {
       const parts = String(s ?? '').match(/(\d+)([smhd])/g)
@@ -363,22 +374,22 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
       const unit: any = { s: 1, m: 60, h: 3600, d: 86400 }
       return parts.reduce((acc: number, p: string) => acc + parseInt(p) * (unit[p[p.length - 1]] || 1), 0)
     }
-    return [...rows].sort((a, b) => {
+    return [...viewRows].sort((a, b) => {
       const av = sortKey === 'age' ? ageVal(a.age) : a[sortKey]
       const bv = sortKey === 'age' ? ageVal(b.age) : b[sortKey]
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
       return String(av ?? '').localeCompare(String(bv ?? '')) * dir
     })
-  }, [rows, sortKey, sortDir, res])
+  }, [viewRows, sortKey, sortDir, res])
 
   const rowKey = (r: any, i: number) => `${r.namespace || ''}/${r.name || i}`
 
-  const isAllSelected = rows.length > 0 && rows.every((r, i) => selected.has(rowKey(r, i)))
+  const isAllSelected = viewRows.length > 0 && viewRows.every((r, i) => selected.has(rowKey(r, i)))
   const toggleSelectAll = () => {
     if (isAllSelected) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(rows.map((r, i) => rowKey(r, i))))
+      setSelected(new Set(viewRows.map((r, i) => rowKey(r, i))))
     }
   }
 
@@ -387,7 +398,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     if (!confirm(confirmMsg.replace('{count}', String(selected.size)))) return
     const targets = Array.from(selected).map((k) => {
       const [nsPart, namePart] = k.split('/')
-      return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: res === 'all' ? nsPart : ns }) }
+      return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: ns === 'all' ? nsPart : ns }) }
     })
     // 批量也走 catalog 执行 (后端 /resources/action 已是 catalog 薄代理)
     postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets })
@@ -485,7 +496,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     if (!clusterID || res === 'overview' || res === 'helm') return
     setLoading(true)
     if (res === 'events') {
-      getJSON<{ ok: boolean; rows: any[]; error?: string }>(`/api/plugins/containers/k8s/events/aggregate?cluster=${clusterID}&_=${Date.now()}`)
+      const nsQ = ns === 'all' ? '' : `&ns=${encodeURIComponent(ns)}`
+      getJSON<{ ok: boolean; rows: any[]; error?: string }>(`/api/plugins/containers/k8s/events/aggregate?cluster=${clusterID}${nsQ}&_=${Date.now()}`)
         .then((d) => {
           if (!d.ok) { setRows([]); setNote(d.error || ''); return }
           const rows = (d.rows || []).slice()
@@ -658,11 +670,23 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                   <span className="dim k8s-res-hint">双击行打开详情/操作</span>
                   <span className="pill pill-sub">{loading ? '加载中…' : `${rows.length} 条`}</span>
                 </div>
-                {!NSLESS.has(res as K8sRes) && (
+                {(res === 'events' || !NSLESS.has(res as K8sRes)) && (
                   <select className="input sel" value={ns} onChange={(e) => setNs(e.target.value)} style={{ width: 200 }}>
                     <option value="all">全部命名空间</option>
                     {namespaces.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
+                )}
+                {res === 'events' && (
+                  <>
+                    <select className="input sel" value={evTypeFilter} onChange={(e) => setEvTypeFilter(e.target.value as any)} style={{ width: 110 }}>
+                      <option value="">全部级别</option>
+                      <option value="Warning">Warning</option>
+                      <option value="Normal">Normal</option>
+                    </select>
+                    <input className="input" placeholder="原因筛选…" value={evReasonFilter}
+                      onChange={(e) => setEvReasonFilter(e.target.value)}
+                      style={{ width: 140, fontSize: '0.75rem' }} />
+                  </>
                 )}
                 <div className="k8s-head-actions">
                   <button className="btn-glass-soft btn-glass-soft-sm" onClick={loadRows}>刷新</button>
@@ -715,8 +739,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                    </tr>
                  </thead>
                 <tbody>
-                  {rows.length === 0 && (
-                    <tr><td colSpan={(colsForRes(res, rows) || []).length + 2} className="dim">{loading ? '加载中…' : '（无数据）'}</td></tr>
+                  {viewRows.length === 0 && (
+                    <tr><td colSpan={(colsForRes(res, viewRows) || []).length + 2} className="dim">{loading ? '加载中…' : res === 'events' ? '（该命名空间/筛选下无事件）' : '（无数据）'}</td></tr>
                   )}
                   {sortedRows.map((r, i) => {
                     const rk = rowKey(r, i)
@@ -739,6 +763,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                       </td>
                       {(colsForRes(res, rows) || []).map(([k, , , typ]) => (
                         <td key={k} className={`${typ === 'dim' ? 'dim' : typ === 'mono' ? 'mono' : ''}`}
+                          title={k === 'message' ? String(r[k] ?? '') : undefined}
                           style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {typ === 'status' ? (
                             <span className={`badge ${badgeOf(String(r[k]))}`}>{String(r[k])}</span>
@@ -835,6 +860,10 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
           }}
           onDescribe={() => {
             openModal('describe', ctxMenu.row, ctxMenu.res)
+            setCtxMenu(null)
+          }}
+          onEvents={() => {
+            openModal('events', ctxMenu.row, ctxMenu.res)
             setCtxMenu(null)
           }}
           onStream={(type) => {
@@ -997,7 +1026,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
       .then(setOv).catch((e) => setErr(String(e)))
     getJSON<{ ok: boolean; nodes: any[] }>(`/api/plugins/containers/k8s/metrics/nodes?cluster=${clusterID}&_=${Date.now()}`)
       .then((d) => d.ok && setNodeMetrics(d.nodes || [])).catch(() => {})
-    getJSON<{ ok: boolean; pods: any[] }>(`/api/plugins/containers/k8s/metrics/pods?cluster=${clusterID}&ns=all&top=10&_=${Date.now()}`)
+    getJSON<{ ok: boolean; pods: any[] }>(`/api/plugins/containers/k8s/metrics/pods?cluster=${clusterID}&ns=all&top=500&_=${Date.now()}`)
       .then((d) => d.ok && setTopPods(d.pods || [])).catch(() => {})
     getJSON<{ ok: boolean; points: any[] }>(`/api/plugins/containers/k8s/metrics/history?cluster=${clusterID}&window=${win}&_=${Date.now()}`)
       .then((d) => d.ok && setHist(d.points || [])).catch(() => {})
@@ -1008,7 +1037,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
     const t = setInterval(() => {
       getJSON<{ ok: boolean; nodes: any[] }>(`/api/plugins/containers/k8s/metrics/nodes?cluster=${clusterID}&_=${Date.now()}`)
         .then((d) => d.ok && setNodeMetrics(d.nodes || [])).catch(() => {})
-      getJSON<{ ok: boolean; pods: any[] }>(`/api/plugins/containers/k8s/metrics/pods?cluster=${clusterID}&ns=all&top=10&_=${Date.now()}`)
+      getJSON<{ ok: boolean; pods: any[] }>(`/api/plugins/containers/k8s/metrics/pods?cluster=${clusterID}&ns=all&top=500&_=${Date.now()}`)
         .then((d) => d.ok && setTopPods(d.pods || [])).catch(() => {})
     }, 30000)
     return () => clearInterval(t)
@@ -1101,61 +1130,10 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
         <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={loadAll}>刷新</button>
       </div>
 
-      {/* 趋势 + 节点真实用量 */}
-      <div className="grid grid-2">
-        <Card title="集群资源趋势" subtitle="CPU / 内存 · 历史采样持久化">
-          <div className="btn-row" style={{ marginBottom: '0.375rem' }}>
-            {(Object.keys(WIN_LABELS)).map((w) => (
-              <button key={w} className={`btn-glass-soft btn-glass-soft-sm ${win === w ? 'btn-accent' : ''}`} onClick={() => setWin(w as any)}>{WIN_LABELS[w]}</button>
-            ))}
-            <span className="dim" style={{ fontSize: '0.6875rem', marginLeft: 'auto' }}>
-              {hist.length ? `共 ${hist.length} 个采样点` : '采样积累中…'}
-            </span>
-          </div>
-          <EChart option={trendOption} height={230} />
-        </Card>
-        <Card title={`节点实时用量 (${nodeMetrics.length})`} subtitle="CPU / 内存 · 相对 allocatable">
-          {nodeMetrics.length === 0 ? <div className="loading">读取中…</div> : nodeMetrics.map((n) => (
-            <div key={n.name} className="k8s-node-meter">
-              <div className="k8s-meter-head">
-                <b className="mono">{n.name}</b>
-                <span className="dim mono">{n.cpuMilli}m ({n.cpuPct.toFixed(0)}%) · {Math.round(n.memMiB)}MiB ({n.memPct.toFixed(0)}%)</span>
-              </div>
-              {[
-                { v: n.cpuPct, mem: false },
-                { v: n.memPct, mem: true },
-              ].map((row, i) => (
-                <div key={i} className="usage-bar">
-                  <span className={`usage-fill ${row.v > 80 ? 'bg-danger' : row.mem ? 'bg-ok' : 'bg-accent'}`}
-                    style={{ width: `${Math.min(row.v, 100)}%` }} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </Card>      </div>
-
-      {/* Pod TOP 榜 + 状态分布 */}
-      <div className="grid grid-2">
-        <Card title="Pod 用量 TOP 10" subtitle="按 CPU 排序 · 点击行打开 Pod 详情">
-          <div className="table-wrap"><table className="data-table">
-            <thead><tr><th style={{ width: '42%' }}>Pod</th><th style={{ width: '20%' }}>命名空间</th><th style={{ width: '14%' }}>CPU(m)</th><th style={{ width: '24%' }}>内存(MiB)</th></tr></thead>
-            <tbody>
-              {topPods.length === 0 && <tr><td colSpan={4} className="dim">（暂无数据）</td></tr>}
-              {topPods.map((p, i) => (
-                <tr key={i} style={{ cursor: 'pointer' }}
-                  onClick={() => openPodRef.current(p)}
-                  title="点击打开 Pod 详情">
-                  <td className="mono">{p.name}</td>
-                  <td className="dim">{p.namespace}</td>
-                  <td className="mono">{p.cpuMilli}</td>
-                  <td className="mono">{Math.round(p.memMiB)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
-        </Card>
+      {/* 状态分布 + 就绪率 + 告警: 三个小卡一排 */}
+      <div className="grid grid-3">
         <Card title="Pod 状态分布">
-          <EChart option={podPie} height={210} />
+          <EChart option={podPie} height={150} />
           <div className="stat-row">
             <span>{num(ov.podsTotal)} pods</span>
             <span className="dim">
@@ -1163,20 +1141,80 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
             </span>
           </div>
         </Card>
-      </div>
-
-      {/* 就绪率 gauges */}
-      <div className="grid grid-2">
         <Card title="节点 Ready 率">
-          <EChart option={gaugeOpt(ov.nodesTotal ? (num(ov.nodesReady) / num(ov.nodesTotal)) * 100 : 0, accent)} height={150} />
+          <EChart option={gaugeOpt(ov.nodesTotal ? (num(ov.nodesReady) / num(ov.nodesTotal)) * 100 : 0, accent)} height={110} />
           <div className="stat-row"><span>{num(ov.nodesReady)}</span><span className="dim">/ {num(ov.nodesTotal)} 台</span></div>
         </Card>
         <Card title="告警事件">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 150 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 110 }}>
             <span style={{ fontSize: '2.5rem', fontWeight: 800, fontVariantNumeric: 'tabular-nums',
               color: num(ov.warningEvents) > 0 ? dangerC : okC }}>{num(ov.warningEvents)}</span>
           </div>
           <div className="stat-row"><span className="dim">Warning 事件数(全命名空间)</span></div>
+        </Card>
+      </div>
+
+      {/* 左: 趋势 + 节点用量 上下叠; 右: Pod 用量(滚动) */}
+      <div className="grid grid-2">
+        <div className="k8s-ov-stack">
+          <Card title="集群资源趋势" subtitle="CPU / 内存 · 历史采样持久化">
+            <div className="btn-row" style={{ marginBottom: '0.375rem' }}>
+              {(Object.keys(WIN_LABELS)).map((w) => (
+                <button key={w} className={`btn-glass-soft btn-glass-soft-sm ${win === w ? 'btn-accent' : ''}`} onClick={() => setWin(w as any)}>{WIN_LABELS[w]}</button>
+              ))}
+              <span className="dim" style={{ fontSize: '0.6875rem', marginLeft: 'auto' }}>
+                {hist.length ? `共 ${hist.length} 个采样点` : '采样积累中…'}
+              </span>
+            </div>
+            <EChart option={trendOption} height={160} />
+          </Card>
+          <Card title={`节点实时用量 (${nodeMetrics.length})`} subtitle="CPU / 内存 · 磁盘可用率(驱逐线按节点实际配置)">
+            {nodeMetrics.length === 0 ? <div className="loading">读取中…</div> : nodeMetrics.map((n) => (
+              <div key={n.name} className="k8s-node-meter">
+                <div className="k8s-meter-head">
+                  <b className="mono">{n.name}</b>
+                  <span className="dim mono">{n.cpuMilli}m ({n.cpuPct.toFixed(0)}%) · {Math.round(n.memMiB)}MiB ({n.memPct.toFixed(0)}%){n.diskOK ? ` · 磁盘可用 ${n.diskAvailPct.toFixed(0)}%${n.diskPressure ? ' ⚠ 驱逐压力' : ''}` : ''}</span>
+                </div>
+                {[
+                  { v: n.cpuPct, mem: false },
+                  { v: n.memPct, mem: true },
+                ].map((row, i) => (
+                  <div key={i} className="usage-bar">
+                    <span className={`usage-fill ${row.v > 80 ? 'bg-danger' : row.mem ? 'bg-ok' : 'bg-accent'}`}
+                      style={{ width: `${Math.min(row.v, 100)}%` }} />
+                  </div>
+                ))}
+                {n.diskOK && (
+                  <div className="usage-bar" style={{ position: 'relative' }}
+                    title={`磁盘 ${n.diskUsedGiB.toFixed(1)}G / ${n.diskCapGiB.toFixed(1)}G · 可用 ${n.diskAvailPct.toFixed(1)}% (驱逐线 可用<${n.diskEvictPct}%)`}>
+                    <span className={`usage-fill ${n.diskAvailPct < n.diskEvictPct ? 'bg-danger' : n.diskAvailPct < n.diskEvictPct + 8 ? 'bg-warn' : 'bg-ok'}`}
+                      style={{ width: `${Math.min(n.diskAvailPct, 100)}%` }} />
+                    <span style={{ position: 'absolute', left: `${n.diskEvictPct}%`, top: 0, bottom: 0, width: 1, background: 'rgba(239,68,68,0.9)' }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </Card>
+        </div>
+        <Card title="Pod 用量" subtitle="按 CPU 排序 · 点击行打开 Pod 详情" className="k8s-ov-pods-card">
+          <div className="k8s-ov-pods">
+            <div className="table-wrap"><table className="data-table">
+              <thead><tr><th style={{ width: '42%' }}>Pod</th><th style={{ width: '20%' }}>命名空间</th><th style={{ width: '14%' }}>CPU(m)</th><th style={{ width: '24%' }}>内存(MiB)</th></tr></thead>
+              <tbody>
+                {topPods.length === 0 && <tr><td colSpan={4} className="dim">（暂无数据）</td></tr>}
+                {topPods.map((p) => (
+                  <tr key={`${p.namespace}/${p.name}`} style={{ cursor: 'pointer' }}
+                    onClick={() => openPodRef.current(p)}
+                    title="点击打开 Pod 详情">
+                    <td className="mono">{p.name}</td>
+                    <td className="dim">{p.namespace}</td>
+                    <td className="mono">{p.cpuMilli}</td>
+                    <td className="mono">{Math.round(p.memMiB)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          </div>
         </Card>
       </div>
     </div>
@@ -1311,7 +1349,7 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
 // ── 资源弹层: Pod 详情 · 工作负载管理(scale/回滚/暂停/重启) · 节点管理 · 通用 YAML 编辑 ──
 
 function ResourceModal({ info, onClose, act, onMsg }: {
-  info: { kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe'; res: K8sRes; ns: string; name: string; cluster: string }
+  info: { kind: 'pod' | 'workload' | 'yaml' | 'node' | 'describe' | 'events'; res: K8sRes; ns: string; name: string; cluster: string }
   onClose: () => void
   act: (body: Record<string, any>, confirmMsg?: string) => void
   onMsg?: (m: string) => void
@@ -1326,6 +1364,8 @@ function ResourceModal({ info, onClose, act, onMsg }: {
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [desc, setDesc] = useState('')
   const [descBusy, setDescBusy] = useState(false)
+  const [evRows, setEvRows] = useState<any[]>([])
+  const [evBusy, setEvBusy] = useState(false)
   const [replicas, setReplicas] = useState<number | ''>('')
   const [imageDraft, setImageDraft] = useState('')
   const [revs, setRevs] = useState<any[] | null>(null)
@@ -1407,6 +1447,13 @@ function ResourceModal({ info, onClose, act, onMsg }: {
         .catch((e) => setErr(String(e)))
         .finally(() => setDescBusy(false))
     }
+    if (info.kind === 'events') {
+      setEvBusy(true)
+      getJSON<{ ok: boolean; rows: any[]; error?: string }>(`/api/plugins/containers/k8s/events/by-object?cluster=${info.cluster}&res=${info.res}&ns=${info.ns}&name=${info.name}`)
+        .then((d) => d.ok ? setEvRows(d.rows || []) : setErr(d.error || '事件加载失败'))
+        .catch((e) => setErr(String(e)))
+        .finally(() => setEvBusy(false))
+    }
     getJSON<{ ok: boolean; yaml: string; error?: string }>(`/api/plugins/containers/k8s/yaml?cluster=${info.cluster}&res=${info.res}&ns=${info.ns}&name=${info.name}`)
       .then((d) => d.ok ? setYaml(d.yaml) : setErr(d.error || 'YAML 加载失败'))
       .catch((e) => setErr(String(e)))
@@ -1424,7 +1471,8 @@ function ResourceModal({ info, onClose, act, onMsg }: {
 
   return (
     <div className="modal-overlay" onClick={onClose} onWheel={(e) => e.stopPropagation()}>
-      <div className="modal log-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 880 }}>
+      <div className="modal log-modal" onClick={(e) => e.stopPropagation()}
+        style={info.kind === 'events' ? { maxWidth: 1100, width: 'min(96vw, 1100px)' } : { maxWidth: 880 }}>
         <div className="modal-head">
           <div className="modal-title">
             {titleOf(info.res)}: <span className="mono">{info.name}</span>
@@ -1934,6 +1982,40 @@ function ResourceModal({ info, onClose, act, onMsg }: {
               {desc && <pre className="code-block" style={{ maxHeight: '56vh', overflow: 'auto', fontSize: '0.75rem', whiteSpace: 'pre-wrap' }}>{desc}</pre>}
             </>
           )}
+
+          {/* 对象关联 Events (kubectl describe 尾段风格) */}
+          {info.kind === 'events' && (
+            <>
+              <div className="dim" style={{ fontSize: '0.6875rem', fontWeight: 700, marginBottom: '0.375rem' }}>
+                {titleOf(info.res)} {info.name} 相关事件 {evBusy ? '· 加载中…' : `(${evRows.length} 条)`}
+              </div>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead><tr>
+                    <th style={{ width: '8%' }}>Type</th>
+                    <th style={{ width: '14%' }}>Reason</th>
+                    <th style={{ width: '8%' }}>Age</th>
+                    <th style={{ width: '15%' }}>来源</th>
+                    <th>Message</th>
+                  </tr></thead>
+                  <tbody>
+                    {evRows.length === 0 && !evBusy && (
+                      <tr><td colSpan={5} className="dim">（无事件，或事件已超出保留窗口(约1h)）</td></tr>
+                    )}
+                    {evRows.map((e, i) => (
+                      <tr key={i} style={{ background: e.type === 'Warning' ? 'rgba(239, 68, 68, 0.08)' : undefined }}>
+                        <td><span className={`badge ${e.type === 'Warning' ? 'badge-off' : 'badge-ok'}`}>{e.type}</span>{Number(e.count) > 1 ? ` ×${e.count}` : ''}</td>
+                        <td className="mono small">{e.reason}</td>
+                        <td className="mono small dim">{e.age || '—'}</td>
+                        <td className="mono small dim">{e.source || '—'}</td>
+                        <td className="small" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'visible', textOverflow: 'clip' }}>{e.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -2058,13 +2140,14 @@ const CTX_DEFS: Partial<Record<K8sRes, CtxItem[]>> = {
   ],
 }
 
-function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, onViewDetail, onDescribe, onStream, onClose }: {
+function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, onViewDetail, onDescribe, onEvents, onStream, onClose }: {
   x: number; y: number
   res: K8sRes; ns: string; name: string; cluster: string
   onAction: (action: string, extra?: Record<string, any>) => void
   onOpenForm: (action: string) => void
   onViewDetail: () => void
   onDescribe: () => void
+  onEvents: () => void
   onStream: (type: string) => void
   onClose: () => void
 }) {
@@ -2099,10 +2182,24 @@ function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, on
   items.push({ label: '打注解', action: 'annotate', form: true })
   items.push({ label: '查看详情', action: 'view-detail' })
   items.push({ label: 'Describe', action: 'describe' })
+  items.push({ label: '查看 Events', action: 'events' })
   items.push({ sep: true } as any)
   items.push({ label: '删除资源', action: 'delete', danger: true, confirm: `删除 ${name}?` })
+  // 视口边界吸附: 菜单超界时上翻/左翻, 避免靠下/靠右资源右键出屏
+  const ctxRef = useRef<HTMLDivElement>(null)
+  const [ctxPos, setCtxPos] = useState<{ x: number; y: number }>({ x, y })
+  useLayoutEffect(() => {
+    const el = ctxRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    let px = x, py = y
+    if (x + r.width > window.innerWidth - 8) px = Math.max(8, window.innerWidth - r.width - 8)
+    if (y + r.height > window.innerHeight - 8) py = Math.max(8, window.innerHeight - r.height - 8)
+    setCtxPos({ x: px, y: py })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [x, y])
   return (
-    <div className="k8s-ctxmenu" style={{ left: x, top: y }} onClick={onClose}>
+    <div ref={ctxRef} className="k8s-ctxmenu" style={{ left: ctxPos.x, top: ctxPos.y }} onClick={onClose}>
       {items.map((it, i) =>
         (it as any).sep
           ? <div key={i} className="k8s-ctx-divider" />
@@ -2112,6 +2209,7 @@ function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, on
                 if (it.confirm && !confirm(it.confirm)) return
                 if (it.action === 'view-detail') { onViewDetail() }
                 else if (it.action === 'describe') { onDescribe() }
+                else if (it.action === 'events') { onEvents() }
                 else if (it.stream) { onStream(it.stream) }
                 else if (it.form) { onOpenForm(it.action!) }
                 else onAction(it.action!, it.extra)
