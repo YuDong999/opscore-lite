@@ -429,9 +429,9 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   const batchSorted = (batchCatalog || [])
     .filter(a => !a.requiresTTY && (a.params || []).every(p => DC_PASS.includes(p.name)) && !a.name.startsWith('create-'))
     .sort((a, b) => (DANGER_BATCH.has(a.name) ? 1 : 0) - (DANGER_BATCH.has(b.name) ? 1 : 0))
-  const runBatchAct = (a: ActionSpec) => {
+  const runBatchAct = (a: ActionSpec, extraOverride?: Record<string, any>) => {
     const n = selected.size
-    const extra = a.name === 'scale' ? { replicas: Math.max(0, batchReplicas || 0) } : undefined
+    const extra = extraOverride ?? (a.name === 'scale' ? { replicas: Math.max(0, batchReplicas || 0) } : undefined)
     const msg = DANGER_BATCH.has(a.name)
       ? `⚠ 批量${a.label} ${n} 个资源? 高危操作, 请确认`
       : `确认批量${a.label} ${n} 个资源?`
@@ -744,31 +744,41 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                   {batchMenuOpen && selected.size > 0 && (
                     <>
                       <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setBatchMenuOpen(false)} />
-                      <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 91, minWidth: 230,
+                      <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 91, minWidth: 265,
                         background: 'var(--surface-solid, #fff)', border: '1px solid var(--border)', borderRadius: 8,
                         boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.3rem', maxHeight: 340, overflowY: 'auto' }}>
-                        {batchSorted.map((a, i) => (
-                          <div key={a.name}>
-                            {i > 0 && DANGER_BATCH.has(a.name) && !DANGER_BATCH.has(batchSorted[i - 1].name) && (
-                              <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
-                            )}
-                            {a.name === 'scale' ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.3rem 0.5rem' }}>
-                                <span style={{ flex: 1, fontSize: '0.8125rem' }}>{a.label}</span>
-                                <input type="number" min={0} className="ipt" style={{ width: 58 }} value={batchReplicas}
-                                  onChange={e => setBatchReplicas(Number(e.target.value) || 0)} title="目标副本数" />
-                                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => runBatchAct(a)}>执行</button>
-                              </div>
-                            ) : (
-                              <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
-                                fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
-                                color: DANGER_BATCH.has(a.name) ? 'var(--lvl-error, #e5484d)' : 'inherit' }}
-                                onClick={() => runBatchAct(a)}>
-                                {DANGER_BATCH.has(a.name) ? '⚠ ' : ''}{a.label}
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                        {(() => {
+                          const rows: { key: string; label: string; danger: boolean; extra?: Record<string, any>; spec: ActionSpec }[] = []
+                          for (const a of batchSorted) {
+                            if (res === 'pods' && a.name === 'delete') {
+                              // Pod 无原生 scale/restart, 重启语义 = 立即删除由 Deployment 重建 (force)
+                              rows.push({ key: 'pods-restart', label: '批量重启 (立即删除重建)', danger: false, extra: { force: true }, spec: a })
+                            }
+                            rows.push({ key: a.name, label: (DANGER_BATCH.has(a.name) ? '⚠ ' : '') + a.label, danger: DANGER_BATCH.has(a.name), spec: a })
+                          }
+                          return rows.map((row, i) => (
+                            <div key={row.key}>
+                              {i > 0 && row.danger && !rows[i - 1].danger && (
+                                <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
+                              )}
+                              {row.spec.name === 'scale' ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.25rem 0.4rem', whiteSpace: 'nowrap' }}>
+                                  <span style={{ flexShrink: 0, fontSize: '0.8125rem' }}>{row.spec.label}</span>
+                                  <input type="number" min={0} className="ipt" style={{ width: 50 }} value={batchReplicas}
+                                    onChange={e => setBatchReplicas(Number(e.target.value) || 0)} title="目标副本数" />
+                                  <button className="btn-glass-soft btn-glass-soft-sm" style={{ padding: '0.15rem 0.4rem' }} onClick={() => runBatchAct(row.spec, row.extra)}>执行</button>
+                                </div>
+                              ) : (
+                                <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
+                                  fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
+                                  color: row.danger ? 'var(--lvl-error, #e5484d)' : 'inherit' }}
+                                  onClick={() => runBatchAct(row.spec, row.extra)}>
+                                  {row.label}
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        })()}
                         {batchSorted.length === 0 && (
                           <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.8125rem', opacity: 0.6 }}>该资源类型暂无可用批量动作</div>
                         )}
