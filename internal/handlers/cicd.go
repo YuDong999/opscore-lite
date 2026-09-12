@@ -7,14 +7,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,17 +108,37 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 			if !reCicdName.MatchString(strings.TrimSpace(sp.Name)) {
 				return fmt.Sprintf("阶段 %q 存在无效步骤名", st.Name)
 			}
-			if strings.TrimSpace(sp.Command) == "" {
-				return fmt.Sprintf("步骤 %q 命令不能为空", sp.Name)
-			}
-			if len(sp.Command) > 8192 {
-				return fmt.Sprintf("步骤 %q 命令过长(≤8KB)", sp.Name)
+			if sp.Action == "" { // 动作步骤的命令由引擎运行时从 Action 编译, 无需 Command
+				if strings.TrimSpace(sp.Command) == "" {
+					return fmt.Sprintf("步骤 %q 命令不能为空", sp.Name)
+				}
+				if len(sp.Command) > 8192 {
+					return fmt.Sprintf("步骤 %q 命令过长(≤8KB)", sp.Name)
+				}
 			}
 			if sp.TimeoutMin < 0 || sp.TimeoutMin > 1440 {
 				return fmt.Sprintf("步骤 %q 超时无效", sp.Name)
 			}
 			if sp.PullArtifact != "" && !cicd.ValidArtifactFile(sp.PullArtifact) {
 				return fmt.Sprintf("步骤 %q 拉取制品文件名无效", sp.Name)
+			}
+			if sp.Action != "" {
+				if err := cicd.ValidateActionParams(sp.Action, sp.Params); err != nil {
+					return fmt.Sprintf("步骤 %q 动作配置无效: %v", sp.Name, err)
+				}
+			}
+		}
+		for _, def := range p.Params {
+			if def.Name == "" || strings.ContainsAny(def.Name, " \t\r\n") || len(def.Name) > 64 {
+				return "参数名无效(非空, 无空白, ≤64 字符)"
+			}
+			switch def.Type {
+			case "", "text", "textarea", "number", "select":
+			default:
+				return fmt.Sprintf("参数 %s 类型无效", def.Name)
+			}
+			if def.Type == "select" && len(def.Options) == 0 {
+				return fmt.Sprintf("参数 %s 为下拉类型但未配置选项", def.Name)
 			}
 		}
 	}
@@ -124,6 +149,37 @@ func cicdValidatePipeline(p *cicd.Pipeline) string {
 
 // CicdExec 在目标主机上执行步骤命令: 本机逐行流式; 远程 SSH 单会话(完成后整块回传)。
 // 命令语义为 POSIX shell(sh -c); 远程参数经 Shq 单引号转义防注入。
+// CicdExecDirect 控制面直连执行(nginx 探测/配置应用): 不走流式通道, 合并输出直接返回。
+// 本机经 sh -c; 远程经 SSH 单会话。命令为控制面命令, 与步骤命令(用户 shell)信任级一致。
+func CicdExecDirect(hostID, command string) (string, int, error) {
+	if IsLocalTarget(hostID) {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			return "", -1, errors.New("本机未找到 sh(Windows 需 Git Bash)")
+		}
+		cmd := exec.Command(sh, "-c", command)
+		out, err := cmd.CombinedOutput()
+		rc := 0
+		if err != nil {
+			rc = -1
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				rc = ee.ExitCode()
+			}
+		}
+		return string(out), rc, nil
+	}
+	h := resolveAnsibleHost(hostID)
+	if h == nil {
+		return "", -1, fmt.Errorf("目标主机不存在: %s", hostID)
+	}
+	if remotePool == nil {
+		return "", -1, errors.New("远程执行池未初始化")
+	}
+	rm := resolveRemoteHost(*h)
+	return remotePool.ExecLine(rm, ArgsToLine([]string{"sh", "-c", command}))
+}
+
 func CicdExec(ctx context.Context, hostID, workspace, command string, env []cicd.Var, onLine func(string)) (int, error) {
 	if IsLocalTarget(hostID) {
 		return cicdExecLocal(ctx, workspace, command, env, onLine)
@@ -197,7 +253,69 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 	}
 	rm := resolveRemoteHost(*h)
 	script := cicdRemoteScript(workspace, command, env)
-	line := ArgsToLine([]string{"sh", "-c", script})
+	// 流式回传(参照 Jenkins progressiveText): 输出重定向到远端临时文件, 主会话只等退出码;
+	// 轮询会话按字节偏移增量 tail 回传 —— 长任务期间页面不再是黑盒。
+	logFile := "/tmp/.opscore-cicd-" + stepLogTag(workspace, command) + ".log"
+	line := ArgsToLine([]string{"sh", "-c", "{ " + script + "; } > " + Shq(logFile) + " 2>&1"})
+
+	var mu sync.Mutex
+	off := 0       // 已回传字节数
+	rest := ""     // 未收尾的行尾段(避免切断掩码边界)
+	emit := func(chunk string) {
+		mu.Lock()
+		defer mu.Unlock()
+		rest += chunk
+		for {
+			idx := strings.Index(rest, "\n")
+			if idx < 0 {
+				break
+			}
+			if onLine != nil {
+				onLine(strings.TrimRight(rest[:idx], "\r"))
+			}
+			rest = rest[idx+1:]
+		}
+		off += len(chunk)
+	}
+	drain := func() { // 末次清底: 连尾部未收尾行一起回传
+		mu.Lock()
+		o := off
+		mu.Unlock()
+		out, _, err := remotePool.ExecLine(rm, "tail -c +"+strconv.Itoa(o+1)+" "+Shq(logFile)+" 2>/dev/null; rm -f "+Shq(logFile))
+		if err == nil && out != "" {
+			emit(out)
+		}
+		mu.Lock()
+		r := rest
+		rest = ""
+		mu.Unlock()
+		if onLine != nil && r != "" {
+			onLine(strings.TrimRight(r, "\r"))
+		}
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				o := off
+				mu.Unlock()
+				out, _, err := remotePool.ExecLine(rm, "tail -c +"+strconv.Itoa(o+1)+" "+Shq(logFile)+" 2>/dev/null")
+				if err == nil && out != "" {
+					emit(out)
+				}
+			}
+		}
+	}()
+
 	type execResult struct {
 		out string
 		rc  int
@@ -212,19 +330,26 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 	select {
 	case res = <-ch:
 	case <-ctx.Done():
-		// SSH 会话无法安全终止, 放弃等待; 远端命令自行结束后会话释放
+		// SSH 会话无法安全终止, 放弃等待; 停轮询并尽力清底(临时文件留给远端自生自灭)
+		close(stop)
+		<-done
 		return -1, ctx.Err()
 	}
-	if res.out != "" {
-		for _, l := range strings.Split(strings.TrimRight(res.out, "\n"), "\n") {
-			onLine(l)
-		}
-	}
+	close(stop)
+	<-done
+	drain()
 	if res.err != nil {
 		onLine("[error] " + res.err.Error())
+		onLine("[error] 下发命令(掩码后): " + line) // 传输/语法故障时回显实发命令, 便于定位
 		return -1, res.err
 	}
 	return res.rc, nil
+}
+
+// stepLogTag 远程步骤临时日志文件名(同主机并发步骤互不覆盖; 内容哈希定路径, 轮询会话无需握手)
+func stepLogTag(workspace, command string) string {
+	sum := sha1.Sum([]byte(workspace + "\x00" + command))
+	return hex.EncodeToString(sum[:6])
 }
 
 // cicdRemoteScript 拼装远程脚本: env export(转义) + cd 工作目录 + 命令本体
@@ -354,7 +479,10 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID     string            `json:"id"`
+		Branch string            `json:"branch"`
+		Commit string            `json:"commit"` // 非空=回滚到该提交
+		Params map[string]string `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "请求格式错误", http.StatusBadRequest)
@@ -373,7 +501,7 @@ func CicdPipelineRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "该流水线未启用手动触发", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.Trigger(body.ID, cicd.TriggerManual)
+	run, err := cicdEngine.TriggerCommit(body.ID, cicd.TriggerManual, strings.TrimSpace(body.Branch), strings.TrimSpace(body.Commit), body.Params)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
@@ -416,6 +544,26 @@ func CicdRunApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cicdEngine.Approve(body.RunID, body.Approve); err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true})
+}
+
+// CicdRunDelete 删除单条历史运行(含日志与制品; 进行中须先取消)
+func CicdRunDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		RunID string `json:"runId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	if err := cicdEngine.DeleteRun(body.RunID); err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -471,6 +619,29 @@ func CicdRunLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, map[string]any{"content": content, "offset": newOffset})
+}
+
+// CicdRunLogDownload 导出运行日志为 txt(GET ?id=, 支持 ?token=)
+func CicdRunLogDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID := r.URL.Query().Get("id")
+	run, ok := cicdEngine.GetRun(runID)
+	if !ok {
+		writeErr(w, "运行记录不存在", http.StatusNotFound)
+		return
+	}
+	path := filepath.Join("cicd", "logs", runID+".log")
+	content, err := os.ReadFile(filepath.Join("data", path))
+	if err != nil {
+		writeErr(w, "日志文件不存在(可能已被清理)", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+run.Pipeline+`-`+runID+`.log.txt"`)
+	w.Write(content)
 }
 
 // CicdRunStream SSE: 日志增量 + 状态推送, 终态后补发一帧并结束
@@ -557,6 +728,7 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "流水线未启用 Webhook", http.StatusForbidden)
 		return
 	}
+	raw, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	token := r.Header.Get("X-Opscore-Token")
 	if token == "" {
 		token = r.URL.Query().Get("token")
@@ -565,7 +737,7 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Secret string `json:"secret"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err == nil {
+		if err := json.Unmarshal(raw, &body); err == nil {
 			token = body.Secret
 		}
 	}
@@ -577,12 +749,155 @@ func CicdWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "Webhook 凭证错误", http.StatusForbidden)
 		return
 	}
-	run, err := cicdEngine.Trigger(id, cicd.TriggerWebhook)
+	// 解析 Git 平台 push 事件(GitHub/Gitea/GitLab 同构): 分支与 commit 关联到本次运行
+	branch, commit := parsePushEvent(raw)
+	run, err := cicdEngine.TriggerCommit(id, cicd.TriggerWebhook, branch, commit, nil)
 	if err != nil {
 		writeErr(w, err.Error(), http.StatusConflict)
 		return
 	}
-	WriteJSON(w, map[string]any{"ok": true, "runId": run.ID})
+	WriteJSON(w, map[string]any{"ok": true, "runId": run.ID, "branch": branch, "commit": commit})
+}
+
+// parsePushEvent 从 webhook payload 提取 push 分支与 commit。
+// GitHub/Gitea/GitLab 的 push 事件同构: {ref:"refs/heads/x", after:"<40位sha>"}。
+// 规则: 非 refs/heads/*(tag/release 等)不覆盖; after 非 40 位十六进制或全零(删分支)不钉 commit。
+func parsePushEvent(raw []byte) (branch, commit string) {
+	var ev struct {
+		Ref   string `json:"ref"`
+		After string `json:"after"`
+	}
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		return "", ""
+	}
+	const heads = "refs/heads/"
+	if !strings.HasPrefix(ev.Ref, heads) {
+		return "", ""
+	}
+	branch = strings.TrimPrefix(ev.Ref, heads)
+	c := strings.ToLower(strings.TrimSpace(ev.After))
+	if len(c) != 40 {
+		return branch, ""
+	}
+	for _, ch := range c {
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+			return branch, ""
+		}
+	}
+	if c == strings.Repeat("0", 40) {
+		return branch, ""
+	}
+	return branch, c
+}
+
+// ── 状态徽章(公开只读端点, 无鉴权: 仅暴露流水线名与最近运行状态) ──
+
+// CicdBadge GET /api/cicd/badge/{pipelineId}.svg
+func CicdBadge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/cicd/badge/"), ".svg")
+	if !reCicdID.MatchString(id) {
+		writeErr(w, "无效的流水线 ID", http.StatusNotFound)
+		return
+	}
+	name, status, ok := cicdEngine.Badge(id)
+	if !ok {
+		writeErr(w, "流水线不存在", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(badgeSVG(name, status))
+}
+
+// badgeBadgeText 状态中文与配色(扁平风格, 与前端主题状态色对齐)
+var badgeStatus = map[string]struct {
+	text  string
+	color string
+}{
+	"success":  {"成功", "#2da44e"},
+	"failed":   {"失败", "#cf222e"},
+	"running":  {"运行中", "#bf8700"},
+	"queued":   {"排队中", "#8250df"},
+	"waiting":  {"待审批", "#bf8700"},
+	"canceled": {"已取消", "#6e7781"},
+	"unknown":  {"从未运行", "#6e7781"},
+}
+
+func badgeSVG(name, status string) []byte {
+	st, ok := badgeStatus[status]
+	if !ok {
+		st = badgeStatus["unknown"]
+	}
+	text := fmt.Sprintf("%s | %s", name, st.text)
+	w := 8*len([]rune(name)) + 8*len([]rune(st.text)) + 58
+	// 文本居中偏移(近似)
+	nameW := 8*len([]rune(name)) + 16
+	return []byte(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="20" role="img" aria-label="%s">`+
+			`<linearGradient id="s" x2="0" y2="100%%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient>`+
+			`<clipPath id="r"><rect width="%d" height="20" rx="3" fill="#fff"/></clipPath>`+
+			`<g clip-path="url(#r)"><rect width="%d" height="20" fill="#555"/><rect x="%d" width="%d" height="20" fill="%s"/><rect width="%d" height="20" fill="url(#s)"/></g>`+
+			`<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">`+
+			`<text x="%d" y="14">%s</text><text x="%d" y="14">%s</text></g></svg>`,
+		w, text, w, nameW, nameW, w-nameW, st.color, w,
+		nameW/2+1, name, nameW+(w-nameW)/2, st.text,
+	))
+}
+
+// ── nginx 流量分发可视化(探测 + 应用) ──────────────────────
+
+// CicdNginxProbe POST /api/cicd/nginx/probe {host} → 配置结构
+func CicdNginxProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Host string `json:"host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	probe, err := cicdEngine.NginxProbe(body.Host)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, probe)
+}
+
+// CicdNginxApply POST /api/cicd/nginx/apply {host, mainConf, edits[]}
+func CicdNginxApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req cicd.NginxApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	if err := cicdEngine.NginxApply(req.Host, &req); err != nil {
+		writeErr(w, err.Error(), http.StatusConflict)
+		return
+	}
+	WriteJSON(w, map[string]any{"ok": true})
+}
+
+// ── 操作审计 ──────────────────────────────────────────────
+
+// CicdAudit GET /api/cicd/audit —— CI/CD 操作审计链(新→旧)
+func CicdAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	WriteJSON(w, cicdEngine.ListAudit())
 }
 
 // ── 概览 ──────────────────────────────────────────────────
@@ -684,6 +999,61 @@ func CicdArtifactDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
 	http.ServeFile(w, r, path)
+}
+
+// ── 维护模式 ───────────────────────────────────────────────
+
+// CicdMaintenance 查询/切换维护模式(GET 查询, POST {enabled} 切换)
+func CicdMaintenance(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		WriteJSON(w, map[string]any{"enabled": cicdEngine.Maintenance()})
+	case http.MethodPost:
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, "请求格式错误", http.StatusBadRequest)
+			return
+		}
+		cicdEngine.SetMaintenance(body.Enabled)
+		WriteJSON(w, map[string]any{"ok": true, "enabled": body.Enabled})
+	default:
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ── 动作注册表 ─────────────────────────────────────────────
+
+// CicdActions 动作定义列表(前端 ActionPicker 与动态表单的 schema 来源)
+func CicdActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	WriteJSON(w, cicd.Actions())
+}
+
+// CicdActionPreview 按参数合成动作命令(前端"转 Shell"用)
+func CicdActionPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Action string            `json:"action"`
+		Params map[string]string `json:"params"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeErr(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	cmd, err := cicd.CompileAction(body.Action, body.Params)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	WriteJSON(w, map[string]any{"command": cmd})
 }
 
 // ── 导入/导出 ─────────────────────────────────────────────
@@ -840,6 +1210,23 @@ func CicdRepoDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, map[string]any{"ok": true})
+}
+
+// CicdRepoBranches 列出仓库远端分支(GET ?id=, 运行时可自由选择分支)
+func CicdRepoBranches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	branches, err := cicdEngine.RepoBranches(r.URL.Query().Get("id"))
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if branches == nil {
+		branches = []string{}
+	}
+	WriteJSON(w, branches)
 }
 
 // CicdRepoTest 连通性测试(服务端 git ls-remote)

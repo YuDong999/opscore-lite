@@ -284,6 +284,28 @@ func (e *Engine) getRepo(id string) (Repo, bool) {
 	return Repo{}, false
 }
 
+// RepoBranches 列出代码仓库的远端分支(git ls-remote --heads, 按名排序)
+func (e *Engine) RepoBranches(id string) ([]string, error) {
+	r, ok := e.getRepo(id)
+	if !ok {
+		return nil, fmt.Errorf("仓库不存在: %s", id)
+	}
+	url := gitAuthURL(r.URL, e.credFor(r.CredID))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", "--heads", url).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote 失败: %v", err)
+	}
+	var branches []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if i := strings.Index(line, "refs/heads/"); i >= 0 {
+			branches = append(branches, line[i+len("refs/heads/"):])
+		}
+	}
+	return branches, nil
+}
+
 // credFor 凭据查找(空 ID 返回 nil)
 func (e *Engine) credFor(id string) *Credential {
 	if id == "" {

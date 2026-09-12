@@ -1,0 +1,284 @@
+package cicd
+
+// 动作注册表: 把常用构建/发布动作结构化为 "类型 + 参数 schema + 命令模板"。
+// 设计原则(见 docs 设计对话): 用户组合动作而非写脚本; shell 永远保留为兜底;
+// 命令模板引用 $参数(env 注入, 已有机制), 注册表不做超出参数校验的抽象。
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// ActionField 动作参数定义; Name 即注入步骤环境变量的名字(建议大写)
+type ActionField struct {
+	Name        string   `json:"name"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"` // text | textarea | select | number
+	Placeholder string   `json:"placeholder,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Required    bool     `json:"required"`
+}
+
+// ActionSpec 动作定义
+type ActionSpec struct {
+	Type     string        `json:"type"`
+	Title    string        `json:"title"`
+	Category string        `json:"category"` // 构建 | 发布 | 验证
+	Fields   []ActionField `json:"fields"`
+	// Command 由参数合成最终 shell 命令($字段名 引用环境变量); 校验失败返回错误
+	Build func(params map[string]string) (string, error)
+}
+
+func required(params map[string]string, names ...string) error {
+	var missing []string
+	for _, n := range names {
+		if strings.TrimSpace(params[n]) == "" {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("缺少必填参数: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+var actionRegistry = map[string]ActionSpec{
+	"docker.build": {
+		Type: "docker.build", Title: "构建 Docker 镜像", Category: "构建",
+		Fields: []ActionField{
+			{Name: "IMAGE", Label: "镜像(不含 tag)", Placeholder: "registry.example.com/team/app", Required: true},
+			{Name: "DOCKERFILE", Label: "Dockerfile 路径", Placeholder: "Dockerfile"},
+			{Name: "CONTEXT", Label: "构建上下文", Placeholder: "."},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "IMAGE"); err != nil {
+				return "", err
+			}
+			df := p["DOCKERFILE"]
+			if df == "" {
+				df = "Dockerfile"
+			}
+			ctx := p["CONTEXT"]
+			if ctx == "" {
+				ctx = "."
+			}
+			return fmt.Sprintf("docker build -f %s -t %s:${BUILD_NUMBER} %s", shq(df), shq(p["IMAGE"]), shq(ctx)), nil
+		},
+	},
+	"docker.push": {
+		Type: "docker.push", Title: "推送 Docker 镜像", Category: "发布",
+		Fields: []ActionField{
+			{Name: "IMAGE", Label: "镜像(不含 tag)", Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "IMAGE"); err != nil {
+				return "", err
+			}
+			// 推送后以 inspect 验证远端可见性语义(本地存在即可推)
+			return fmt.Sprintf("docker push %s:${BUILD_NUMBER}", shq(p["IMAGE"])), nil
+		},
+	},
+	"k8s.apply": {
+		Type: "k8s.apply", Title: "K8s 应用清单", Category: "发布",
+		Fields: []ActionField{
+			{Name: "MANIFEST", Label: "清单路径/目录", Placeholder: "k8s/", Required: true},
+			{Name: "NAMESPACE", Label: "命名空间(可空)", Placeholder: "default"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "MANIFEST"); err != nil {
+				return "", err
+			}
+			ns := ""
+			if p["NAMESPACE"] != "" {
+				ns = " -n " + shq(p["NAMESPACE"])
+			}
+			return fmt.Sprintf("kubectl apply -f %s%s", shq(p["MANIFEST"]), ns), nil
+		},
+	},
+	"k8s.rollout": {
+		Type: "k8s.rollout", Title: "K8s 滚动发布状态", Category: "验证",
+		Fields: []ActionField{
+			{Name: "DEPLOYMENT", Label: "Deployment 名称", Required: true},
+			{Name: "NAMESPACE", Label: "命名空间(可空)", Placeholder: "default"},
+			{Name: "TIMEOUT", Label: "超时秒数", Placeholder: "180"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "DEPLOYMENT"); err != nil {
+				return "", err
+			}
+			timeout := p["TIMEOUT"]
+			if timeout == "" {
+				timeout = "180"
+			}
+			ns := ""
+			if p["NAMESPACE"] != "" {
+				ns = " -n " + shq(p["NAMESPACE"])
+			}
+			return fmt.Sprintf("kubectl rollout status deploy/%s%s --timeout=%ss", shq(p["DEPLOYMENT"]), ns, timeout), nil
+		},
+	},
+"test.junit": {
+		Type: "test.junit", Title: "运行测试(JUnit 报告)", Category: "测试",
+		Fields: []ActionField{
+			{Name: "COMMAND", Label: "测试命令", Placeholder: "mvn test / npm test / go test ./...", Required: true},
+			{Name: "REPORT_GLOB", Label: "JUnit 报告位置(find -path 模式)", Placeholder: "*TEST-*.xml"},
+			{Name: "PASS_RATE", Label: "成功率门槛%(可空=有失败即失败)", Placeholder: "95"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "COMMAND"); err != nil {
+				return "", err
+			}
+			glob := p["REPORT_GLOB"]
+			if glob == "" {
+				glob = "*TEST-*.xml"
+			}
+			pr := strings.TrimSpace(p["PASS_RATE"])
+			gate := `if [ "$F" -gt 0 ]; then echo "质量门禁未通过: 失败 $F / $T"; exit 1; fi`
+			if pr != "" {
+				gate += fmt.Sprintf(`; if [ "$T" -gt 0 ]; then PR=$(( (T-F)*100/T )); if [ "$PR" -lt %s ]; then echo "质量门禁未通过: 成功率 ${PR}%%%% < %s%%%%"; exit 1; fi; fi`, shq(pr), shq(pr))
+			}
+			// 统计口径: <testcase=总用例, <failure/<error=失败, <skipped=跳过(JUnit/surefire 标准结构)
+			return fmt.Sprintf("{ %s; }; RC=$?; if [ $RC -ne 0 ]; then exit $RC; fi; "+
+				"T=0; F=0; S=0; for f in $(find . -type f -path %s 2>/dev/null); do "+
+				"T=$((T+$(grep -o '<testcase' \"$f\" 2>/dev/null | wc -l))); "+
+				"F=$((F+$(grep -oE '<failure|<error' \"$f\" 2>/dev/null | wc -l))); "+
+				"S=$((S+$(grep -o '<skipped' \"$f\" 2>/dev/null | wc -l))); done; "+
+				"printf '@@CICD_TESTS@@{\"tests\":%%d,\"failed\":%%d,\"skipped\":%%d}\n' \"$T\" \"$F\" \"$S\"; "+gate,
+				p["COMMAND"], shq(glob)), nil // COMMAND 是用户命令(与 shell 步骤同信任级), 原样展开; 仅 glob 作为值引用
+		},
+	},
+	"nginx.bgswitch": {
+		Type: "nginx.bgswitch", Title: "蓝绿切换(nginx root)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "CONF", Label: "站点配置文件路径", Placeholder: "/etc/nginx/demo-site.conf", Required: true},
+			{Name: "MARKER", Label: "server 行特征(限定替换范围)", Placeholder: "listen 8097", Required: true},
+			{Name: "ROOT_BLUE", Label: "蓝环境 root", Placeholder: "/opt/app/blue", Required: true},
+			{Name: "ROOT_GREEN", Label: "绿环境 root", Placeholder: "/opt/app/green", Required: true},
+			{Name: "MODE", Label: "切至", Type: "select", Options: []string{"green", "blue"}, Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "CONF", "MARKER", "ROOT_BLUE", "ROOT_GREEN", "MODE"); err != nil {
+				return "", err
+			}
+			if p["MODE"] != "blue" && p["MODE"] != "green" {
+				return "", fmt.Errorf("MODE 必须为 blue 或 green")
+			}
+			if strings.Contains(p["MARKER"], "'") {
+				return "", fmt.Errorf("MARKER 不能包含单引号")
+			}
+			root := p["ROOT_BLUE"]
+			if p["MODE"] == "green" {
+				root = p["ROOT_GREEN"]
+			}
+			// 约定: conf 内目标 server 块含 MARKER 行; MARKER 即地址正则片段(原样进入, 勿含单引号)
+			return fmt.Sprintf("sed -i -E '/%s/,+1s#root [^;]*;#root %s;#' %s && nginx -t >/dev/null && nginx -s reload && echo 蓝绿已切换: %s",
+				p["MARKER"], shq(root), shq(p["CONF"]), p["MODE"]), nil
+		},
+	},
+	"k8s.scale": {
+		Type: "k8s.scale", Title: "K8s 副本放量(金丝雀)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "DEPLOYMENT", Label: "Deployment 名称", Required: true},
+			{Name: "REPLICAS", Label: "目标副本数", Placeholder: "2", Required: true},
+			{Name: "NAMESPACE", Label: "命名空间(可空)", Placeholder: "default"},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "DEPLOYMENT", "REPLICAS"); err != nil {
+				return "", err
+			}
+			ns := ""
+			if p["NAMESPACE"] != "" {
+				ns = " -n " + shq(p["NAMESPACE"])
+			}
+			return fmt.Sprintf("kubectl%s scale deploy/%s --replicas=%s", ns, shq(p["DEPLOYMENT"]), shq(p["REPLICAS"])), nil
+		},
+	},
+	"nginx.canary": {
+		Type: "nginx.canary", Title: "金丝雀权重(nginx upstream)", Category: "发布",
+		Fields: []ActionField{
+			{Name: "CONF", Label: "upstream 所在配置文件", Placeholder: "/etc/nginx/demo-site.conf", Required: true},
+			{Name: "PORT_BLUE", Label: "蓝环境端口", Placeholder: "9001", Required: true},
+			{Name: "PORT_GREEN", Label: "绿环境端口", Placeholder: "9002", Required: true},
+			{Name: "GREEN_WEIGHT", Label: "绿环境权重 0-100(蓝=100-绿)", Placeholder: "10", Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "CONF", "PORT_BLUE", "PORT_GREEN", "GREEN_WEIGHT"); err != nil {
+				return "", err
+			}
+			gw := 0
+			for _, c := range p["GREEN_WEIGHT"] {
+				if c < '0' || c > '9' {
+					return "", fmt.Errorf("GREEN_WEIGHT 必须为 0-100 的整数")
+				}
+			}
+			fmt.Sscanf(p["GREEN_WEIGHT"], "%d", &gw)
+			if gw < 0 || gw > 100 {
+				return "", fmt.Errorf("GREEN_WEIGHT 必须为 0-100")
+			}
+			// 端口即行锚点, 整行重建; 0/100 用 down 下线(nginx 不接受 weight=0), 蓝绿互补
+			blue, green := "weight="+fmt.Sprint(100-gw), "weight="+fmt.Sprint(gw)
+			if gw == 0 {
+				green = "down" // nginx 不接受 weight=0
+			}
+			if gw == 100 {
+				blue = "down"
+			}
+			return fmt.Sprintf("sed -i -E -e 's#.*127.0.0.1:%s[ ;].*#server 127.0.0.1:%s %s;#' "+
+				"-e 's#.*127.0.0.1:%s[ ;].*#server 127.0.0.1:%s %s;#' %s && nginx -t >/dev/null && nginx -s reload && "+
+				"echo 金丝雀权重: 绿 %d%% / 蓝 %d%%",
+				shq(p["PORT_GREEN"]), shq(p["PORT_GREEN"]), green,
+				shq(p["PORT_BLUE"]), shq(p["PORT_BLUE"]), blue,
+				shq(p["CONF"]), gw, 100-gw), nil
+		},
+	},
+	"health.http": {
+		Type: "health.http", Title: "HTTP 健康检查", Category: "验证",
+		Fields: []ActionField{
+			{Name: "URL", Label: "健康检查地址", Placeholder: "http://127.0.0.1:8080/healthz", Required: true},
+		},
+		Build: func(p map[string]string) (string, error) {
+			if err := required(p, "URL"); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("curl -fsS --max-time 10 %s", shq(p["URL"])), nil
+		},
+	},
+}
+
+// Actions 返回全部动作定义(按类型名排序, 输出稳定)
+func Actions() []ActionSpec {
+	out := make([]ActionSpec, 0, len(actionRegistry))
+	for _, spec := range actionRegistry {
+		out = append(out, spec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	return out
+}
+
+// GetAction 按类型取动作定义
+func GetAction(actionType string) (ActionSpec, bool) {
+	spec, ok := actionRegistry[actionType]
+	return spec, ok
+}
+
+// CompileAction 校验参数并合成最终 shell 命令; 参数经步骤环境变量注入,
+// 模板中的 $字段名 引用在目标 shell 里展开(变量注入已走转义通道)。
+func CompileAction(actionType string, params map[string]string) (string, error) {
+	spec, ok := actionRegistry[actionType]
+	if !ok {
+		return "", fmt.Errorf("未知动作类型: %s", actionType)
+	}
+	return spec.Build(params)
+}
+
+// ValidateActionParams 保存流水线时校验动作与必填参数
+func ValidateActionParams(actionType string, params map[string]string) error {
+	if _, ok := actionRegistry[actionType]; !ok {
+		return fmt.Errorf("未知动作类型: %s", actionType)
+	}
+	if _, err := CompileAction(actionType, params); err != nil {
+		return err
+	}
+	return nil
+}

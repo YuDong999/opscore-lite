@@ -24,6 +24,8 @@ export default function SettingsModule() {
   const [pgDSN, setPgDSN] = useState('')
   const [migrating, setMigrating] = useState(false)
   const [migrateResult, setMigrateResult] = useState<MigrationResult | null>(null)
+  const [maintenance, setMaintenance] = useState(false)
+  const [info, setInfo] = useState<any>(null)
 
   useEffect(() => {
     getJSON<any>('/api/auth/token').then((d) => {
@@ -31,7 +33,17 @@ export default function SettingsModule() {
       if (d.token) setToken(d.token)
     }).catch(() => {})
     getJSON<MigrationStatus>('/api/system/migration-status').then(setDbStatus).catch(() => {})
+    getJSON<{ enabled: boolean }>('/api/cicd/maintenance').then(d => setMaintenance(d.enabled)).catch(() => {})
+    getJSON<any>('/api/system/info').then(setInfo).catch(() => {})
   }, [])
+
+  const toggleMaintenance = async () => {
+    const next = !maintenance
+    try {
+      await postJSON('/api/cicd/maintenance', { enabled: next })
+      setMaintenance(next)
+    } catch {}
+  }
 
   const saveToken = async () => {
     try {
@@ -129,6 +141,43 @@ export default function SettingsModule() {
             {saved ? '✓ 已保存' : '保存'}
           </button>
         </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20, marginBottom: 24 }}>
+        <h2 style={{ fontSize:'1.125rem', fontWeight: 700, marginBottom: 4 }}>CI/CD 引擎</h2>
+        <p style={{ fontSize:'0.8125rem', color: 'var(--text-dim)', marginBottom: 12 }}>
+          维护模式：暂停接受新的运行（定时/Webhook/手动全部拦截），正在运行的流水线不受影响。适用于服务重启前排水，避免产生中断记录。
+        </p>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <button
+            onClick={toggleMaintenance}
+            style={{
+              padding: '0.5rem 1rem', borderRadius: '0.5rem', cursor: 'pointer',
+              border: `1px solid ${maintenance ? 'var(--danger)' : 'var(--border)'}`,
+              background: maintenance ? 'var(--danger)' : 'var(--surface-solid)',
+              color: maintenance ? '#fff' : 'var(--text)',
+              fontWeight: 600, fontSize: '0.8125rem',
+            }}
+          >
+            {maintenance ? '■ 关闭维护模式' : '▶ 开启维护模式'}
+          </button>
+          <span style={{ fontSize: '0.8125rem', color: maintenance ? 'var(--danger)' : 'var(--ok)', fontWeight: 600 }}>
+            {maintenance ? '● 维护中：新的运行将被拒绝' : '○ 正常接收运行'}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+        <h2 style={{ fontSize:'1.125rem', fontWeight: 700, marginBottom: 8 }}>关于</h2>
+        {info ? (
+          <div className="sysinfo" style={{ maxWidth: 480 }}>
+            <div className="sysinfo-item"><span className="sysinfo-k">OpsCore 版本</span><span className="sysinfo-v mono">{info.version}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">Go 版本</span><span className="sysinfo-v mono">{info.goVersion}</span></div>
+            <div className="sysinfo-item"><span className="sysinfo-k">已运行</span><span className="sysinfo-v tabular-nums">{Math.floor(info.uptimeMs / 3600000)}h {Math.floor(info.uptimeMs % 3600000 / 60000)}m</span></div>
+          </div>
+        ) : (
+          <p style={{ fontSize: '0.8125rem', color: 'var(--text-dim)' }}>加载中...</p>
+        )}
       </div>
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>

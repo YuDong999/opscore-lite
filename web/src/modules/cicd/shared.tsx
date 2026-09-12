@@ -3,10 +3,11 @@
 //           U1 confirm() 改为 Promise 化 AlertDialog · U3 等宽数字 · 5 主题自动适配
 
 import { useCallback, useEffect, useState } from 'react'
+import * as React from 'react'
 import { getJSON } from '../../api/client'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { TableHead } from '@/components/ui/table'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -27,8 +28,13 @@ export const API = {
   runLog: '/api/cicd/run/log',
   runStream: '/api/cicd/run/stream',
   runApprove: '/api/cicd/run/approve',
+  runDelete: '/api/cicd/run/delete',
   runs: '/api/cicd/runs',
   overview: '/api/cicd/overview',
+  audit: '/api/cicd/audit',
+  nginxProbe: '/api/cicd/nginx/probe',
+  nginxApply: '/api/cicd/nginx/apply',
+  badge: (id: string) => `/api/cicd/badge/${id}.svg`,
   webhook: (id: string) => `/api/cicd/webhook/${id}`,
   artifactDownload: '/api/cicd/artifact/download',
   credentials: '/api/cicd/credentials',
@@ -38,6 +44,9 @@ export const API = {
   repoSave: '/api/cicd/repo/save',
   repoDelete: '/api/cicd/repo/delete',
   repoTest: '/api/cicd/repo/test',
+  repoBranches: '/api/cicd/repo/branches',
+  actions: '/api/cicd/actions',
+  runLogDownload: '/api/cicd/run/log/download',
   registries: '/api/cicd/registries',
   registrySave: '/api/cicd/registry/save',
   registryDelete: '/api/cicd/registry/delete',
@@ -57,12 +66,17 @@ export interface Trigger { manual: boolean; webhook: boolean; secret: string; cr
 export interface Step {
   name: string; command: string; continueOnFail: boolean; timeoutMin: number
   artifacts?: string[]; pullArtifact?: string
+  action?: string; params?: Record<string, string>
 }
+export interface ActionField { name: string; label: string; type: string; placeholder?: string; required?: boolean }
+export interface ActionSpec { type: string; title: string; category: string; fields: ActionField[] }
 export interface Stage { name: string; host: string; workspace: string; approval: boolean; steps: Step[] }
 export interface Source { repoId: string; branch: string }
+export interface ParamDef { name: string; label: string; type: string; default?: string; options?: string[]; required?: boolean }
 export interface Pipeline {
   id: string; name: string; description: string
   env: Var[]; trigger: Trigger; stages: Stage[]
+  params?: ParamDef[]
   source: Source; registryId: string; kubeCredId: string
   timeoutMin: number; maxRuns: number; notifyURL: string
   notifyChannel?: string; notifySecret?: string
@@ -73,11 +87,12 @@ export interface PipelineView extends Pipeline {
   nextCron?: string
 }
 export interface Artifact { step: string; file: string; size: number; paths: string }
-export interface StepRun { name: string; command: string; status: string; exitCode: number; startedAt?: string; durationMs: number; artifacts?: Artifact[] }
+export interface StepQuality { tests: number; failed: number; skipped: number }
+export interface StepRun { name: string; command: string; status: string; exitCode: number; startedAt?: string; durationMs: number; artifacts?: Artifact[]; quality?: StepQuality }
 export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
-  commit?: string
+  commit?: string; branch?: string; runParams?: Record<string, string>
   canceling?: boolean; progress: number; stages: StageRun[]; startedAt?: string; finishedAt?: string
   durationMs: number; error?: string
 }
@@ -92,6 +107,7 @@ export function useResource<T>(url: string) {
   const [data, setData] = useState<T | null>(null)
   const [err, setErr] = useState('')
   const load = useCallback(() => {
+    if (!url) return
     getJSON<T>(url).then(d => { setData(d); setErr('') }).catch(e => setErr(e.message))
   }, [url])
   useEffect(load, [load])
@@ -136,7 +152,7 @@ export const STATUS_TEXT: Record<string, string> = {
   queued: '排队中', running: '运行中', waiting: '等待审批', success: '成功', failed: '失败',
   canceled: '已取消', skipped: '已跳过', pending: '等待',
 }
-const STATUS_COLOR: Record<string, string> = {
+export const STATUS_COLOR: Record<string, string> = {  // 状态→色 全模块唯一权威
   success: 'var(--ok)', failed: 'var(--danger)', running: 'var(--accent)',
   queued: 'var(--warn)', waiting: 'var(--warn)',
   canceled: 'var(--text-dim)', skipped: 'var(--text-dim)', pending: 'var(--text-dim)',
@@ -160,12 +176,10 @@ export function StatusBadge({ status, suffix }: { status: string; suffix?: strin
 export function ErrBanner({ msg, onClose, className }: { msg: string; onClose?: () => void; className?: string }) {
   if (!msg) return null
   return (
-    <Alert variant="destructive" className={cn('mb-3', className)}>
-      <AlertDescription className="flex items-center justify-between gap-3">
-        <span className="whitespace-pre-wrap">{msg}</span>
-        {onClose && <button className="opacity-70 hover:opacity-100" onClick={onClose}>✕</button>}
-      </AlertDescription>
-    </Alert>
+    <div className={cn('banner banner-err flex items-center justify-between gap-3', className)}>
+      <span className="whitespace-pre-wrap">{msg}</span>
+      {onClose && <button className="opacity-70 hover:opacity-100" onClick={onClose}>✕</button>}
+    </div>
   )
 }
 
@@ -183,4 +197,63 @@ export function fmtSize(n: number): string {
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)}KB`
   return `${n}B`
 }
-export const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时' }
+export const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时', rollback: '回滚' }
+
+// ── 列头排序(B1): 状态按运维关注度定序(活的/异常在前), 其余列走自然序 ──
+const STATUS_ORDER: Record<string, number> = {
+  running: 0, queued: 1, waiting: 2, failed: 3, success: 4, canceled: 5, skipped: 6, pending: 7,
+}
+
+export interface SortState { key: string; dir: 1 | -1 }
+
+// 表头排序 hook: keyOf 取排序键, 切换同列翻转方向, 切换新列回默认
+export function useTableSort<T>(rows: T[], keyOf: Record<string, (r: T) => string | number>) {
+  const [sort, setSort] = useState<SortState>({ key: '', dir: -1 })
+  const sorted = React.useMemo(() => {
+    if (!sort.key || !keyOf[sort.key]) return rows
+    const fn = keyOf[sort.key]
+    return [...rows].sort((a, b) => {
+      const va = fn(a), vb = fn(b)
+      const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'zh')
+      return c * sort.dir
+    })
+  }, [rows, sort, keyOf])
+  const toggle = useCallback((key: string) => {
+    setSort(s => s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'startedAt' ? -1 : 1 })
+  }, [])
+  return { sorted, sort, toggle }
+}
+
+// 排序表头: 点击切换, 活列显示方向箭头(原生 button 保持键盘可达)
+export function SortHead({ label, k, sort, onToggle, className }: {
+  label: string; k: string; sort: SortState; onToggle: (k: string) => void; className?: string
+}) {
+  const active = sort.key === k
+  return (
+    <TableHead className={className}>
+      <button className="inline-flex items-center gap-1 hover:text-foreground transition-colors" onClick={() => onToggle(k)}>
+        {label}
+        <span className={cn('text-[10px] leading-none', !active && 'opacity-0 hover:opacity-50', active && 'text-accent')}>
+          {active && sort.dir === 1 ? '▲' : '▼'}
+        </span>
+      </button>
+    </TableHead>
+  )
+}
+
+export const statusWeight = (s: string) => STATUS_ORDER[s] ?? 99
+
+// ── localStorage JSON 读写 hook(B5 视图/B6 星标共用): 写穿 + 跨标签页无关 ──
+export function useLocalJSON<T>(key: string, initial: T) {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) as T : initial
+    } catch { return initial }
+  })
+  const set = useCallback((v: T) => {
+    setValue(v)
+    try { localStorage.setItem(key, JSON.stringify(v)) } catch { /* 隐私模式等写入失败静默 */ }
+  }, [key])
+  return [value, set] as const
+}

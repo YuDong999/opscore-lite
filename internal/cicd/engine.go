@@ -72,6 +72,8 @@ type Step struct {
 	TimeoutMin     int      `json:"timeoutMin"`
 	Artifacts      []string `json:"artifacts"`     // 制品路径(相对工作目录, 支持 * 通配), 步骤成功后归档
 	PullArtifact   string   `json:"pullArtifact"`  // 运行前把同次运行已收集的制品推送到本步骤主机工作目录
+	Action         string   `json:"action,omitempty"`         // 结构化动作类型(空=按 command 作 shell 执行)
+	Params         map[string]string `json:"params,omitempty"` // 动作参数(注入步骤环境变量)
 }
 
 // Stage 顺序执行的阶段, 回答"在哪台主机上做什么"
@@ -81,6 +83,16 @@ type Stage struct {
 	Workspace string `json:"workspace"` // 工作目录, 空=默认
 	Approval  bool   `json:"approval"`  // 执行前需人工审批(发布门禁)
 	Steps     []Step `json:"steps"`
+}
+
+// ParamDef 参数化构建的参数定义(触发时可填值, 注入为环境变量)
+type ParamDef struct {
+	Name    string   `json:"name"`              // 注入的环境变量名(建议大写)
+	Label   string   `json:"label"`
+	Type    string   `json:"type"`              // text | textarea | select | number
+	Default string   `json:"default,omitempty"`
+	Options []string `json:"options,omitempty"` // select 用
+	Required bool    `json:"required"`
 }
 
 // Source 代码源: 配置后引擎在首阶段自动注入"拉取代码"步骤
@@ -97,8 +109,9 @@ type Pipeline struct {
 	Env         []Var     `json:"env"`
 	Trigger     Trigger   `json:"trigger"`
 	Stages      []Stage   `json:"stages"`
-	Source      Source    `json:"source"`               // 代码源(可选)
-	RegistryID  string    `json:"registryId,omitempty"` // 镜像仓库 → 注入 REGISTRY/REGISTRY_USER/REGISTRY_PASS
+	Params      []ParamDef `json:"params,omitempty"`    // 参数化构建(触发时可填值)
+	Source      Source     `json:"source"`              // 代码源(可选)
+	RegistryID  string     `json:"registryId,omitempty"` // 镜像仓库 → 注入 REGISTRY/REGISTRY_USER/REGISTRY_PASS
 	KubeCredID  string    `json:"kubeCredId,omitempty"` // kubeconfig 凭据 → 注入 KUBECONFIG
 	TimeoutMin  int       `json:"timeoutMin"`
 	MaxRuns     int       `json:"maxRuns"`
@@ -127,6 +140,14 @@ type StepRun struct {
 	FinishedAt time.Time  `json:"finishedAt,omitempty"`
 	DurationMs int64      `json:"durationMs"`
 	Artifacts  []Artifact `json:"artifacts,omitempty"`
+	Quality    *StepQuality `json:"quality,omitempty"` // 质量检查动作(test.junit)解析出的测试汇总
+}
+
+// StepQuality 质量检查动作(test.junit)的测试汇总(JUnit 报告统计)
+type StepQuality struct {
+	Tests   int `json:"tests"`
+	Failed  int `json:"failed"`
+	Skipped int `json:"skipped"`
 }
 
 type StageRun struct {
@@ -144,6 +165,8 @@ type Run struct {
 	Trigger    string     `json:"trigger"`
 	Status     string     `json:"status"`
 	Commit     string     `json:"commit,omitempty"` // 拉取代码步骤捕获的 git commit(hash+标题)
+	Branch     string     `json:"branch,omitempty"` // 本次运行所用分支(重跑用)
+	RunParams  map[string]string `json:"runParams,omitempty"` // 触发时填写的参数值
 	Canceling  bool       `json:"canceling,omitempty"`
 	Progress   int        `json:"progress"` // 完成步骤占比(读取时计算)
 	Stages     []StageRun `json:"stages"`
@@ -175,6 +198,9 @@ func runProgress(r *Run) int {
 // 返回退出码; ctx 取消时应尽快中断(本机 kill, 远程放弃等待)。
 type ExecFunc func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error)
 
+// ExecDirectFunc 控制面直连执行: 返回(合并输出, 退出码, 错误)
+type ExecDirectFunc func(hostID, command string) (string, int, error)
+
 // CollectFunc 在目标主机上执行命令并返回原始 stdout 字节(制品归档专用):
 // 本机直接捕获; 远程经 base64 文本通道传输后由实现方解码。
 // 未注入(nil)时制品收集自动跳过并记日志。
@@ -199,14 +225,16 @@ type runRequest struct {
 
 // runtimeCtx 触发时解析的运行时资源(不落盘): 注入环境/克隆步骤/kubeconfig
 type runtimeCtx struct {
-	env      []Var // 内置变量 + 凭据注入 + 用户变量(用户可覆盖)
-	clone    *Step // 首阶段自动插入的拉取代码步骤(nil=无)
+	env      []Var  // 内置变量 + 凭据注入 + 用户变量(用户可覆盖)
+	Branch   string // 本次运行生效的代码分支(覆盖值>流水线配置>仓库默认)
+	Commit   string // 钉住的 commit(回滚场景; 空=分支头)
+	clone    *Step  // 首阶段自动插入的拉取代码步骤(nil=无)
 	kubeB64  string
 	kubePath string // 目标主机上的 kubeconfig 临时路径
 }
 
 // resolveRuntime 触发时解析代码源/镜像仓库/kubeconfig 凭据为运行时资源
-func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, error) {
+func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int, branchOverride, commit string, runParams map[string]string) (*runtimeCtx, error) {
 	// 安全护栏: 代码源要求首阶段显式工作目录 —— 防止 git 操作落到服务器进程 cwd
 	if p.Source.RepoID != "" {
 		if len(p.Stages) == 0 || strings.TrimSpace(p.Stages[0].Workspace) == "" {
@@ -218,7 +246,7 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 	env := []Var{
 		{Name: "CICD_RUN_ID", Value: ""},
 		{Name: "CICD_PIPELINE_ID", Value: p.ID},
-		{Name: "CICD_PIPELINE_NAME", Value: shq(p.Name)},
+		{Name: "CICD_PIPELINE_NAME", Value: p.Name}, // 原始值; 下发引号由传输层(cicdRemoteScript/Handlers.Shq)统一处理
 		{Name: "CICD_TRIGGER", Value: ""},
 		{Name: "CICD_BUILD_NUMBER", Value: fmt.Sprintf("%d", buildNumber)},
 		{Name: "BUILD_NUMBER", Value: fmt.Sprintf("%d", buildNumber)}, // 简写别名
@@ -233,17 +261,26 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 					Var{Name: "GIT_REPO_TOKEN", Value: cred.Data, Secret: true},
 				)
 			}
-			branch := p.Source.Branch
+			branch := branchOverride
+			if branch == "" {
+				branch = p.Source.Branch
+			}
 			if branch == "" {
 				branch = repo.DefaultBranch
 			}
+			rt.Branch = branch
+			rt.Commit = commit
 			env = append(env,
 				Var{Name: "CICD_BRANCH", Value: branch},
 				Var{Name: "CICD_REPO_URL", Value: repo.URL},
 			)
+			name := fmt.Sprintf("拉取代码 %s@%s", repo.Name, branch)
+			if commit != "" {
+				name = fmt.Sprintf("拉取代码 %s@%s", repo.Name, shortSha(commit))
+			}
 			rt.clone = &Step{
-				Name:    fmt.Sprintf("拉取代码 %s@%s", repo.Name, branch),
-				Command: cloneCommand(repo.URL, branch, cred),
+				Name:    name,
+				Command: cloneCommand(repo.URL, branch, commit, cred),
 			}
 		} else {
 			log.Printf("[cicd] 流水线 %s 引用的代码仓库不存在: %s", p.Name, p.Source.RepoID)
@@ -272,7 +309,23 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 			log.Printf("[cicd] 流水线 %s 引用的 kubeconfig 凭据不存在或类型不符: %s", p.Name, p.KubeCredID)
 		}
 	}
-	// 5. 用户变量最后追加(可覆盖内置变量)
+	// 5. 参数化构建: 校验必填/回填默认值, 注入为环境变量(运行时值优先于静态配置)
+	if len(p.Params) > 0 {
+		env = append(env, Var{Name: "CICD_HAS_PARAMS", Value: "1"})
+		for _, def := range p.Params {
+			v := strings.TrimSpace(runParams[def.Name])
+			if v == "" {
+				v = def.Default
+			}
+			if v == "" && def.Required {
+				return nil, fmt.Errorf("缺少必填参数: %s(%s)", def.Label, def.Name)
+			}
+			if v != "" {
+				env = append(env, Var{Name: def.Name, Value: v})
+			}
+		}
+	}
+	// 6. 用户变量最后追加(可覆盖内置变量)
 	env = append(env, p.Env...)
 	rt.env = env
 	return rt, nil
@@ -281,21 +334,60 @@ func (e *Engine) resolveRuntime(p *Pipeline, buildNumber int) (*runtimeCtx, erro
 // commitMarkerPrefix 拉取代码步骤输出的 commit 标记行前缀, 引擎捕获后写入 Run.Commit
 const commitMarkerPrefix = "@@CICD_COMMIT@@"
 
+const testsMarkerPrefix = "@@CICD_TESTS@@"
+
+// parseTestsMarker 从步骤输出行解析质量检查动作的测试汇总(非标记行返回 nil)
+func parseTestsMarker(line string) *StepQuality {
+	idx := strings.Index(line, testsMarkerPrefix)
+	if idx < 0 {
+		return nil
+	}
+	var q struct {
+		Tests   int `json:"tests"`
+		Failed  int `json:"failed"`
+		Skipped int `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line[idx+len(testsMarkerPrefix):])), &q); err != nil {
+		return nil
+	}
+	return &StepQuality{Tests: q.Tests, Failed: q.Failed, Skipped: q.Skipped}
+}
+
 // cloneCommand 首阶段自动拉取代码: 已有仓库则重置到远端分支, 否则浅克隆。
+// commit 非空时钉住到该提交(回滚场景): 本地缺失则尝试 unshallow 补全历史。
 // 安全护栏: 仅当目录内 .git 的远端与目标仓库同名(按仓库名比对, 忽略协议差异)时
 // 才允许 fetch/reset/clean; 否则报错退出 —— 杜绝在无关目录(如服务器工作目录)里重置。
 // 末尾输出 @@CICD_COMMIT@@<hash 标题> 标记行, 供引擎捕获展示。
-func cloneCommand(url, branch string, cred *Credential) string {
+func cloneCommand(url, branch, commit string, cred *Credential) string {
 	auth := gitAuthURL(url, cred)
 	name := repoName(url)
+	fetch := fmt.Sprintf("git fetch origin %s && git reset --hard origin/%s && git clean -fd; ", shq(branch), shq(branch))
+	if commit != "" {
+		// 回滚: 钉住提交。浅克隆可能缺该对象, 缺失时先 unshallow 补全
+		fetch = fmt.Sprintf("git fetch origin %s && (git cat-file -e %s^{commit} 2>/dev/null || git fetch --unshallow origin) "+
+			"&& git reset --hard %s && git clean -fd; ", shq(branch), shq(commit), shq(commit))
+	}
+	pin := ""
+	if commit != "" {
+		// 浅克隆后钉住提交: 对象缺失则补全历史再 checkout(分离 HEAD, 构建只读不受影响)
+		pin = fmt.Sprintf(" && (git cat-file -e %s^{commit} 2>/dev/null || git fetch --unshallow origin) && git checkout -f %s", shq(commit), shq(commit))
+	}
 	return fmt.Sprintf(
-		"if [ -d .git ]; then R=$(git remote get-url origin 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
+		"if [ -d .git ]; then R=$(git config --get remote.origin.url 2>/dev/null | sed 's#.*/##; s#\\.git$##'); "+
 			"if [ \"$R\" != %s ]; then echo \"工作目录是其他仓库($R), 拒绝重置\"; exit 64; fi; "+
-			"git fetch origin %s && git reset --hard origin/%s && git clean -fd; "+
-			"else git clone --depth 1 -b %s %s .; fi; "+
+			"%s"+
+			"else git clone --depth 1 -b %s %s .%s; fi; RC=$?; [ $RC -eq 0 ] || exit $RC; "+
 			"printf '%s%%s\\n' \"$(git log -1 --format='%%h %%s' 2>/dev/null)\"",
-		shq(name), shq(branch), shq(branch), shq(branch), shq(auth), commitMarkerPrefix,
+		shq(name), fetch, shq(branch), shq(auth), pin, commitMarkerPrefix,
 	)
+}
+
+// shortSha 提交串截短展示(日志/步骤名用)
+func shortSha(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // parseCommitMarker 从步骤输出行提取 commit 信息(非标记行返回空)
@@ -327,6 +419,7 @@ type Engine struct {
 	scriptsFile    *store.JSONFile
 
 	Exec    ExecFunc    // main.go 注入
+	ExecDirect ExecDirectFunc // main.go 注入: 探测/配置应用等控制面命令直连通道(不走流式)
 	Collect CollectFunc // main.go 注入(制品归档; nil=跳过收集)
 	Push    PushFunc    // main.go 注入(制品分发; nil=远程拉取失败)
 
@@ -347,6 +440,8 @@ type Engine struct {
 	crons    map[string]*CronSpec // pipelineID → 预解析的 cron
 	lastFire map[string]int64     // pipelineID → 上次 cron 触发的 unix 分钟
 	stopOnce sync.Once
+
+	maintenance bool // 维护模式: 暂停接受新运行(在跑的不受影响), cron/webhook/手动全部拦截
 }
 
 // NewEngine 初始化引擎并恢复持久化状态
@@ -433,6 +528,23 @@ func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stop) })
 }
 
+// SetMaintenance 切换维护模式: 开启后 cron/webhook/手动触发全部拒绝,
+// 在跑的运行不受影响; 用于服务重启前排水(避免产生中断孤儿)
+func (e *Engine) SetMaintenance(on bool) {
+	e.mu.Lock()
+	e.maintenance = on
+	e.mu.Unlock()
+	log.Printf("[cicd] 维护模式: %v", on)
+	recordAudit("maintenance", "全局", map[bool]string{true: "开启(暂停接受新运行)", false: "关闭"}[on])
+}
+
+// Maintenance 查询维护模式状态
+func (e *Engine) Maintenance() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.maintenance
+}
+
 func maxParallelFromEnv() int {
 	n := DefaultMaxParallel
 	if v := strings.TrimSpace(os.Getenv("OPCORE_CICD_MAXRUNS")); v != "" {
@@ -460,7 +572,7 @@ func (e *Engine) recoverOrphans() {
 	for _, r := range e.runs {
 		if r.Status == StatusQueued || r.Status == StatusRunning {
 			r.Status = StatusFailed
-			r.Error = "服务重启中断"
+			r.Error = "服务重启时运行被中断(未执行完), 可直接重新执行"
 			r.FinishedAt = time.Now()
 			if !r.StartedAt.IsZero() {
 				r.DurationMs = time.Since(r.StartedAt).Milliseconds()
@@ -599,6 +711,7 @@ func (e *Engine) DeletePipeline(id string) error {
 	if idx < 0 {
 		return fmt.Errorf("流水线不存在: %s", id)
 	}
+	pipelineName := e.pipes[idx].Name + "(" + id + ")"
 	e.pipes = append(e.pipes[:idx], e.pipes[idx+1:]...)
 	rest := e.runs[:0]
 	for _, r := range e.runs {
@@ -614,6 +727,7 @@ func (e *Engine) DeletePipeline(id string) error {
 	delete(e.lastFire, id)
 	e.persistPipesLocked()
 	e.persistRunsLocked()
+	recordAudit("delete_pipeline", pipelineName, "含全部运行历史")
 	return nil
 }
 
@@ -634,6 +748,20 @@ func maskPipeline(p Pipeline) Pipeline {
 
 // Trigger 按 ID 触发一次运行(手动/webhook/cron 共用)
 func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
+	return e.TriggerBranch(pipelineID, trigger, "", nil)
+}
+
+// TriggerBranch 同 Trigger, 支持运行时覆盖代码源分支与填写构建参数
+func (e *Engine) TriggerBranch(pipelineID, trigger, branchOverride string, runParams map[string]string) (*Run, error) {
+	return e.TriggerCommit(pipelineID, trigger, branchOverride, "", runParams)
+}
+
+// TriggerCommit 在 TriggerBranch 基础上支持钉住 commit(一键回滚场景):
+// 拉取代码步骤会重置到该提交而非分支头, 运行历史据此可追溯"回滚到哪个版本"。
+func (e *Engine) TriggerCommit(pipelineID, trigger, branchOverride, commit string, runParams map[string]string) (*Run, error) {
+	if e.Maintenance() {
+		return nil, errors.New("维护模式已开启, 暂停接受新的运行(可在设置中关闭)")
+	}
 	e.mu.RLock()
 	var pipe *Pipeline
 	for _, p := range e.pipes {
@@ -659,11 +787,18 @@ func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
 	snap := *pipe // 定义快照, 后续编辑不影响在跑任务
 	e.mu.RUnlock()
 
-	rt, err := e.resolveRuntime(&snap, buildNumber)
+	rt, err := e.resolveRuntime(&snap, buildNumber, branchOverride, commit, runParams)
 	if err != nil {
 		return nil, err
 	}
 	run := newRun(&snap, trigger, rt)
+	run.Branch = rt.Branch
+	if commit != "" {
+		run.Commit = shortSha(commit) + " (回滚目标)"
+	}
+	if len(runParams) > 0 {
+		run.RunParams = runParams
+	}
 	run.Progress = 0
 	for i := range rt.env {
 		switch rt.env[i].Name {
@@ -684,7 +819,36 @@ func (e *Engine) Trigger(pipelineID, trigger string) (*Run, error) {
 		e.finalize(run, StatusFailed, "队列已满")
 		return nil, errors.New("执行队列已满, 请稍后重试")
 	}
+	detail := rt.Branch
+	if commit != "" {
+		detail += " ← " + shortSha(commit)
+	}
+	if len(runParams) > 0 {
+		detail += fmt.Sprintf(" 参数 %d 项", len(runParams))
+	}
+	recordAudit("trigger("+trigger+")", auditTarget(&snap), detail)
 	return run, nil
+}
+
+// DeleteRun 删除单条历史运行(含日志与制品); 进行中的运行须先取消
+func (e *Engine) DeleteRun(runID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i, r := range e.runs {
+		if r.ID != runID {
+			continue
+		}
+		if r.Status == StatusQueued || r.Status == StatusRunning {
+			return errors.New("运行进行中, 请先取消再删除")
+		}
+		os.Remove(e.logPath(runID))
+		os.RemoveAll(filepath.Join(e.artDir, runID))
+		e.runs = append(e.runs[:i], e.runs[i+1:]...)
+		e.persistRunsLocked()
+		recordAudit("delete_run", r.Pipeline+" "+runID, "")
+		return nil
+	}
+	return fmt.Errorf("运行不存在: %s", runID)
 }
 
 // Cancel 取消运行: 排队中直接置 canceled; 运行中通知执行 goroutine
@@ -700,18 +864,44 @@ func (e *Engine) Cancel(runID string) error {
 			r.Status = StatusCanceled
 			r.FinishedAt = time.Now()
 			e.persistRunsLocked()
+			recordAudit("cancel", r.Pipeline+" "+runID, "排队中直接取消")
 			return nil
 		case StatusRunning:
 			r.Canceling = true
 			if fn, ok := e.cancelFn[runID]; ok && fn != nil {
 				fn()
 			}
+			recordAudit("cancel", r.Pipeline+" "+runID, "发送取消信号")
 			return nil
 		default:
 			return fmt.Errorf("运行已结束, 无法取消")
 		}
 	}
 	return fmt.Errorf("运行不存在: %s", runID)
+}
+
+// Badge 徽章数据: 流水线名 + 最近一次运行状态(公开端点用, 不含敏感信息)
+func (e *Engine) Badge(pipelineID string) (name, status string, ok bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var p *Pipeline
+	for _, x := range e.pipes {
+		if x.ID == pipelineID {
+			p = x
+			break
+		}
+	}
+	if p == nil {
+		return "", "", false
+	}
+	status = "unknown"
+	for i := len(e.runs) - 1; i >= 0; i-- {
+		if e.runs[i].PipelineID == pipelineID {
+			status = e.runs[i].Status
+			break
+		}
+	}
+	return p.Name, status, true
 }
 
 // worker 从队列取请求, 经信号量限流后执行
@@ -763,6 +953,7 @@ func (e *Engine) Approve(runID string, approve bool) error {
 	}
 	select {
 	case ch <- approve:
+		recordAudit(map[bool]string{true: "approve", false: "reject"}[approve], "运行 "+runID, "审批门禁处理")
 		return nil
 	default:
 		return errors.New("审批处理中, 请勿重复提交")
@@ -817,6 +1008,12 @@ func (e *Engine) execute(req runRequest) {
 	defer cancel()
 
 	secrets := collectSecretsFromEnv(rt.env)
+	if p.Trigger.Secret != "" { // webhook 凭证 / 通知加签密钥也纳入日志掩码
+		secrets = append(secrets, p.Trigger.Secret)
+	}
+	if p.NotifySecret != "" {
+		secrets = append(secrets, p.NotifySecret)
+	}
 	logFile, err := os.OpenFile(e.logPath(run.ID), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		e.finalize(run, StatusFailed, "创建日志文件失败: "+err.Error())
@@ -927,9 +1124,39 @@ overall:
 				}
 			}
 			if execErr == nil {
+				// 结构化动作: 编译为 shell 命令(仅写运行视图, 不碰流水线定义), 参数注入步骤环境变量; 编译失败 = 步骤失败
+				cmd := step.Command
+				if step.Action != "" {
+					compiled, cerr := CompileAction(step.Action, step.Params)
+					if cerr != nil {
+						exit, execErr = -1, cerr
+					} else {
+						cmd = compiled
+						stepEnv = append(append([]Var{}, stageEnv...),
+							Var{Name: "CICD_ACTION", Value: step.Action})
+						for k, v := range step.Params {
+							if k != "" {
+								stepEnv = append(stepEnv, Var{Name: k, Value: v, Secret: false})
+							}
+						}
+						e.mu.Lock()
+						spr.Command = compiled
+						e.mu.Unlock()
+					}
+				}
 				stepOnLine := writeLine
-				// 拉取代码步骤: 从输出中捕获 @@CICD_COMMIT@@ 标记写入运行记录
-				if i == 0 && rt.clone != nil && j == 0 {
+				isCloneStep := i == 0 && rt.clone != nil && j == 0
+				if j == 0 && stage.Workspace != "" {
+					// 阶段首个步骤: 工作目录不存在时自动创建(cd 前置要求, 不再仅限克隆步骤)
+					if stage.Host == "" {
+						os.MkdirAll(stage.Workspace, 0755)
+					} else {
+						writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
+						e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
+					}
+				}
+				if isCloneStep {
+					// 拉取代码步骤: 捕获 commit 标记
 					stepOnLine = func(line string) {
 						if c := parseCommitMarker(line); c != "" {
 							e.mu.Lock()
@@ -940,11 +1167,22 @@ overall:
 						writeLine(line)
 					}
 				}
+				if step.Action == "test.junit" {
+					// 质量检查步骤: 捕获测试汇总标记行(命令自身失败时标记可能不出现, 不影响失败语义)
+					prev := stepOnLine
+					stepOnLine = func(line string) {
+						prev(line)
+						// 只写内存; 持久化走步骤/运行结束时的 persistRuns(此处持回调链, 禁止再触锁)
+						if q := parseTestsMarker(line); q != nil {
+							spr.Quality = q
+						}
+					}
+				}
 				stepCtx, stepCancel := context.WithCancel(ctx)
 				if step.TimeoutMin > 0 {
 					stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(step.TimeoutMin)*time.Minute)
 				}
-				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, step.Command, stepEnv, stepOnLine)
+				exit, execErr = e.execCall(stepCtx, stage.Host, stage.Workspace, cmd, stepEnv, stepOnLine)
 				stepCancel()
 			} else {
 				exit = -1
@@ -1345,20 +1583,28 @@ func (e *Engine) Overview() map[string]any {
 			}
 		}
 	}
-	recent := make([]Run, 0, 10)
-	for i := len(e.runs) - 1; i >= 0 && len(recent) < 10; i-- {
-		r := *e.runs[i]
-		r.Progress = runProgress(&r)
-		recent = append(recent, r)
+	var recent, trend []Run
+	for i := len(e.runs) - 1; i >= 0 && len(trend) < 30; i-- {
+		c := *e.runs[i]
+		c.Progress = runProgress(&c)
+		trend = append(trend, c) // 旧→新(趋势图用)
+		if len(recent) < 10 {
+			recent = append(recent, c) // 新→旧(最近运行)
+		}
+	}
+	for i, j := 0, len(trend)-1; i < j; i, j = i+1, j-1 { // trend 反转为旧→新
+		trend[i], trend[j] = trend[j], trend[i]
 	}
 	return map[string]any{
 		"pipelines":       len(e.pipes),
+		"maintenance":     e.maintenance,
 		"running":         running,
 		"queued":          queued,
 		"waitingApproval": waitingApproval,
 		"success24h":      ok24,
 		"failed24h":       fail24,
 		"recentRuns":      recent,
+		"trendRuns":       trend,
 	}
 }
 
@@ -1694,6 +1940,16 @@ func humanBytes(n int64) string {
 }
 
 // execCall Exec 回调包装: 未注入时返回明确错误(单测场景)
+// ExecLineOutput 执行命令并收集输出(nginx 探测/配置应用等非流式场景)
+func (e *Engine) ExecLineOutput(hostID, command string) (string, int, error) {
+	var b strings.Builder
+	rc, err := e.execCall(context.Background(), hostID, "", command, nil, func(line string) {
+		b.WriteString(line)
+		b.WriteString("\n")
+	})
+	return b.String(), rc, err
+}
+
 func (e *Engine) execCall(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
 	if e.Exec == nil {
 		return -1, fmt.Errorf("执行回调未初始化")

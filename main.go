@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"runtime"
+	"time"
+
 	"opscore/internal/agent"
 	"opscore/internal/ansible"
 	"opscore/internal/auth"
@@ -29,6 +32,10 @@ import (
 	"opscore/internal/registry"
 	"opscore/internal/remote"
 )
+
+const appVersion = "2.6.0"
+
+var startTime = time.Now()
 
 func main() {
 	metrics.Start()
@@ -111,6 +118,7 @@ func main() {
 		log.Fatalf("init cicd engine: %v", err)
 	}
 	cicdEngine.Exec = handlers.CicdExec
+	cicdEngine.ExecDirect = handlers.CicdExecDirect
 	cicdEngine.Collect = handlers.CicdCollect
 	cicdEngine.Push = handlers.CicdPush
 	handlers.InitCicd(cicdEngine)
@@ -254,6 +262,16 @@ func main() {
 			return
 		}
 		json.NewEncoder(w).Encode(result)
+	})
+
+	mux.HandleFunc("/api/system/info", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"version":   appVersion,
+			"goVersion": runtime.Version(),
+			"startedAt": startTime.Format(time.RFC3339),
+			"uptimeMs":  time.Since(startTime).Milliseconds(),
+		})
 	})
 
 	// 前端静态资源(SPA)
@@ -467,7 +485,12 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/pipeline/run", Handler: handlers.CicdPipelineRun},
 			{Path: "/api/cicd/run/cancel", Handler: handlers.CicdRunCancel},
 			{Path: "/api/cicd/run/approve", Handler: handlers.CicdRunApprove},
+			{Path: "/api/cicd/run/delete", Handler: handlers.CicdRunDelete},
+			{Path: "/api/cicd/maintenance", Handler: handlers.CicdMaintenance},
 			{Path: "/api/cicd/artifact/download", Handler: handlers.CicdArtifactDownload},
+			{Path: "/api/cicd/actions", Handler: handlers.CicdActions},
+			{Path: "/api/cicd/actions/preview", Handler: handlers.CicdActionPreview},
+			{Path: "/api/cicd/run/log/download", Handler: handlers.CicdRunLogDownload},
 			{Path: "/api/cicd/pipeline/export", Handler: handlers.CicdPipelineExport},
 			{Path: "/api/cicd/pipeline/import", Handler: handlers.CicdPipelineImport},
 			{Path: "/api/cicd/pipeline/nextfire", Handler: handlers.CicdNextFire},
@@ -476,6 +499,10 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/run/log", Handler: handlers.CicdRunLog},
 			{Path: "/api/cicd/run/stream", Handler: handlers.CicdRunStream},
 			{Path: "/api/cicd/webhook/", Handler: handlers.CicdWebhook},
+			{Path: "/api/cicd/badge/", Handler: handlers.CicdBadge},
+			{Path: "/api/cicd/audit", Handler: handlers.CicdAudit},
+			{Path: "/api/cicd/nginx/probe", Handler: handlers.CicdNginxProbe},
+			{Path: "/api/cicd/nginx/apply", Handler: handlers.CicdNginxApply},
 			{Path: "/api/cicd/overview", Handler: handlers.CicdOverview},
 			{Path: "/api/cicd/credentials", Handler: handlers.CicdCredentials},
 			{Path: "/api/cicd/credential/save", Handler: handlers.CicdCredentialSave},
@@ -484,6 +511,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/cicd/repo/save", Handler: handlers.CicdRepoSave},
 			{Path: "/api/cicd/repo/delete", Handler: handlers.CicdRepoDelete},
 			{Path: "/api/cicd/repo/test", Handler: handlers.CicdRepoTest},
+			{Path: "/api/cicd/repo/branches", Handler: handlers.CicdRepoBranches},
 			{Path: "/api/cicd/registries", Handler: handlers.CicdRegistries},
 			{Path: "/api/cicd/registry/save", Handler: handlers.CicdRegistrySave},
 			{Path: "/api/cicd/registry/delete", Handler: handlers.CicdRegistryDelete},

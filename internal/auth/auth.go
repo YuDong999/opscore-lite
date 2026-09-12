@@ -33,7 +33,10 @@ func Init(cs central.CentralStore) {
 
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+		// 白名单: 登录 API / cicd webhook(自身凭证保障) / cicd 状态徽章(公开只读)
+		if strings.HasPrefix(r.URL.Path, "/api/auth/") ||
+			strings.HasPrefix(r.URL.Path, "/api/cicd/webhook/") ||
+			strings.HasPrefix(r.URL.Path, "/api/cicd/badge/") {
 			next.ServeHTTP(w, r)
 			return
 		}
