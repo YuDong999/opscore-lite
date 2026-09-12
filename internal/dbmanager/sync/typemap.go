@@ -11,20 +11,54 @@ import (
 // EngineDialect 把 dbmanager 引擎类型归一为方言族。
 // MySQL 兼容族与 PostgreSQL 兼容族之外的引擎返回 "" (Phase 1 不支持同步)。
 func EngineDialect(engine string) Dialect {
-	switch engine {
-	case "mysql", "mysql_agent", "mariadb", "goldendb":
+	switch {
+	case mysqlFamily(engine):
 		return DialectMySQL
-	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+	case postgresFamily(engine):
 		return DialectPostgres
 	}
 	return ""
 }
 
+// 引擎→方言族注册表: 新引擎接入在此声明一次, 方言归一(EngineDialect)、
+// 模式能力(EngineHasSchema)、同步能力(SyncCapableEngines)都从这里取, 不散落硬编码。
+// 注: 三级命名不止 PG 族 —— Oracle 族为 连接→模式→对象(无库层), 接入时
+// 除声明本表外还需扩展无库层结构(dbx 同款), 属引擎接入工作的一部分。
+var (
+	mysqlFamilyEngines    = []string{"mysql", "mysql_agent", "mariadb", "goldendb"}
+	postgresFamilyEngines = []string{"postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb"}
+)
+
+func inList(list []string, engine string) bool {
+	for _, e := range list {
+		if e == engine {
+			return true
+		}
+	}
+	return false
+}
+
+func mysqlFamily(engine string) bool { return inList(mysqlFamilyEngines, engine) }
+
+func postgresFamily(engine string) bool { return inList(postgresFamilyEngines, engine) }
+
+// SyncCapableEngines 已接入同步方言族的引擎清单(前端据此标注连接可同步性)。
+func SyncCapableEngines() []string {
+	out := make([]string, 0, len(mysqlFamilyEngines)+len(postgresFamilyEngines))
+	out = append(out, mysqlFamilyEngines...)
+	out = append(out, postgresFamilyEngines...)
+	return out
+}
+
+// EngineHasSchema 报告引擎命名空间是否为 库→模式→表 三级(对象需要模式限定)。
+// 前端据此动态显示/隐藏模式下拉 —— 有模式能力的引擎才出现模式选择, 无能力(如 MySQL)不出现。
+func EngineHasSchema(engine string) bool { return postgresFamily(engine) }
+
 // parsedType 解析形如 varchar(64) / decimal(10,2) / int unsigned 的类型名。
 type parsedType struct {
-	base  string // 小写基础类型
-	len   int    // 长度/精度, 无则 -1
-	scale int    // 小数位, 无则 -1
+	base     string // 小写基础类型
+	len      int    // 长度/精度, 无则 -1
+	scale    int    // 小数位, 无则 -1
 	unsigned bool
 }
 
@@ -264,7 +298,7 @@ func mapColumn(col gonaviConnection.ColumnDefinition, srcDialect, dstDialect Dia
 	}
 	if out.AutoIncr {
 		out.Target = strings.TrimSuffix(out.Target, " NOT NULL") // 自增列不加 NOT NULL(由 DDL 生成器处理)
-		out.Target = stripAutoDefault(out.Target)                 // PG/MySQL 自增列不带字面 DEFAULT
+		out.Target = stripAutoDefault(out.Target)                // PG/MySQL 自增列不带字面 DEFAULT
 	}
 	return out
 }

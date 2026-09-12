@@ -10,11 +10,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tealeg/xlsx"
+	gonavidb "opscore/internal/dbmanager/gonavi/db"
 	gonavistatus "opscore/internal/dbmanager/gonavi/db"
 	syncpkg "opscore/internal/dbmanager/sync"
 	"opscore/internal/registry"
@@ -28,43 +33,52 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
 	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool)}
-module := &registry.Module{
-			Manifest: registry.Manifest{
-				ID:          PluginID,
-				Name:        "数据库管理",
-				Icon:        "database",
-				RoutePath:   "/dbmanager",
-				Group:       "plugin",
-				Description: "MySQL/PostgreSQL 连接管理、可视化查询、元数据浏览",
-			},
-Routes: []registry.Route{
-					{Path: "/api/dbmanager/connections", Handler: h.handleConnections},
-					{Path: "/api/dbmanager/connections/test", Handler: h.handleTestConnection},
-					{Path: "/api/dbmanager/query", Handler: h.handleQuery},
-					{Path: "/api/dbmanager/export", Handler: h.handleExport},
-					{Path: "/api/dbmanager/metadata", Handler: h.handleMetadata},
-					{Path: "/api/dbmanager/describe", Handler: h.handleDescribe},
-					{Path: "/api/dbmanager/write-unlock", Handler: h.handleWriteUnlock},
-					{Path: "/api/dbmanager/write-lock", Handler: h.handleWriteLock},
-				{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
-				{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
-				{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
-				{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
-				{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
-				{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
-				{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
-				{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
-				{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
-				{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
-				{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
-				{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
+	module := &registry.Module{
+		Manifest: registry.Manifest{
+			ID:          PluginID,
+			Name:        "数据库管理",
+			Icon:        "database",
+			RoutePath:   "/dbmanager",
+			Group:       "plugin",
+			Description: "MySQL/PostgreSQL 连接管理、可视化查询、元数据浏览",
+		},
+		Routes: []registry.Route{
+			{Path: "/api/dbmanager/connections", Handler: h.handleConnections},
+			{Path: "/api/dbmanager/connections/test", Handler: h.handleTestConnection},
+			{Path: "/api/dbmanager/query", Handler: h.handleQuery},
+			{Path: "/api/dbmanager/export", Handler: h.handleExport},
+			{Path: "/api/dbmanager/metadata", Handler: h.handleMetadata},
+			{Path: "/api/dbmanager/schemas", Handler: h.handleSchemas},
+			{Path: "/api/dbmanager/table-overview", Handler: h.handleTableOverview},
+			{Path: "/api/dbmanager/fk-graph", Handler: h.handleFkGraph},
+			{Path: "/api/dbmanager/table-import", Handler: h.handleTableImport},
+			{Path: "/api/dbmanager/table-meta", Handler: h.handleTableMeta},
+			{Path: "/api/dbmanager/describe", Handler: h.handleDescribe},
+			{Path: "/api/dbmanager/write-unlock", Handler: h.handleWriteUnlock},
+			{Path: "/api/dbmanager/write-lock", Handler: h.handleWriteLock},
+			{Path: "/api/dbmanager/audit", Handler: h.handleAudit},
+			{Path: "/api/dbmanager/engines", Handler: h.handleEngines},
+			{Path: "/api/dbmanager/engine-config", Handler: h.handleEngineConfig},
+			{Path: "/api/dbmanager/drivers", Handler: h.handleDrivers},
+			{Path: "/api/dbmanager/slow-sql", Handler: h.handleSlowSQL},
+			{Path: "/api/dbmanager/table-counts", Handler: h.handleTableCounts},
+			{Path: "/api/dbmanager/table-status", Handler: h.handleTableStatus},
+			{Path: "/api/dbmanager/explain", Handler: h.handleExplain},
+			{Path: "/api/dbmanager/sync/engines", Handler: h.handleSyncEngines},
+			{Path: "/api/dbmanager/sync/plan", Handler: h.handleSyncPlan},
+			{Path: "/api/dbmanager/sync/run", Handler: h.handleSyncRun},
+			{Path: "/api/dbmanager/sync/status", Handler: h.handleSyncStatus},
+			{Path: "/api/dbmanager/sync/jobs", Handler: h.handleSyncJobs},
+			{Path: "/api/dbmanager/sync/cancel", Handler: h.handleSyncCancel},
 			{Path: "/api/dbmanager/data", Handler: h.handleData},
+			{Path: "/api/dbmanager/table-inserts", Handler: h.handleTableInserts},
+			{Path: "/api/dbmanager/apply-edit", Handler: h.handleApplyEdit},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
 			{Path: "/api/dbmanager/drivers/install", Handler: h.handleDriverInstall},
-			},
-		}
+		},
+	}
 	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)
 	return module
 }
@@ -138,41 +152,42 @@ func (h *Handlers) handleConnections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"connections": conns})
-case http.MethodPost:
-			var body struct {
-				Name     string           `json:"name"`
-				Engine   EngineType       `json:"engine"`
-				Config   ConnectionConfig `json:"config"`
-				Password string           `json:"password"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				writeErr(w, "invalid body", http.StatusBadRequest)
-				return
-			}
-			if !engineTypeSupported(body.Engine) {
-				writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
-				return
-			}
-			
-			// 如果没有提供配置，使用默认配置
-			if isEmptyConfig(body.Config) {
-				body.Config = GetEngineDefaultConfig(body.Engine)
-			}
-			
-			if !validConnConfig(body.Config) {
-				writeErr(w, "连接配置校验失败", http.StatusBadRequest)
-				return
-			}
-			conn, err := h.store.Create(body.Name, body.Engine, body.Config, body.Password)
-			if err != nil {
-				writeErr(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			writeJSON(w, map[string]any{"ok": true, "connection": conn})
+	case http.MethodPost:
+		var body struct {
+			Name     string           `json:"name"`
+			Engine   EngineType       `json:"engine"`
+			Config   ConnectionConfig `json:"config"`
+			Password string           `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if !engineTypeSupported(body.Engine) {
+			writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
+			return
+		}
+
+		// 如果没有提供配置，使用默认配置
+		if isEmptyConfig(body.Config) {
+			body.Config = GetEngineDefaultConfig(body.Engine)
+		}
+
+		if !validConnConfig(body.Config, body.Engine) {
+			writeErr(w, "连接配置校验失败", http.StatusBadRequest)
+			return
+		}
+		conn, err := h.store.Create(body.Name, body.Engine, body.Config, body.Password)
+		if err != nil {
+			writeErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "connection": conn})
 	case http.MethodPut:
 		var body struct {
 			ID       string           `json:"id"`
 			Name     string           `json:"name"`
+			Engine   EngineType       `json:"engine"`
 			Config   ConnectionConfig `json:"config"`
 			Password string           `json:"password"`
 		}
@@ -184,7 +199,7 @@ case http.MethodPost:
 			writeErr(w, "id 格式非法", http.StatusBadRequest)
 			return
 		}
-		if !validConnConfig(body.Config) {
+		if !validConnConfig(body.Config, body.Engine) {
 			writeErr(w, "连接配置校验失败", http.StatusBadRequest)
 			return
 		}
@@ -218,7 +233,12 @@ case http.MethodPost:
 	}
 }
 
-func validConnConfig(c ConnectionConfig) bool {
+func validConnConfig(c ConnectionConfig, engine EngineType) bool {
+	// 文件型引擎(sqlite 等): database=文件路径, 无 host/port/username; 路径含 \:/ 等不适用 reDBName
+	switch strings.ToLower(string(engine)) {
+	case "sqlite":
+		return strings.TrimSpace(c.Database) != ""
+	}
 	if strings.TrimSpace(c.Host) == "" || c.Port <= 0 || c.Port > 65535 || strings.TrimSpace(c.Username) == "" {
 		return false
 	}
@@ -296,7 +316,7 @@ func (h *Handlers) handleTestConnection(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
 			return
 		}
-		if !validConnConfig(body.Config) {
+		if !validConnConfig(body.Config, body.Engine) {
 			writeErr(w, "连接配置校验失败", http.StatusBadRequest)
 			return
 		}
@@ -329,10 +349,11 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID      string `json:"id"`
-		SQL     string `json:"sql"`
-		MaxRows int    `json:"maxRows"`
-		Confirm bool   `json:"confirm"`
+		ID       string `json:"id"`
+		SQL      string `json:"sql"`
+		MaxRows  int    `json:"maxRows"`
+		Confirm  bool   `json:"confirm"`
+		Database string `json:"database"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "invalid body", http.StatusBadRequest)
@@ -342,6 +363,7 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "id 格式非法", http.StatusBadRequest)
 		return
 	}
+	fmt.Fprintln(os.Stderr, "[dbg-q] database=", body.Database)
 	if strings.TrimSpace(body.SQL) == "" {
 		writeErr(w, "SQL 不能为空", http.StatusBadRequest)
 		return
@@ -364,7 +386,7 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows)
+	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows, body.Database)
 	// 写操作记入审计(只读不记, 避免噪声)
 	if risk.AtLeast(RiskMedium) {
 		decision := "executed"
@@ -458,6 +480,28 @@ func (h *Handlers) interceptWrite(w http.ResponseWriter, conn *Connection, connI
 // ===== /api/dbmanager/metadata =====
 // GET ?id=...&type=databases|tables&database=... -> 拉取级联元数据
 
+// handleSchemas GET ?id=... -> 连接引擎的命名空间列表(三级命名引擎), 其余引擎返回空数组。
+func (h *Handlers) handleSchemas(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if !reConnID.MatchString(id) {
+		writeErr(w, "id 格式非法", http.StatusBadRequest)
+		return
+	}
+	schemas, err := h.svc.ListSchemas(r.Context(), id)
+	if err != nil {
+		writeErr(w, "列出模式失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if schemas == nil {
+		schemas = []string{}
+	}
+	writeJSON(w, map[string]any{"schemas": schemas})
+}
+
 func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -493,8 +537,42 @@ func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"tables": tables})
+	case "objects":
+		database := r.URL.Query().Get("database")
+		if !reDBName.MatchString(database) {
+			writeErr(w, "database 格式非法", http.StatusBadRequest)
+			return
+		}
+		objs, err := h.svc.ListObjects(ctx, id, database)
+		if err != nil {
+			writeErr(w, "列出对象失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"objects": objs})
+	case "object-ddl":
+		database := r.URL.Query().Get("database")
+		objectName := r.URL.Query().Get("object")
+		kind := r.URL.Query().Get("kind")
+		if !reDBName.MatchString(database) || !reTableName.MatchString(objectName) {
+			writeErr(w, "database/object 格式非法", http.StatusBadRequest)
+			return
+		}
+		switch kind {
+		case gonavistatus.KindView, gonavistatus.KindMaterializedView,
+			gonavistatus.KindFunction, gonavistatus.KindProcedure,
+			gonavistatus.KindEvent, gonavistatus.KindTrigger, gonavistatus.KindSequence:
+		default:
+			writeErr(w, "kind 必须是视图/函数/存储过程/事件/触发器/序列", http.StatusBadRequest)
+			return
+		}
+		ddl, err := h.svc.GetObjectDefinition(ctx, id, database, objectName, kind)
+		if err != nil {
+			writeErr(w, "获取 DDL 失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ddl": ddl})
 	default:
-		writeErr(w, "type 必须是 databases 或 tables", http.StatusBadRequest)
+		writeErr(w, "type 必须是 databases/tables/objects/object-ddl", http.StatusBadRequest)
 	}
 }
 
@@ -674,10 +752,9 @@ func (h *Handlers) handleDrivers(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(all))
 	for _, m := range all {
 		status, reason := driverStatus(string(m.Type))
-		installed := false
-		if status == "optional" {
-			installed = gonavistatus.IsOptionalGoDriverBuildIncluded(string(m.Type))
-		}
+		// 安装状态独立判定(标记文件), 不被连接可用性(status=disabled: agent 缺失/构建未启用)短路——
+		// 安装真实发生就要如实显示"已安装"; 连接可用性与否由 status/reason 另行如实表达
+		installed := gonavistatus.IsOptionalGoDriver(string(m.Type)) && gonavistatus.IsOptionalGoDriverInstalled(string(m.Type))
 		out = append(out, map[string]any{
 			"type":      m.Type,
 			"label":     m.Label,
@@ -735,7 +812,7 @@ func (h *Handlers) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===== /api/dbmanager/audit =====
-	// GET ?id=... -> 审计记录(新的在前, 可选按连接过滤)
+// GET ?id=... -> 审计记录(新的在前, 可选按连接过滤)
 
 func (h *Handlers) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -793,7 +870,7 @@ func (h *Handlers) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows)
+	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows, "")
 	if err != nil && res == nil {
 		res = &QueryResult{Error: err.Error()}
 	}
@@ -979,19 +1056,19 @@ func (h *Handlers) handleSlowSQL(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeJSON(w, map[string]any{
-			"engine": conn.Info.Engine,
-			"rows": []any{},
+			"engine":  conn.Info.Engine,
+			"rows":    []any{},
 			"columns": []string{"digest_text", "count_star", "avg_ms", "total_ms", "max_ms", "first_seen", "last_seen"},
-			"note": fmt.Sprintf("%s 引擎暂不支持慢 SQL 采集", conn.Info.Engine),
+			"note":    fmt.Sprintf("%s 引擎暂不支持慢 SQL 采集", conn.Info.Engine),
 		})
 		return
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"rows":     rows,
-		"columns":  cols,
-		"limit":    limit,
+		"engine":  conn.Info.Engine,
+		"rows":    rows,
+		"columns": cols,
+		"limit":   limit,
 	})
 }
 
@@ -1038,6 +1115,15 @@ func (h *Handlers) handleSyncPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"plan": plan})
+}
+
+// handleSyncEngines GET -> 已接入同步方言族的引擎清单(能力驱动, 前端标注连接可同步性)
+func (h *Handlers) handleSyncEngines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, map[string]any{"engines": syncpkg.SyncCapableEngines()})
 }
 
 // handleSyncRun POST {同 plan 请求} -> 启动后台任务, 返回 jobId
@@ -1105,6 +1191,484 @@ func (h *Handlers) handleSyncCancel(w http.ResponseWriter, r *http.Request) {
 
 // ===== /api/dbmanager/table-status =====
 // GET ?id=...&database=...&table=... -> 表属性 (SHOW TABLE STATUS / information_schema)
+
+// handleTableCounts GET ?id=&database= -> 整库各表行数(估算, 供树徽标; 与 dbx/gonavi 一致用 information_schema/pg_class)
+// 返回 {counts: {表名: 行数}}; 表名与 listTables 一致(PG=限定名 schema.table, MySQL=裸名)。
+func (h *Handlers) handleTableCounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database := q.Get("id"), q.Get("database")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) {
+		writeErr(w, "id/database 格式非法", http.StatusBadRequest)
+		return
+	}
+	db, conn, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	var sqlText string
+	switch string(conn.Info.Engine) {
+	case "mysql", "mariadb", "goldendb":
+		// 精确 COUNT(*): information_schema.table_rows 估算受会话缓存(& ANALYZE 前为 0)影响, 易误导
+		nameRows, _, err := syncpkg.QueryRows(r.Context(), db,
+			"SELECT table_name FROM information_schema.TABLES WHERE table_schema = '"+esc(database)+"' AND table_type = 'BASE TABLE'")
+		if err != nil {
+			writeErr(w, "统计行数失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tables := make([]string, 0, len(nameRows))
+		for _, row := range nameRows {
+			var n string
+			switch v := row["table_name"].(type) {
+			case string:
+				n = v
+			case []byte:
+				n = string(v)
+			}
+			if n == "" {
+				if v2, ok := row["TABLE_NAME"].(string); ok {
+					n = v2
+				} else if v3, ok := row["TABLE_NAME"].([]byte); ok {
+					n = string(v3)
+				}
+			}
+			if n != "" {
+				tables = append(tables, n)
+			}
+		}
+		counts := map[string]int64{}
+		sem := make(chan struct{}, 8)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		qident := func(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }
+		for _, t := range tables {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(t string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				cRows, _, e := syncpkg.QueryRows(r.Context(), db, "SELECT COUNT(*) AS c FROM "+qident(database)+"."+qident(t))
+				if e != nil {
+					return
+				}
+				var c int64
+				for _, row := range cRows {
+					raw, ok := row["c"]
+					if !ok {
+						raw = row["C"]
+					}
+					switch v := raw.(type) {
+					case int64:
+						c = v
+					case int32:
+						c = int64(v)
+					case float64:
+						c = int64(v)
+					case string:
+						if n, pe := strconv.ParseInt(v, 10, 64); pe == nil {
+							c = n
+						}
+					case []byte:
+						if n, pe := strconv.ParseInt(string(v), 10, 64); pe == nil {
+							c = n
+						}
+					}
+				}
+				mu.Lock()
+				counts[t] = c
+				mu.Unlock()
+			}(t)
+		}
+		wg.Wait()
+		writeJSON(w, map[string]any{"counts": counts})
+		return
+	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+		sqlText = `SELECT (n.nspname || '.' || c.relname) AS n, c.reltuples::bigint AS c ` +
+			`FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace ` +
+			`WHERE c.relkind IN ('r','p','v','m') AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg|_%' ESCAPE '|'`
+	default:
+		writeJSON(w, map[string]any{"counts": map[string]int64{}})
+		return
+	}
+	rows, _, err := syncpkg.QueryRows(r.Context(), db, sqlText)
+	if err != nil {
+		writeErr(w, "统计行数失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		// 驱动间值类型不一致(MySQL 常返回 []byte, PG 返回 string), 统一兼容
+		var name string
+		switch v := row["n"].(type) {
+		case string:
+			name = v
+		case []byte:
+			name = string(v)
+		}
+		if name == "" {
+			continue
+		}
+		var cnt int64
+		switch v := row["c"].(type) {
+		case int64:
+			cnt = v
+		case int32:
+			cnt = int64(v)
+		case float64:
+			cnt = int64(v)
+		case string:
+			if n, e := strconv.ParseInt(v, 10, 64); e == nil {
+				cnt = n
+			}
+		case []byte:
+			if n, e := strconv.ParseInt(string(v), 10, 64); e == nil {
+				cnt = n
+			}
+		}
+		counts[name] = cnt
+	}
+	writeJSON(w, map[string]any{"counts": counts})
+}
+
+// handleTableMeta GET ?id=&database=&table= -> 完整表信息(列/索引/外键/触发器/DDL)
+func (h *Handlers) handleTableMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database, table := q.Get("id"), q.Get("database"), q.Get("table")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) || !reTableName.MatchString(table) {
+		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+		return
+	}
+	meta, err := h.svc.GetTableMeta(r.Context(), id, database, table)
+	if err != nil {
+		writeErr(w, "获取表信息失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"meta": meta})
+}
+
+// handleFkGraph GET ?id=&database= -> 库级表+外键关系(ER 图数据源)
+// 返回 {tables:[{name}], edges:[{fromTable,fromColumn,toTable,toColumn}]}
+// handleTableOverview GET ?id=&database= -> 库级表概览(GoNavi 同款字段)
+// 返回 {overview:[{name,rows,dataSize,indexSize,engine,comment,createdAt,updatedAt}]}
+func (h *Handlers) handleTableOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database := q.Get("id"), q.Get("database")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) {
+		writeErr(w, "id/database 格式非法", http.StatusBadRequest)
+		return
+	}
+	db, conn, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	var sqlText string
+	switch strings.ToLower(string(conn.Info.Engine)) {
+	case "mysql", "mariadb", "goldendb":
+		sqlText = "SELECT table_name AS name, IFNULL(table_rows, 0) AS table_rows, IFNULL(data_length, 0) AS data_size, " +
+			"IFNULL(index_length, 0) AS index_size, engine, table_comment AS table_comment, " +
+			"IFNULL(CAST(create_time AS CHAR), '') AS created_at, IFNULL(CAST(update_time AS CHAR), '') AS updated_at " +
+			"FROM information_schema.TABLES WHERE table_schema = '" + esc(database) + "' AND table_type = 'BASE TABLE' ORDER BY table_name"
+	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+		sqlText = `SELECT c.relname AS name, GREATEST(c.reltuples, 0)::bigint AS rows,
+			pg_total_relation_size(c.oid) - COALESCE(pg_indexes_size(c.oid), 0) AS data_size,
+			COALESCE(pg_indexes_size(c.oid), 0) AS index_size,
+			'PostgreSQL' AS engine,
+			COALESCE(obj_description(c.oid), '') AS comment,
+			'' AS created_at, '' AS updated_at
+			FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relkind IN ('r','p') AND n.nspname = '` + esc(database) + `' ORDER BY c.relname`
+	default:
+		writeErr(w, "该引擎暂不支持表概览", http.StatusBadRequest)
+		return
+	}
+	rows, _, err := syncpkg.QueryRows(r.Context(), db, sqlText)
+	if err != nil {
+		writeErr(w, "读取表概览失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	get := func(row map[string]any, keys ...string) any {
+		for _, k := range keys {
+			if v, ok := row[k]; ok {
+				return v
+			}
+		}
+		return nil
+	}
+	type Row struct {
+		Name      string `json:"name"`
+		Rows      int64  `json:"rows"`
+		DataSize  int64  `json:"dataSize"`
+		IndexSize int64  `json:"indexSize"`
+		Engine    string `json:"engine"`
+		Comment   string `json:"comment"`
+		CreatedAt string `json:"createdAt"`
+		UpdatedAt string `json:"updatedAt"`
+	}
+	out := make([]Row, 0, len(rows))
+	for _, row := range rows {
+		str := func(v any) string {
+			switch t := v.(type) {
+			case string:
+				return t
+			case []byte:
+				return string(t)
+			}
+			return ""
+		}
+		num := func(v any) int64 {
+			switch t := v.(type) {
+			case int64:
+				return t
+			case int32:
+				return int64(t)
+			case float64:
+				return int64(t)
+			case []byte:
+				n, _ := strconv.ParseInt(string(t), 10, 64)
+				return n
+			case string:
+				n, _ := strconv.ParseInt(t, 10, 64)
+				return n
+			}
+			return 0
+		}
+		out = append(out, Row{
+			Name:      str(get(row, "name", "NAME")),
+			Rows:      num(get(row, "table_rows", "TABLE_ROWS")),
+			DataSize:  num(get(row, "data_size", "DATA_SIZE")),
+			IndexSize: num(get(row, "index_size", "INDEX_SIZE")),
+			Engine:    str(get(row, "engine", "ENGINE")),
+			Comment:   str(get(row, "comment", "COMMENT", "TABLE_COMMENT")),
+			CreatedAt: str(get(row, "created_at", "CREATED_AT")),
+			UpdatedAt: str(get(row, "updated_at", "UPDATED_AT")),
+		})
+	}
+	writeJSON(w, map[string]any{"overview": out})
+}
+
+// handleTableImport POST {id, database, table, csv} -> 解析 CSV(首行=列名) 批量 INSERT
+// 全部行在一个事务内执行, 任一行失败整体回滚。
+func (h *Handlers) handleTableImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Database string `json:"database"`
+		Table    string `json:"table"`
+		CSV      string `json:"csv"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !reConnID.MatchString(body.ID) || !reDBName.MatchString(body.Database) || !reTableName.MatchString(body.Table) {
+		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+		return
+	}
+	lines := strings.Split(strings.ReplaceAll(body.CSV, "\r\n", "\n"), "\n")
+	lines = slices.DeleteFunc(lines, func(l string) bool { return strings.TrimSpace(l) == "" })
+	if len(lines) < 2 {
+		writeErr(w, "CSV 至少需要表头行 + 一行数据", http.StatusBadRequest)
+		return
+	}
+	header := strings.Split(lines[0], ",")
+	cols := make([]string, 0, len(header))
+	for _, h2 := range header {
+		name := strings.TrimSpace(h2)
+		if strings.ContainsAny(name, "`'\";()-") || name == "" {
+			writeErr(w, "列名含非法字符: "+name, http.StatusBadRequest)
+			return
+		}
+		cols = append(cols, name)
+	}
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = "`" + c + "`"
+	}
+	prefix := "INSERT INTO `" + body.Database + "`.`" + body.Table + "` (" + strings.Join(quoted, ", ") + ") VALUES ("
+
+	db, _, err := h.pool.Acquire(body.ID)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(body.ID)
+
+	// 事务: 优先走驱动事务接口(StatementExecer+Commit/Rollback), 不可用则逐行 Exec
+	var tx gonavidb.TransactionExecer
+	if tp, ok := db.(gonavidb.TransactionExecerProvider); ok {
+		if t, terr := tp.OpenTransactionExecer(r.Context()); terr == nil {
+			tx = t
+			defer func() { _ = tx.Rollback() }() // Commit 成功后 Rollback 为 no-op
+		}
+	}
+	execOne := func(query string) error {
+		if tx != nil {
+			_, err := tx.Exec(query)
+			return err
+		}
+		_, err := db.Exec(query)
+		return err
+	}
+	imported := 0
+	for _, line := range lines[1:] {
+		vals := strings.Split(line, ",")
+		if len(vals) != len(cols) {
+			writeErr(w, fmt.Sprintf("第 %d 行列数(%d)与表头(%d)不一致", imported+2, len(vals), len(cols)), http.StatusBadRequest)
+			return
+		}
+		lits := make([]string, len(vals))
+		for i, v := range vals {
+			v = strings.TrimSpace(v)
+			if v == "NULL" {
+				lits[i] = "NULL"
+			} else {
+				lits[i] = "'" + strings.ReplaceAll(v, "'", "''") + "'"
+			}
+		}
+		if err := execOne(prefix + strings.Join(lits, ", ") + ")"); err != nil {
+			writeErr(w, fmt.Sprintf("第 %d 行写入失败: %v", imported+2, err), http.StatusInternalServerError)
+			return
+		}
+		imported++
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			writeErr(w, "提交事务失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, map[string]any{"ok": true, "imported": imported})
+}
+
+func (h *Handlers) handleFkGraph(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	id, database := q.Get("id"), q.Get("database")
+	if !reConnID.MatchString(id) || !reDBName.MatchString(database) {
+		writeErr(w, "id/database 格式非法", http.StatusBadRequest)
+		return
+	}
+	db, conn, err := h.pool.Acquire(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer h.pool.Release(id)
+
+	var tablesSql, edgesSql string
+	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	switch strings.ToLower(string(conn.Info.Engine)) {
+	case "mysql", "mariadb", "goldendb":
+		tablesSql = "SELECT table_name AS n FROM information_schema.TABLES WHERE table_schema = '" + esc(database) + "' ORDER BY table_name"
+		edgesSql = "SELECT TABLE_NAME AS ftable, COLUMN_NAME AS fcol, REFERENCED_TABLE_NAME AS ttable, REFERENCED_COLUMN_NAME AS tcol " +
+			"FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '" + esc(database) + "' AND REFERENCED_TABLE_NAME IS NOT NULL"
+	case "postgres", "opengauss", "kingbase", "highgo", "vastbase", "gaussdb":
+		tablesSql = "SELECT tablename AS n FROM pg_catalog.pg_tables WHERE schemaname = '" + esc(database) + "' ORDER BY tablename"
+		edgesSql = `SELECT ns.nspname || '.' || c.relname AS ftable, a.attname AS fcol,
+			confrelid::regclass::text AS ttable, af.attname AS tcol
+			FROM pg_constraint k
+			JOIN pg_class c ON c.oid = k.conrelid
+			JOIN pg_namespace ns ON ns.oid = c.relnamespace
+			JOIN unnest(k.conkey) WITH ORDINALITY AS u(attnum, ord) ON true
+			JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
+			JOIN unnest(k.confkey) WITH ORDINALITY AS uf(attnum, ord) ON uf.ord = u.ord
+			JOIN pg_attribute af ON af.attrelid = k.confrelid AND af.attnum = uf.attnum
+			WHERE k.contype = 'f' AND ns.nspname = '` + esc(database) + `'`
+	default:
+		writeErr(w, "该引擎暂不支持关系图", http.StatusBadRequest)
+		return
+	}
+	parse := func(rows []map[string]any, keys ...string) []string {
+		out := make([]string, 0, len(rows))
+		for _, row := range rows {
+			for _, k := range keys {
+				switch v := row[k].(type) {
+				case string:
+					if v != "" {
+						out = append(out, v)
+						break
+					}
+				case []byte:
+					if string(v) != "" {
+						out = append(out, string(v))
+						break
+					}
+				}
+			}
+		}
+		return out
+	}
+	tableRows, _, err := syncpkg.QueryRows(r.Context(), db, tablesSql)
+	if err != nil {
+		writeErr(w, "读取表清单失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tables := parse(tableRows, "n")
+	edgeRows, _, err := syncpkg.QueryRows(r.Context(), db, edgesSql)
+	if err != nil {
+		writeErr(w, "读取外键失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type Edge struct {
+		FromTable  string `json:"fromTable"`
+		FromColumn string `json:"fromColumn"`
+		ToTable    string `json:"toTable"`
+		ToColumn   string `json:"toColumn"`
+	}
+	edges := make([]Edge, 0, len(edgeRows))
+	for _, row := range edgeRows {
+		get := func(keys ...string) string {
+			// MySQL 驱动返回信息库列名为大写(FTABLE 等), 同时兼容大小写
+			for _, k := range keys {
+				switch v := row[k].(type) {
+				case string:
+					if v != "" {
+						return v
+					}
+				case []byte:
+					if string(v) != "" {
+						return string(v)
+					}
+				}
+			}
+			return ""
+		}
+		ft, fc, tt, tc := get("ftable", "FTABLE"), get("fcol", "FCOL"), get("ttable", "TTABLE"), get("tcol", "TCOL")
+		// PG 的 ttable 是 regclass 文本(可能带 schema.), 归一为裸表名与 tables 对齐
+		if i := strings.LastIndex(tt, "."); i >= 0 {
+			tt = tt[i+1:]
+		}
+		if ft != "" && tt != "" {
+			edges = append(edges, Edge{FromTable: ft, FromColumn: fc, ToTable: tt, ToColumn: tc})
+		}
+	}
+	writeJSON(w, map[string]any{"tables": tables, "edges": edges})
+}
 
 func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -1186,8 +1750,8 @@ func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeJSON(w, map[string]any{
-			"engine": conn.Info.Engine,
-			"note":   fmt.Sprintf("%s 引擎暂不支持表属性查询", conn.Info.Engine),
+			"engine":  conn.Info.Engine,
+			"note":    fmt.Sprintf("%s 引擎暂不支持表属性查询", conn.Info.Engine),
 			"columns": []string{"name", "value"},
 			"rows": []any{
 				map[string]any{"name": "引擎", "value": conn.Info.Engine},
@@ -1199,9 +1763,9 @@ func (h *Handlers) handleTableStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"columns":  cols,
-		"rows":     rows,
+		"engine":  conn.Info.Engine,
+		"columns": cols,
+		"rows":    rows,
 	})
 }
 
@@ -1267,11 +1831,11 @@ func (h *Handlers) handleExplain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"engine":   conn.Info.Engine,
-		"sql":      body.SQL,
-		"format":   format,
-		"columns":  cols,
-		"rows":     outRows,
+		"engine":  conn.Info.Engine,
+		"sql":     body.SQL,
+		"format":  format,
+		"columns": cols,
+		"rows":    outRows,
 	})
 }
 
@@ -1353,5 +1917,11 @@ func (h *Handlers) handleDriverInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
 		return
 	}
-	writeErr(w, "驱动安装功能开发中, 请使用 lite 全量构建或手动部署 driver-agent", http.StatusNotImplemented)
+	// 可选驱动实现已随主二进制编译: 安装=写 installed.json 标记(真实生效, 非占位)
+	marker, err := gonavistatus.InstallOptionalGoDriverMarker(body.Type, "")
+	if err != nil {
+		writeErr(w, "驱动安装失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "type": body.Type, "marker": marker})
 }

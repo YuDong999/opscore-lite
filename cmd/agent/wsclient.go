@@ -69,6 +69,12 @@ func (w *wsClient) run(stop chan struct{}) {
 func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 	defer conn.Close()
 
+	// 读截止: 每收到任何消息(注册回执/pong)续期; 服务端对 ping 会回 pong,
+	// 因此只要链路活着, 读侧每 ~10s 内必有流量, 死链最迟 90s 被发现并重连。
+	const readWait = 90 * time.Second
+	conn.SetReadDeadline(time.Now().Add(readWait))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(readWait)) })
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -77,11 +83,17 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 			if err != nil {
 				return
 			}
+			conn.SetReadDeadline(time.Now().Add(readWait))
 		}
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+
+	// 心跳固定周期无条件发送(不因快照流动而抑制): 服务端对每条 ping 回 pong,
+	// pong 是读截止的唯一喂食者 —— 若因快照流动而跳过 ping, 读截止必然饿死(v4 教训)。
+	const heartbeatEvery = 10 * time.Second
+	lastPing := time.Now()
 
 	for {
 		select {
@@ -100,11 +112,21 @@ func (w *wsClient) pump(conn *websocket.Conn, stop chan struct{}) {
 				"type": json.RawMessage(`"snapshot"`),
 				"data": data,
 			})
+			conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				log.Printf("发送失败: %v", err)
 				return
 			}
 		default:
+		}
+		if time.Since(lastPing) >= heartbeatEvery {
+			hb, _ := json.Marshal(map[string]string{"type": "ping"})
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteMessage(websocket.TextMessage, hb); err != nil {
+				log.Printf("心跳发送失败: %v", err)
+				return
+			}
+			lastPing = time.Now()
 		}
 	}
 }

@@ -9,7 +9,7 @@ func registerOptionalDatabaseFactories() {
 	registerDatabaseFactory(newOptionalDriverAgentDatabase("starrocks"), "starrocks")
 	registerDatabaseFactory(newOptionalDriverAgentDatabase("sphinx"), "sphinx")
 	registerDatabaseFactory(newOptionalDriverAgentDatabase("sqlserver"), "sqlserver")
-	registerDatabaseFactory(newOptionalDriverAgentDatabase("sqlite"), "sqlite")
+	// sqlite 移至 database_sqlite_factory.go (tag: gonavi_sqlite_driver)
 	registerDatabaseFactory(newOptionalDriverAgentDatabase("duckdb"), "duckdb")
 	registerDatabaseFactory(newOptionalDriverAgentTransactionalDatabase("dameng"), "dameng")
 	registerDatabaseFactory(newOptionalDriverAgentDatabase("kingbase"), "kingbase")

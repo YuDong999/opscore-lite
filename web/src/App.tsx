@@ -48,6 +48,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     return { error }
   }
 
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // eslint-disable-next-line no-console
+    console.error('[Boundary]', error.message, 'componentStack:', info.componentStack)
+  }
+
   render() {
     if (this.state.error) {
       return (

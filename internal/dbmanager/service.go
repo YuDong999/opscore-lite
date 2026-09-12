@@ -6,11 +6,13 @@ package dbmanager
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
-	gonavibase "opscore/internal/dbmanager/gonavi/db"
 	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
+	gonavibase "opscore/internal/dbmanager/gonavi/db"
+	syncpkg "opscore/internal/dbmanager/sync"
 )
 
 // DBService 数据库管理服务接口。
@@ -19,12 +21,22 @@ type DBService interface {
 	TestConnection(ctx context.Context, conn *Connection) (string, error)
 	// ListDatabases 列出可访问的数据库。
 	ListDatabases(ctx context.Context, connID string) ([]string, error)
+	// ListSchemas 列出连接所属引擎的命名空间(模式)。仅 库→模式→表 三级引擎有值,
+	// 其余返回空 —— 前端据此动态决定是否渲染模式下拉(能力驱动, 非按引擎硬编码 UI)。
+	ListSchemas(ctx context.Context, connID string) ([]string, error)
+	// GetTableMeta 完整表信息(列/索引/外键/触发器/DDL)。
+	GetTableMeta(ctx context.Context, connID, database, table string) (*TableMetaDetail, error)
 	// ListTables 列出指定库下的表/视图。
 	ListTables(ctx context.Context, connID, database string) ([]TableInfo, error)
+	// ListObjects 列出指定库下表之外的对象(视图/函数/存储过程/事件/触发器/序列)。
+	// 驱动不支持对象枚举时返回空集合。
+	ListObjects(ctx context.Context, connID, database string) ([]gonaviConnection.DbObject, error)
+	// GetObjectDefinition 返回非表对象的 DDL 定义(kind 取值见 DbObject.Kind)。
+	GetObjectDefinition(ctx context.Context, connID, database string, objectName, kind string) (string, error)
 	// DescribeTable 返回列/索引/DDL。
 	DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error)
 	// ExecQuery 执行 SQL：SELECT 返回结果集(截断到 maxRows)，其他返回受影响行数。
-	ExecQuery(ctx context.Context, connID, sqlText string, maxRows int) (*QueryResult, error)
+	ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error)
 }
 
 // GonaviService DBService 的 GoNavi 底座实现。
@@ -86,6 +98,54 @@ func (s *GonaviService) ListDatabases(ctx context.Context, connID string) ([]str
 	return db.GetDatabases()
 }
 
+// GetTableMeta 完整表信息: 列/索引/外键/触发器/DDL(供表信息抽屉页签)。
+func (s *GonaviService) GetTableMeta(ctx context.Context, connID, database, table string) (*TableMetaDetail, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	cols, idxs, ddl, err := s.DescribeTable(ctx, connID, database, table)
+	if err != nil {
+		return nil, err
+	}
+	meta := &TableMetaDetail{Columns: cols, Indexes: idxs, DDL: ddl, ForeignKeys: []FkInfo{}, Triggers: []TriggerInfo{}}
+	fkDefs, err := db.GetForeignKeys(database, table)
+	if err == nil {
+		for _, f := range fkDefs {
+			meta.ForeignKeys = append(meta.ForeignKeys, FkInfo{Name: f.Name, Column: f.ColumnName, RefTable: f.RefTableName, RefColumn: f.RefColumnName, Constraint: f.ConstraintName})
+		}
+	}
+	trgDefs, err := db.GetTriggers(database, table)
+	if err == nil {
+		for _, t := range trgDefs {
+			meta.Triggers = append(meta.Triggers, TriggerInfo{Name: t.Name, Timing: t.Timing, Event: t.Event, Statement: t.Statement})
+		}
+	}
+	return meta, nil
+}
+
+func (s *GonaviService) ListSchemas(ctx context.Context, connID string) ([]string, error) {
+	db, conn, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	if !syncpkg.EngineHasSchema(string(conn.Info.Engine)) {
+		return nil, nil // 能力缺失(如 MySQL 族): 空即"无模式层级"
+	}
+	rows, _, err := syncpkg.QueryRows(ctx, db, `SELECT nspname FROM pg_catalog.pg_namespace `+
+		`WHERE nspname <> 'information_schema' AND nspname NOT LIKE 'pg|_%' ESCAPE '|' ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if n, ok := row["nspname"].(string); ok && n != "" {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
 func (s *GonaviService) ListTables(ctx context.Context, connID, database string) ([]TableInfo, error) {
 	db, conn, err := s.pool.Acquire(connID)
 	if err != nil {
@@ -107,6 +167,63 @@ func (s *GonaviService) ListTables(ctx context.Context, connID, database string)
 		out = append(out, ti)
 	}
 	return out, nil
+}
+
+// ListObjects 返回库内非表对象。驱动未实现 ObjectEnumerator 时返回空集合。
+func (s *GonaviService) ListObjects(ctx context.Context, connID, database string) ([]gonaviConnection.DbObject, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return nil, err
+	}
+	enumerator, ok := db.(gonavibase.ObjectEnumerator)
+	if !ok {
+		return []gonaviConnection.DbObject{}, nil
+	}
+	objs, err := enumerator.GetObjects(database)
+	if err != nil {
+		return nil, err
+	}
+	if objs == nil {
+		return []gonaviConnection.DbObject{}, nil
+	}
+	return objs, nil
+}
+
+// GetObjectDefinition 返回非表对象的 DDL。驱动不支持时返回友好错误。
+func (s *GonaviService) GetObjectDefinition(ctx context.Context, connID, database string, objectName, kind string) (string, error) {
+	db, _, err := s.pool.Acquire(connID)
+	if err != nil {
+		return "", err
+	}
+	provider, ok := db.(gonavibase.ObjectDefinitionProvider)
+	if !ok {
+		return "", fmt.Errorf("当前驱动不支持查看对象 DDL")
+	}
+	return provider.GetObjectDefinition(database, objectName, kind)
+}
+
+// 表信息定义: DescribeTable 附带外键/触发器(索引已含), 供前端表信息页签。
+type TableMetaDetail struct {
+	Columns     []ColumnInfo  `json:"columns"`
+	Indexes     []IndexInfo   `json:"indexes"`
+	ForeignKeys []FkInfo      `json:"foreignKeys"`
+	Triggers    []TriggerInfo `json:"triggers"`
+	DDL         string        `json:"ddl"`
+}
+
+type FkInfo struct {
+	Name       string `json:"name"`
+	Column     string `json:"column"`
+	RefTable   string `json:"refTable"`
+	RefColumn  string `json:"refColumn"`
+	Constraint string `json:"constraint"`
+}
+
+type TriggerInfo struct {
+	Name      string `json:"name"`
+	Timing    string `json:"timing"`
+	Event     string `json:"event"`
+	Statement string `json:"statement"`
 }
 
 func (s *GonaviService) DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error) {
@@ -174,7 +291,7 @@ func aggregateIndexes(defs []gonaviConnection.IndexDefinition) []IndexInfo {
 	return out
 }
 
-func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int) (*QueryResult, error) {
+func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
 	db, _, err := s.pool.Acquire(connID)
 	if err != nil {
 		return nil, err
@@ -185,6 +302,55 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 
 	start := time.Now()
 	res := &QueryResult{}
+
+	// 标签绑定的库上下文: USE 是会话级的, 池化连接会漂移 ——
+	// 优先钉住一个物理连接(SessionExecerProvider), 在同一会话内 USE+Query
+	if strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
+		dbgType := fmt.Sprintf("%T", db)
+		fmt.Fprintln(os.Stderr, "[dbg] USE branch db=", defaultDatabase, "type=", dbgType)
+		if sp, ok := db.(gonavibase.SessionExecerProvider); ok {
+			fmt.Fprintln(os.Stderr, "[dbg] SessionExecerProvider OK")
+			sess, serr := sp.OpenSessionExecer(ctx)
+			if serr != nil {
+				res.Error = serr.Error()
+				return res, serr
+			}
+			defer func() { _ = sess.Close() }()
+			if _, uerr := sess.Exec("USE " + defaultDatabase); uerr != nil {
+				res.Error = uerr.Error()
+				return res, uerr
+			}
+			qsess, qok := sess.(gonavibase.StatementQueryExecer)
+			fmt.Fprintln(os.Stderr, "[dbg] StatementQueryExecer=", qok)
+			if !qok {
+				res.Error = "驱动会话不支持查询"
+				return res, fmt.Errorf("驱动会话不支持查询")
+			}
+			rows, colNames, qerr := qsess.Query(sqlText)
+			if qerr != nil {
+				res.Error = qerr.Error()
+				return res, qerr
+			}
+			res.Columns = colNames
+			truncated := false
+			for _, row := range rows {
+				if len(res.Rows) >= maxRows {
+					truncated = true
+					break
+				}
+				vals := make([]any, len(colNames))
+				for i, c := range colNames {
+					vals[i] = row[c]
+				}
+				res.Rows = append(res.Rows, vals)
+			}
+			res.Truncated = truncated
+			res.RowCount = len(res.Rows)
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res, nil
+		}
+		// 驱动不支持固定会话: 无库上下文执行, SQL 需自带限定
+	}
 
 	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
 	if isReadOnlySQL(sqlText) {

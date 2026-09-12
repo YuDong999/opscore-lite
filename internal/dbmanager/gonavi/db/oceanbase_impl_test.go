@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"opscore/internal/dbmanager/gonavi/connection"
-	"opscore/internal/dbmanager/gonavi/ssh"
 	"opscore/internal/dbmanager/gonavi/shared/i18n"
+	"opscore/internal/dbmanager/gonavi/ssh"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 )

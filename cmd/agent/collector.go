@@ -129,6 +129,8 @@ func (c *collector) collectCrontab(s *metrics.Snapshot) {
 	if len(args) == 0 {
 		return
 	}
+	// 失败同样推进节流指针: 否则无 crontab 的主机上 crontab -l 每个采集 tick 都会执行一遍(3s 一次的进程+syslog 刷屏)
+	defer func() { c.lastCrontab = time.Now() }()
 	out, err := exec.Command(args[0], args[1:]...).Output()
 	if err != nil {
 		return
@@ -138,7 +140,6 @@ func (c *collector) collectCrontab(s *metrics.Snapshot) {
 		User:        os.Getenv("USER"),
 		CollectedAt: time.Now().Unix(),
 	}
-	c.lastCrontab = time.Now()
 }
 
 func (c *collector) collectNodeData(s *metrics.Snapshot) {

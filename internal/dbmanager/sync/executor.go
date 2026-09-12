@@ -141,7 +141,7 @@ func (r *Runner) execSchemaThenFull(ctx context.Context, srcDB, dstDB gonavibase
 		return err
 	}
 	if truncate {
-		if err := truncateTarget(ctx, dstDB, dstD, req.TargetDB, tp.Target); err != nil {
+		if err := truncateTarget(ctx, dstDB, dstD, EffectiveSchema(req, dstD), tp.Target); err != nil {
 			return fmt.Errorf("清空目标表失败: %w", err)
 		}
 	}
@@ -150,7 +150,7 @@ func (r *Runner) execSchemaThenFull(ctx context.Context, srcDB, dstDB gonavibase
 
 func (r *Runner) execTruncateThenFull(ctx context.Context, srcDB, dstDB gonavibase.Database, srcD, dstD Dialect, req SyncRequest, tp TablePlan, job *Job) error {
 	job.updateTable(tp.Target, func(p *TableProgress) { p.Status = "creating" })
-	if err := truncateTarget(ctx, dstDB, dstD, req.TargetDB, tp.Target); err != nil {
+	if err := truncateTarget(ctx, dstDB, dstD, EffectiveSchema(req, dstD), tp.Target); err != nil {
 		return fmt.Errorf("清空目标表失败: %w", err)
 	}
 	return r.copyFull(ctx, srcDB, dstDB, srcD, dstD, req, tp, job, "")
@@ -178,7 +178,8 @@ func (r *Runner) copyFull(ctx context.Context, srcDB, dstDB gonavibase.Database,
 	} else if req.Options.WhereClause != "" {
 		where = " WHERE " + req.Options.WhereClause
 	}
-	sqlText := fmt.Sprintf("SELECT * FROM %s%s", qualifiedName(req.SourceDB, tp.Source, srcD), where)
+	srcSchema, srcTable := splitQualified(req.SourceDB, tp.Source)
+	sqlText := fmt.Sprintf("SELECT * FROM %s%s", qualifiedName(srcSchema, srcTable, srcD), where)
 
 	batchRows := req.Options.BatchRows
 	if batchRows <= 0 {
@@ -196,7 +197,7 @@ func (r *Runner) copyFull(ctx context.Context, srcDB, dstDB gonavibase.Database,
 	batcher := &batchWriter{
 		dst:      dstDB,
 		ctx:      ctx,
-		schema:   req.TargetDB,
+		schema:   EffectiveSchema(req, dstD),
 		table:    tp.Target,
 		dstD:     dstD,
 		colBases: colBases,
@@ -336,7 +337,7 @@ func (r *Runner) execIncremental(ctx context.Context, srcDB, dstDB gonavibase.Da
 	if tp.IncrStrategy == IncrNone {
 		return fmt.Errorf("表 %s 无可用增量列", tp.Target)
 	}
-	watermark, err := readWatermark(ctx, dstDB, dstD, req.TargetDB, tp)
+	watermark, err := readWatermark(ctx, dstDB, dstD, EffectiveSchema(req, dstD), tp)
 	if err != nil {
 		return fmt.Errorf("读取目标水位失败: %w", err)
 	}
@@ -393,11 +394,12 @@ func (r *Runner) execVerify(ctx context.Context, srcDB, dstDB gonavibase.Databas
 			return strconv.ParseInt(fmt.Sprintf("%v", rows[0]["c"]), 10, 64)
 		}
 	}
-	srcN, err := countOf(srcDB, srcD, req.SourceDB, tp.Source)
+	srcSchema, srcTable := splitQualified(req.SourceDB, tp.Source)
+	srcN, err := countOf(srcDB, srcD, srcSchema, srcTable)
 	if err != nil {
 		return fmt.Errorf("统计源行数失败: %w", err)
 	}
-	dstN, err := countOf(dstDB, dstD, req.TargetDB, tp.Target)
+	dstN, err := countOf(dstDB, dstD, EffectiveSchema(req, dstD), tp.Target)
 	if err != nil {
 		return fmt.Errorf("统计目标行数失败: %w", err)
 	}

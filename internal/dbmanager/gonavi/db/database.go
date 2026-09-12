@@ -1,12 +1,12 @@
 package db
 
 import (
-	"opscore/internal/dbmanager/gonavi/connection"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"opscore/internal/dbmanager/gonavi/connection"
 	"reflect"
 	"strconv"
 	"strings"
@@ -178,6 +178,22 @@ type DatabaseForeignKeyProvider interface {
 // load a table-level comment for schema/backup DDL generation.
 type TableCommentProvider interface {
 	GetTableComment(dbName, tableName string) (string, error)
+}
+
+// ObjectEnumerator is an optional metadata interface for drivers that can
+// enumerate database objects beyond base tables (views, functions, stored
+// procedures, events, triggers, sequences). Drivers without the capability
+// return no objects; the caller falls back to an empty collection.
+type ObjectEnumerator interface {
+	GetObjects(dbName string) ([]connection.DbObject, error)
+}
+
+// ObjectDefinitionProvider is an optional metadata interface for drivers that
+// can produce the DDL definition of a non-table object (view, function,
+// procedure, trigger, event). Kind values follow the DbObject.Kind contract;
+// unsupported kinds return a friendly error instead of panicking.
+type ObjectDefinitionProvider interface {
+	GetObjectDefinition(dbName, objectName, kind string) (string, error)
 }
 
 // TableExistsChecker is an optional point lookup for a table's canonical
@@ -1083,43 +1099,43 @@ func requireSingleRowAffected(result sql.Result, action rowMutationAction) error
 type databaseFactory func() Database
 
 var databaseFactories = map[string]databaseFactory{
-		"mysql": func() Database {
-			return &MySQLDB{}
-		},
-		"goldendb": func() Database {
-			return &MySQLDB{}
-		},
-		"postgres": func() Database {
-			return &PostgresDB{}
-		},
-		"oracle": func() Database {
-			return &OracleDB{}
-		},
-		"chroma": func() Database {
-			return &ChromaDB{}
-		},
-		"qdrant": func() Database {
-			return &QdrantDB{}
-		},
-		"milvus": func() Database {
-			return &MilvusDB{}
-		},
-		"rocketmq": func() Database {
-			return &RocketMQDB{}
-		},
-		"mqtt": func() Database {
-			return &MQTTDB{}
-		},
-		"kafka": func() Database {
-			return &KafkaDB{}
-		},
-		"rabbitmq": func() Database {
-			return &RabbitMQDB{}
-		},
-		"custom": func() Database {
-			return &CustomDB{}
-		},
-	}
+	"mysql": func() Database {
+		return &MySQLDB{}
+	},
+	"goldendb": func() Database {
+		return &MySQLDB{}
+	},
+	"postgres": func() Database {
+		return &PostgresDB{}
+	},
+	"oracle": func() Database {
+		return &OracleDB{}
+	},
+	"chroma": func() Database {
+		return &ChromaDB{}
+	},
+	"qdrant": func() Database {
+		return &QdrantDB{}
+	},
+	"milvus": func() Database {
+		return &MilvusDB{}
+	},
+	"rocketmq": func() Database {
+		return &RocketMQDB{}
+	},
+	"mqtt": func() Database {
+		return &MQTTDB{}
+	},
+	"kafka": func() Database {
+		return &KafkaDB{}
+	},
+	"rabbitmq": func() Database {
+		return &RabbitMQDB{}
+	},
+	"custom": func() Database {
+		return &CustomDB{}
+	},
+}
 
 func init() {
 	registerOptionalDatabaseFactories()

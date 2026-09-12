@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"opscore/internal/dbmanager/gonavi/ssh"
 	"opscore/internal/dbmanager/gonavi/shared/i18n"
+	"opscore/internal/dbmanager/gonavi/ssh"
 )
 
 func TestWrapDatabaseConnectionVerifyErrorWithRemoteDialFailureIncludesRemoteTarget(t *testing.T) {

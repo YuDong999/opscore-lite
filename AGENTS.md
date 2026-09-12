@@ -1,42 +1,32 @@
-# OpsCore 项目记忆（AGENTS.md）
+# AGENTS.md — opscore-lite 接手指南
 
-> 由 project-memory-sculptor 工作流维护：`[待确认]` 提案经用户批准后提升为 `[已生效]`。
-> 每次会话启动自动读取；违反 [已生效] 规则即返工。
+> 面向 AI 助手与新接手者。改代码前先读这份。
 
-## [已生效]
+## 项目概览
 
-### 前端规范
-- 规则：改一处视觉样式（尺寸/间距/行高/颜色/图标）必须横向枚举同布局全部同类项一起改，收尾交同类项清单。
-- 证据：2026-09 卡片间距/行高两轮返工，用户两次纠正"要看同类项"。
+- **opscore-lite**: 轻量运维控制台。React 18 + TS + Vite(前端) / Go 单二进制(后端)。
+- **分支约定**: `dev/dbmanager` = 数据库管理模块开发分支(本地主力); VM(192.168.207.10) 上 `/opt/opscore-lite` 是**容器管理分支**(`feat/k8s-action-catalog`)——**两分支互不覆盖**, 部署前先确认分支归属。
+- **参考项目**: `C:/Users/31807/.zcode/workspace/default/ref/` 下有 dbx(Vue3, 主要倒模对象)与 GoNavi(React+Antd)完整源码。
 
-### 前端规范
-- 规则：布局链六页签（流水线/运行历史/脚本库/仓库/凭据/概览）统一 `lg:h-[calc(100vh-14rem)]` + 卡片 flex 填充 + hover-scroll 框内滚动 + STICKY_THEAD 表头吸附，整页零滚动；新增页签照抄同构。
-- 证据：e4df966 同类项核查；新增页签漏根容器曾致双卡贴死(513413d)。
+## 数据库管理模块(当前主战场)
 
-### 工程规范
-- 规则：状态→色映射唯一权威 = `web/src/modules/cicd/shared.tsx` 的 `STATUS_COLOR`；禁止在页面内再定义本地状态色映射。
-- 证据：曾 4 份重复定义且 pending 值互相不一致，已收敛(1d22be3)。
+- 前端: `web/src/components/DatabaseManager/`(27 组件) + `modules/DatabaseManagerModule.tsx`
+- 后端: `internal/dbmanager/`(handlers/service/pool + gonavi 驱动底座 + sync 同步引擎)
+- **能力台账(开发 backlog)**: `docs/dbmanager-三方对比矩阵-2026-09.md`
+  —— 一切新功能先查此表, 完成即更新状态; 剩余批次 A(小活)/B(树子组)/C(批量编辑+任务库)/D(低优先) 见表内批次标注。
+- **设计基准**: `docs/dbmanager-sync-matrix.md`(同步层级组合表)
 
-### 工程规范
-- 规则：提交纪律 —— 工作分支 feat/cicd；构建通过才提交；构建产物(dist/exe)永不入库；用户要求"只提交本地"时不推送。
-- 证据：用户多次明确要求。
+## 关键工程要点(踩过的坑)
 
-### 已知坑
-- 规则：Windows 下 python 写文件后立刻 `vite build` 会撞文件锁静默失败——构建无 ✓ built 输出时先重跑一次再排查。
-- 证据：多次"改了没生效"实为旧产物；一次把失败构建误提交。
-- 规则：index.css 的 legacy `.grid` 规则(components层)会给所有 `grid` 类元素加 gap/margin——用 `grid` 类的布局容器需显式 `mb-0`/gap 覆盖。
-- 证据：概览/流水线卡片 25px 死区间根因(abfd138/f7845e0)。
+1. **构建**: `cd web && npm run build` 产物由 Go 托管(改前端必须重建才在 8088 生效); 实时预览用 `npm run dev`(5173, proxy /api→8088)。
+2. **SQLite 驱动**: 编译需 `-tags gonavi_sqlite_driver`(内嵌 modernc 纯 Go 实现); 其他可选驱动默认走 driver-agent 模式(未部署)。
+3. **样式覆盖段**: `web/src/index.css` 尾部有 V1–V19 版本化覆盖段。同选择器历史多段定义, **老块属性会残活**——改样式先 grep 全部定义(样式考古法, 见 skill: project-cartographer/references/ui-layout-debug-method.md)。
+4. **flex 高度链**: 弹层/面板内容"出视口/被截"先查祖先链 `flex:1/min-height:0/overflow` 三要素。
+5. **写操作护栏**: SQL 写操作默认只读拦截, 需 `/api/dbmanager/write-unlock` 限时解锁; E2E 验证写路径前先解锁。
+6. **图标纪律**: 禁用字形类字符(字体缺字形渲染成月牙), 一律内联 SVG。
+7. **双人同仓**: opencode 可能同时在同仓工作——提交前 `git log --oneline -3` 看有没有别人的新提交, rebase 而非 merge; `--theirs/--ours` 在 rebase 语境语义反转, 用前想清楚。
 
-## 工作流（每次任务照此执行）
+## 方法论沉淀
 
-1. **开工前**——按任务类型直达（高频三件套，已验证）：
-   - 修 bug / 调样式 / 重构 → `debug-and-refactor`
-   - 写代码 / 加功能 → `ponytail`（阶梯：仓内已有→标准库→平台原生→已装依赖→一行→最小实现）
-   - 前端布局 / 新页面 → `frontend-design` + 上方前端规范
-2. **任务不在上表或拿不准** → `find-skills` 检索匹配的 skill 再动手
-3. **收尾后**——本会话出现了用户采纳/纠正的信号、或踩到新坑 → `project-memory-sculptor`
-   把经验以 [待确认] 提案写入本文件（用户批准后上移 [已生效]；注意节制，不是每个任务都值得沉淀）
-
-## [待确认]
-
-（暂无。新经验由 sculpt.py propose --write 进入本区，批准后上移。）
+- 探查/倒模: skill `project-cartographer`(菜单全集发现法/结构机制提取法/运行时验证)
+- 调试: skill `debug-and-refactor`(Part E 高频根因速查: 占位端点审计/flex 高度链/样式考古)

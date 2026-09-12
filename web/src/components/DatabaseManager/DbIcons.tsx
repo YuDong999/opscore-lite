@@ -20,9 +20,61 @@ export function engineColor(engine: string | undefined): string {
   return ENGINE_COLORS[String(engine || '').toLowerCase()] || '#5b6abf'
 }
 
-/** 引擎图标: 圆角方块底 + 数据库桶形线条 */
+/** 品牌资源表(源自 GoNavi /db-icons, Apache-2.0): 有官方 logo 的引擎优先用图片 */
+const BRAND_ASSETS: Record<string, { src: string; scale?: number; bg?: string }> = {
+  // ── dbx 品牌图标(优先, 105 种, /db-icons/dbx/) ──
+  mysql: { src: '/db-icons/dbx/mysql.svg' },
+  mariadb: { src: '/db-icons/dbx/mariadb.svg' },
+  postgres: { src: '/db-icons/dbx/postgres.svg' },
+  oracle: { src: '/db-icons/dbx/oracle.svg' },
+  goldendb: { src: '/db-icons/dbx/goldendb.png' },
+  clickhouse: { src: '/db-icons/dbx/clickhouse.svg' },
+  sqlserver: { src: '/db-icons/dbx/sqlserver.svg' },
+  duckdb: { src: '/db-icons/dbx/duckdb.svg' },
+  dameng: { src: '/db-icons/dbx/dm.svg' },
+  gaussdb: { src: '/db-icons/dbx/gaussdb.svg' },
+  opengauss: { src: '/db-icons/dbx/opengauss.svg' },
+  kingbase: { src: '/db-icons/dbx/kingbase.svg' },
+  highgo: { src: '/db-icons/dbx/highgo.png' },
+  oceanbase: { src: '/db-icons/dbx/oceanbase.svg' },
+  starrocks: { src: '/db-icons/dbx/starrocks.svg' },
+  tdengine: { src: '/db-icons/dbx/tdengine.svg' },
+  trino: { src: '/db-icons/dbx/trino.svg' },
+  vastbase: { src: '/db-icons/dbx/vastbase.svg' },
+  iris: { src: '/db-icons/dbx/iris.svg' },
+  sphinx: { src: '/db-icons/dbx/manticoresearch.png' },
+  sqlite: { src: '/db-icons/dbx/sqlite.svg' },
+  mongodb: { src: '/db-icons/dbx/mongodb.svg' },
+  chroma: { src: '/db-icons/dbx/chromadb.svg' },
+  qdrant: { src: '/db-icons/dbx/qdrant.svg' },
+  milvus: { src: '/db-icons/dbx/milvus.png' },
+  iotdb: { src: '/db-icons/dbx/iotdb.svg' },
+  elasticsearch: { src: '/db-icons/dbx/elasticsearch.svg' },
+  kafka: { src: '/db-icons/dbx/kafka.svg' },
+  rabbitmq: { src: '/db-icons/dbx/rabbitmq.svg' },
+  rocketmq: { src: '/db-icons/dbx/rocketmq.svg' },
+  mqtt: { src: '/db-icons/dbx/mqtt.svg' },
+  // ── GoNavi 图标补缺(dbx 没有) ──
+  diros: { src: '/db-icons/diros.svg' },
+}
+
+/** 引擎图标: 有品牌 logo 用品牌图, 否则色块+桶形线条 */
 export function EngineIcon({ engine, size = 16 }: { engine: string | EngineType | undefined; size?: number }) {
+  const key = String(engine || '').toLowerCase()
   const color = engineColor(engine as string)
+  const brand = BRAND_ASSETS[key]
+  if (brand) {
+    const s = size * (brand.scale || 0.86)
+    return (
+      <span
+        className="dbx-engine-icon"
+        style={{ width: size, height: size, background: brand.bg || 'transparent', borderColor: 'transparent', borderRadius: Math.max(3, size * 0.18) }}
+        title={String(engine || '')}
+      >
+        <img src={brand.src} width={s} height={s} alt="" draggable={false} style={{ borderRadius: 2 }} />
+      </span>
+    )
+  }
   return (
     <span
       className="dbx-engine-icon"
@@ -39,7 +91,7 @@ export function EngineIcon({ engine, size = 16 }: { engine: string | EngineType 
 }
 
 /** 树节点图标: db / folder / table / view */
-export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'table' | 'view'; size?: number }) {
+export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' | 'connGroup' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'event' | 'trigger' | 'sequence'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (level) {
     case 'conn':
@@ -52,6 +104,15 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
           <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
         </svg>
       )
+    case 'schema':
+      return (
+        <svg {...common} className="dbx-node-icon icon-schema">
+          <path d="m12 2 10 5-10 5L2 7l10-5z" />
+          <path d="m2 12 10 5 10-5" />
+          <path d="m2 17 10 5 10-5" />
+        </svg>
+      )
+    case 'connGroup':
     case 'group':
       return (
         <svg {...common} className="dbx-node-icon icon-group">
@@ -65,6 +126,17 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
           <circle cx="12" cy="12" r="3" />
         </svg>
       )
+    case 'function':
+    case 'procedure':
+    case 'event':
+    case 'trigger':
+    case 'sequence':
+      return (
+        <svg {...common} className="dbx-node-icon icon-code">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+      )
     default:
       return (
         <svg {...common} className="dbx-node-icon icon-table">
@@ -76,7 +148,8 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
 }
 
 /** 小操作图标(全部为 SVG, 禁止 emoji/dingbat): 测试/编辑/删除/刷新/关闭/新建查询/查看数据/复制/齿轮/表结构 */
-export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload'; size?: number }) {
+export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right'
+export function ActionIcon({ kind, size = 13 }: { kind: ActionIconKind; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (kind) {
     case 'test':
@@ -157,6 +230,49 @@ export function ActionIcon({ kind, size = 13 }: { kind: 'test' | 'edit' | 'delet
         <svg {...common}>
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <path d="M7 8l5-5 5 5M12 3v12" />
+        </svg>
+      )
+    case 'download':
+      return (
+        <svg {...common}>
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <path d="M7 10l5 5 5-5" />
+          <path d="M12 15V3" />
+        </svg>
+      )
+    case 'plus':
+      return (
+        <svg {...common}>
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      )
+    case 'transfer':
+      return (
+        <svg {...common}>
+          <path d="M8 3L4 7l4 4" />
+          <path d="M4 7h16" />
+          <path d="M16 21l4-4-4-4" />
+          <path d="M20 17H4" />
+        </svg>
+      )
+    case 'pin':
+      return (
+        <svg {...common}>
+          <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+        </svg>
+      )
+    case 'panel':
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="7" height="16" rx="1.5" />
+          <rect x="13" y="4" width="8" height="16" rx="1.5" />
+        </svg>
+      )
+    case 'chevrons-right':
+      return (
+        <svg {...common}>
+          <path d="m6 17 5-5-5-5" />
+          <path d="m13 17 5-5-5-5" />
         </svg>
       )
     default:

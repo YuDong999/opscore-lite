@@ -3,20 +3,26 @@
 //   标签类型: data(表数据浏览) / query(查询) / doc(表结构) / sync(跨库同步) / audit(审计)
 // 右上角不再放重复的「新建连接」(入口在连接面板与概览页)。
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useToast } from '../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
-  listConnections, getUnlockState, lockWrite, unlockWrite,
+  listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
+  listTables, fetchTableDDL,
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
 import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
+import { ActionIcon } from '../components/DatabaseManager/DbIcons'
 import DocPanel from '../components/DatabaseManager/DocPanel'
 import QueryEditor from '../components/DatabaseManager/QueryEditor'
 import DataGrid from '../components/DatabaseManager/DataGrid'
 import DataPanel from '../components/DatabaseManager/DataPanel'
 import OverviewPanel from '../components/DatabaseManager/OverviewPanel'
+import QuickOpen from '../components/DatabaseManager/QuickOpen'
 import SyncPanel from '../components/DatabaseManager/SyncPanel'
+import ErGraphPanel from '../components/DatabaseManager/ErGraphPanel'
+import TableOverviewPanel from '../components/DatabaseManager/TableOverviewPanel'
+import ServerDashboardPanel from '../components/DatabaseManager/ServerDashboardPanel'
 import AuditPanel from '../components/DatabaseManager/AuditPanel'
 import DriverManagement from '../components/DatabaseManager/DriverManagement'
 import SlowSQLPanel from '../components/DatabaseManager/SlowSQLPanel'
@@ -26,10 +32,11 @@ import SavedQueriesPanel from '../components/DatabaseManager/SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash'
   connId: string
   db?: string
   table?: string
+  schema?: string
   isView?: boolean
   label: string
 }
@@ -51,10 +58,32 @@ export default function DatabaseManagerModule() {
   const [result, setResult] = useState<QueryResult | null>(null)
   const [unlockState, setUnlockState] = useState<{ unlocked: boolean; remainingSec: number; maxMinutes: number }>({ unlocked: false, remainingSec: 0, maxMinutes: 30 })
   const [showUnlock, setShowUnlock] = useState(false)
+  const [showQuickOpen, setShowQuickOpen] = useState(false)
+  // 侧栏收纳状态(localStorage 记忆, 对齐 dbx/goNavi 的侧栏折叠)
+  const [sideCollapsed, setSideCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('dbmanager:side-collapsed') === '1' } catch { return false }
+  })
+  const toggleSide = () => setSideCollapsed(v => {
+    const next = !v
+    try { localStorage.setItem('dbmanager:side-collapsed', next ? '1' : '0') } catch { /* ignore */ }
+    return next
+  })
 
   useEffect(() => {
     listConnections().then(setConns).catch(() => setConns([]))
   }, [conn?.id])
+
+  // Ctrl+K 快速打开
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setShowQuickOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // 解锁状态轮询
   useEffect(() => {
@@ -72,7 +101,9 @@ export default function DatabaseManagerModule() {
   const activeConn = conn ? connById.get(conn.id) ?? conn : null
 
   const openTab = (t: WorkTab) => {
-    setTabs(prev => prev.some(x => x.key === t.key) ? prev : [...prev, t])
+    setTabs(prev => prev.some(x => x.key === t.key)
+      ? prev.map(x => x.key === t.key ? { ...x, db: t.db, table: t.table, schema: t.schema } : x)
+      : [...prev, t])
     setActiveTab(t.key)
   }
 
@@ -92,6 +123,10 @@ export default function DatabaseManagerModule() {
   const tabLabel = (c: ConnectionInfo, db: string, table?: string) =>
     table ? `${table}@${db}` : db ? `查询@${db}` : c.name
 
+  // 跨标签传递的种子数据(查询模板/执行计划 SQL/同步预填) — 记录目标标签 key, 精确投递到那一个标签
+  const querySeedRef = useRef<{ key: string; sql: string } | null>(null)
+  const explainSqlRef = useRef<string>('')
+
   // ── 树交互 ──
   const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
     setConn(c)
@@ -104,6 +139,77 @@ export default function DatabaseManagerModule() {
   const handleOpenDoc = (c: ConnectionInfo, db: string, table: string) => {
     setConn(c)
     openTab({ key: `doc:${c.id}.${db}.${table}`, kind: 'doc', connId: c.id, db, table, label: `${table} 结构` })
+  }
+  const handleOpenStatus = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    openTab({ key: `status:${c.id}.${db}.${table}`, kind: 'status', connId: c.id, db, table, label: `${table} 状态` })
+  }
+  const handleOpenExplain = (c: ConnectionInfo, db: string, table: string) => {
+    setConn(c)
+    explainSqlRef.current = `SELECT * FROM ${db}.${table} LIMIT 100`
+    openTab({ key: `explain:${c.id}.${db}.${table}`, kind: 'explain', connId: c.id, db, table, label: `${table} 执行计划` })
+  }
+  const handleNewQueryWithSQL = (c: ConnectionInfo, db: string, sql: string) => {
+    setConn(c)
+    const key = `query:${c.id}.${db}.${Date.now()}`
+    querySeedRef.current = { key, sql }
+    openTab({ key, kind: 'query', connId: c.id, db, label: `${db} 查询` })
+  }
+  const handleExportTable = (c: ConnectionInfo, db: string, table: string, format: 'csv' | 'xlsx') => {
+    exportQuery(c.id, `SELECT * FROM ${db}.${table}`, format)
+      .then(({ fileName }) => toast.success(`已导出 ${fileName}`))
+      .catch(e => toast.error('导出失败: ' + e.message))
+  }
+  const openSyncTab = (seed: { connId: string; db: string; table?: string; schema?: string }) => {
+    const c = conns.find(x => x.id === seed.connId)
+    if (c) setConn(c)
+    openTab({ key: `sync:${seed.connId}`, kind: 'sync', connId: seed.connId, db: seed.db, table: seed.table, schema: seed.schema, label: '跨库同步' })
+  }
+  const handleSyncDb = (c: ConnectionInfo, db: string) => openSyncTab({ connId: c.id, db })
+  const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => openSyncTab({ connId: c.id, db, table })
+  const handleSyncSchema = (c: ConnectionInfo, db: string, schema: string) => openSyncTab({ connId: c.id, db, schema })
+
+  const handleOpenDash = (c: ConnectionInfo) => {
+    setConn(c)
+    openTab({ key: `dash:${c.id}`, kind: 'dash', connId: c.id, label: '服务器仪表盘' })
+  }
+  const handleOpenOverview = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    openTab({ key: `overview:${c.id}:${db}`, kind: 'overview', connId: c.id, db, label: `表概览 ${db}` })
+  }
+  const handleNewTable = (c: ConnectionInfo, db: string) => {
+    const NL = String.fromCharCode(10)
+    handleNewQueryWithSQL(c, db, `CREATE TABLE ${db}.new_table (${NL}  id INT PRIMARY KEY AUTO_INCREMENT,${NL}  name VARCHAR(255) NOT NULL,${NL}  created_at DATETIME DEFAULT CURRENT_TIMESTAMP${NL});`)
+  }
+  const handleExportSchema = (c: ConnectionInfo, db: string) => {
+    setConn(c)
+    toast.success(`正在导出 ${db} 全部表结构...`)
+    ;(async () => {
+      const ts = await listTables(c.id, db)
+      const parts: string[] = [`-- ${db} 表结构导出
+-- ${new Date().toLocaleString()}
+`]
+      for (const t of ts.filter(x => x.type !== 'VIEW')) {
+        try {
+          const ddl = await fetchTableDDL(c.id, db, t.name)
+          parts.push(`
+-- ── ${t.name} ──
+${ddl};
+`)
+        } catch { /* 单表失败跳过 */ }
+      }
+      const blob = new Blob([parts.join('\n')], { type: 'text/sql' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${db}-schema.sql`
+      a.click()
+      URL.revokeObjectURL(a.href)
+      toast.success(`已导出 ${ts.filter(x => x.type !== 'VIEW').length} 张表结构`)
+    })()
+  }
+  const handleOpenEr = (c: ConnectionInfo, db: string, table?: string) => {
+    setConn(c)
+    openTab({ key: `er:${c.id}:${db}`, kind: 'er', connId: c.id, db, table, label: table ? `ER ${table}` : 'ER 关系图' })
   }
   const handleSelectConn = (c: ConnectionInfo) => { setConn(c) }
 
@@ -167,13 +273,16 @@ export default function DatabaseManagerModule() {
           )}
           <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>审计</button>
           {conn && (
-            <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
+            <>
+              <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" title="服务器仪表盘" onClick={() => handleOpenDash(conn)}>仪表盘</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={!conn.config?.database} title={conn.config?.database ? 'ER 关系图' : '该连接未指定默认库, 请从树中库节点右键进入'} onClick={() => openTab({ key: `er:${conn.id}:${conn.config?.database || ''}`, kind: 'er', connId: conn.id, db: conn.config?.database || '', label: 'ER 关系图' })}>关系图</button>
+            </>
           )}
         </div>
         {activeConn && (
           <div className="db-head-info">
-            <span className="pill">
-              <span className={`db-engine-badge db-engine-${activeConn.engine}`}>{activeConn.engine}</span>
+            <span className="pill" title={activeConn.engine}>
               {activeConn.name}
             </span>
             {isProd && <span className="pill pill-err">生产</span>}
@@ -205,25 +314,52 @@ export default function DatabaseManagerModule() {
         </div>
       )}
 
+      <QuickOpen
+        conns={conns}
+        open={showQuickOpen}
+        onClose={() => setShowQuickOpen(false)}
+        onOpenTable={handleOpenTable}
+        onNewQuery={handleNewQuery}
+      />
       <div className="db-layout">
-        <aside className="db-side">
-          <ConnectionTree
-            conns={conns}
-            selectedConnId={conn?.id}
-            onOpenTable={handleOpenTable}
-            onNewQuery={handleNewQuery}
-            onOpenDoc={handleOpenDoc}
-            onSelectConn={handleSelectConn}
-            onEditConn={handleEditConn}
-            onNewConn={handleNewConn}
-            onConnsChange={setConns}
-            notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
-          />
-          <ConnectionPanel
-            selected={null}
-            onSelect={handleSelectConn}
-            onConnsChange={setConns}
-          />
+        <aside className={`db-side${sideCollapsed ? ' db-side-collapsed' : ''}`}>
+          {sideCollapsed ? (
+            <div className="db-side-rail" title="展开侧栏">
+              <button className="db-side-rail-btn" onClick={toggleSide}><ActionIcon kind="panel" size={15} /></button>
+            </div>
+          ) : (<>
+            <ConnectionTree
+              conns={conns}
+              selectedConnId={conn?.id}
+              onOpenTable={handleOpenTable}
+              onNewQuery={handleNewQuery}
+              onOpenDoc={handleOpenDoc}
+              onSelectConn={handleSelectConn}
+              onEditConn={handleEditConn}
+              onNewConn={handleNewConn}
+              onConnsChange={setConns}
+              notify={(ok, msg) => { ok ? toast.success(msg) : toast.error(msg) }}
+              onSyncDb={handleSyncDb}
+              onSyncTable={handleSyncTable}
+              onSyncSchema={handleSyncSchema}
+              onOpenEr={handleOpenEr}
+              onOpenDash={handleOpenDash}
+              onNewTable={handleNewTable}
+              onExportSchema={handleExportSchema}
+              onOpenOverview={handleOpenOverview}
+              onOpenStatus={handleOpenStatus}
+              onOpenExplain={handleOpenExplain}
+              onNewQueryWithSQL={handleNewQueryWithSQL}
+              onExportTable={handleExportTable}
+              onRefresh={() => listConnections().then(setConns).catch(() => {})}
+              onToggleSide={toggleSide}
+            />
+            <ConnectionPanel
+              selected={null}
+              onSelect={handleSelectConn}
+              onConnsChange={setConns}
+            />
+          </>)}
         </aside>
 
         <main className="db-main">
@@ -241,13 +377,24 @@ export default function DatabaseManagerModule() {
             )
           ) : (
             <>
-              <div className="db-main-tabs db-worktabs">
-                {tabs.map(t => (
-                  <div key={t.key} className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
-                    onClick={() => setActiveTab(t.key)} title={t.label}>
+              <div className="db-main-tabs db-worktabs" role="tablist" aria-label="工作区标签">
+                {tabs.map((t, i) => (
+                  <div key={t.key} role="tab" aria-selected={activeTab === t.key} tabIndex={0}
+                    className={`db-worktab ${activeTab === t.key ? 'active' : ''}`}
+                    onClick={() => setActiveTab(t.key)} title={t.label}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTab(t.key) }
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        e.preventDefault()
+                        const dir = e.key === 'ArrowRight' ? 1 : -1
+                        const next = tabs[(i + dir + tabs.length) % tabs.length]
+                        if (next) setActiveTab(next.key)
+                      }
+                    }}>
                     <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
-                    <span className="db-worktab-close" onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</span>
+                    <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
+                      onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
                   </div>
                 ))}
               </div>
@@ -259,12 +406,16 @@ export default function DatabaseManagerModule() {
                 switch (t.kind) {
                   case 'data':
                     return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView} />
-                  case 'query':
+                  case 'query': {
+                    const seedTab = querySeedRef.current
+                    const isSeedTab = seedTab != null && seedTab.key === t.key
                     return (
                       <div className="db-query-section" key={t.key}>
                         <QueryEditor
                           connId={c!.id}
                           engine={c!.engine}
+                          db={t.db}
+                          defaultSQL={isSeedTab ? seedTab.sql : undefined}
                           onResult={handleResult}
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={setLastSQL}
@@ -272,10 +423,19 @@ export default function DatabaseManagerModule() {
                         {result && <DataGrid result={result} connId={c!.id} sql={lastSQL} />}
                       </div>
                     )
+                  }
                   case 'doc':
-                    return <DocPanel key={t.key} connId={c!.id} database={t.db!} table={t.table!} />
+                    return <DocPanel key={t.key} connId={c!.id} engine={c!.engine} database={t.db!} table={t.table!} onStructureChanged={() => { listConnections().then(setConns).catch(() => {}) }} />
+                  case 'er':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0 }} key={t.key}><ErGraphPanel connId={c!.id} database={t.db!} focusTable={t.table} /></div>
+                  case 'overview':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0, display: 'flex' }} key={t.key}>
+                      <TableOverviewPanel connId={c!.id} database={t.db!} onOpenTable={table => handleOpenTable(c!, t.db!, table)} />
+                    </div>
+                  case 'dash':
+                    return <div className="db-doc-section" style={{ flex: 1, minHeight: 0, display: 'flex' }} key={t.key}><ServerDashboardPanel connId={c!.id} engine={c!.engine} database={t.db || c!.config?.database} /></div>
                   case 'sync':
-                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} /></div>
+                    return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={t.db} presetSchema={t.schema} presetTable={t.table} /></div>
                   case 'audit':
                     return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
                   case 'drivers':
@@ -285,7 +445,7 @@ export default function DatabaseManagerModule() {
                   case 'status':
                     return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
                   case 'explain':
-                    return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={lastSQL} /></div>
+                    return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={explainSqlRef.current || lastSQL} /></div>
                   case 'queries':
                     return <div className="db-queries-section" key={t.key}><SavedQueriesPanel conns={conns} activeConn={activeConn} /></div>
                   default:

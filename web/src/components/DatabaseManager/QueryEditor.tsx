@@ -1,10 +1,13 @@
 // SQL 编辑器 + 结果表格。
-// 不引入 Monaco(保持轻量), 使用 textarea + Tab 缩进 + Ctrl+Enter 执行。
+// CodeMirror6: SQL 高亮+表名补全+括号匹配; Ctrl+Enter 执行。
 // 工具: 格式化(sql-formatter, 按引擎方言) / 执行历史(本地回填) / 示例。
 // 写操作经 ADR-003 拦截链: confirm_required 弹确认重发, write_locked 引导解锁, blocked 直接报错。
 
-import { useEffect, useRef, useState } from 'react'
-import { runQueryRaw, type QueryResult, type InterceptionBody } from './api'
+import { useEffect, useState } from 'react'
+import CodeMirror from '@uiw/react-codemirror'
+import { sql as sqlLang } from '@codemirror/lang-sql'
+import { runQueryRaw, saveQuery, type QueryResult, type InterceptionBody } from './api'
+import { useToast } from '../Toast'
 import { formatSQL } from './sqlFormat'
 
 const SAMPLE_QUERIES = [
@@ -36,6 +39,7 @@ function pushHistory(sqlText: string): string[] {
 export default function QueryEditor({
   connId,
   engine,
+  db,
   defaultSQL = '',
   onResult,
   onWriteLocked,
@@ -43,15 +47,33 @@ export default function QueryEditor({
 }: {
   connId: string
   engine?: string
+  db?: string
   defaultSQL?: string
   onResult?: (r: QueryResult) => void
   onWriteLocked?: (msg: string) => void
   onExecuted?: (sql: string) => void
 }) {
+  const toast = useToast()
   const [sql, setSql] = useState(defaultSQL)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<string[]>(loadHistory)
-  const taRef = useRef<HTMLTextAreaElement>(null)
+  // 保存当前 SQL 到已保存查询(补全 🕳️: 后端 /queries/save + api.saveQuery 一直在, 缺保存入口)
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+
+  const doSave = async () => {
+    const name = saveName.trim()
+    if (!name) { toast.error('请填写查询名称'); return }
+    if (!sql.trim()) { toast.error('当前 SQL 为空'); return }
+    try {
+      await saveQuery({ name, sql, engine })
+      toast.success(`已保存查询「${name}」`)
+      setSaveOpen(false)
+      setSaveName('')
+    } catch (e: any) {
+      toast.error('保存失败: ' + (e.message || e))
+    }
+  }
 
   useEffect(() => {
     if (defaultSQL) setSql(defaultSQL)
@@ -62,7 +84,7 @@ export default function QueryEditor({
     if (!sql.trim()) return
     setBusy(true)
     try {
-      const { status, data } = await runQueryRaw(connId, sql, 5000, confirm)
+      const { status, data } = await runQueryRaw(connId, sql, 5000, confirm, db)
       setHistory(pushHistory(sql))
       onExecuted?.(sql)
       await handleResponse(status, data as QueryResult & InterceptionBody, confirm)
@@ -107,20 +129,11 @@ export default function QueryEditor({
 
   const doFormat = () => setSql(formatSQL(sql, engine))
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       run()
       return
-    }
-    // Tab 缩进
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      const ta = e.currentTarget
-      const start = ta.selectionStart, end = ta.selectionEnd
-      const next = sql.slice(0, start) + '  ' + sql.slice(end)
-      setSql(next)
-      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 2 })
     }
   }
 
@@ -129,13 +142,33 @@ export default function QueryEditor({
       <div className="db-query-header">
         <div className="db-query-controls">
           <button onClick={() => run()} disabled={busy} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">
-            {busy ? '执行中...' : '▶ 执行'}
+            {busy ? '执行中...' : (
+              <>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ verticalAlign: -1 }}><path d="M8 5v14l11-7z" /></svg>执行
+              </>
+            )}
           </button>
           <button onClick={() => run(true)} disabled={busy} className="btn-glass-soft btn-glass-soft-sm" title="高危语句二次确认执行">
             确认执行
           </button>
           <button onClick={doFormat} className="btn-glass-soft btn-glass-soft-sm" title="按当前引擎方言格式化 SQL">格式化</button>
           <button onClick={() => setSql('')} className="btn-glass-soft btn-glass-soft-sm">清空</button>
+          <button onClick={() => setSaveOpen(v => !v)} disabled={busy || !sql.trim()} className="btn-glass-soft btn-glass-soft-sm" title="保存当前 SQL 到已保存查询" aria-label="保存当前 SQL">保存</button>
+          {saveOpen && (
+            <span className="db-save-inline">
+              <input
+                className="input btn-glass-soft-sm"
+                style={{ maxWidth: '11rem', fontSize: '0.75rem' }}
+                placeholder="查询名称..."
+                value={saveName}
+                autoFocus
+                aria-label="查询名称"
+                onChange={e => setSaveName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveOpen(false) }}
+              />
+              <button onClick={doSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">确定</button>
+            </span>
+          )}
           {history.length > 0 && (
             <select
               className="input btn-glass-soft-sm"
@@ -160,15 +193,24 @@ export default function QueryEditor({
         </div>
       </div>
 
-      <textarea
-        ref={taRef}
-        value={sql}
-        onChange={(e) => setSql(e.target.value)}
-        onKeyDown={onKeyDown}
-        className="db-query-textarea"
-        placeholder={'输入 SQL 语句...\nCtrl+Enter 执行 · Tab 缩进 · 写操作默认锁定, 需先解锁'}
-        spellCheck={false}
-      />
+      <div className="db-query-cm" onKeyDown={onKeyDown}>
+        <CodeMirror
+          value={sql}
+          height="220px"
+          theme="none"
+          extensions={[sqlLang()]}
+          basicSetup={{
+            lineNumbers: true,
+            highlightActiveLine: true,
+            autocompletion: true,
+            bracketMatching: true,
+            closeBrackets: true,
+          }}
+          onChange={setSql}
+          placeholder="输入 SQL 语句... (Ctrl+Enter 执行)"
+          spellCheck={false}
+        />
+      </div>
     </div>
   )
 }

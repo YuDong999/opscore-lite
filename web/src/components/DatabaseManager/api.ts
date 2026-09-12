@@ -296,6 +296,10 @@ export interface InterceptionBody {
   reason?: string
 }
 
+export async function getEngineConfig(engine: EngineType): Promise<{ engine: string; config: ConnectionConfig }> {
+  return getJSON('/api/dbmanager/engine-config?engine=' + encodeURIComponent(engine))
+}
+
 export async function listConnections(): Promise<ConnectionInfo[]> {
   const r = await getJSON<{ connections: ConnectionInfo[] }>('/api/dbmanager/connections')
   return r.connections || []
@@ -368,11 +372,57 @@ export async function listDatabases(id: string): Promise<string[]> {
   return r.databases || []
 }
 
+// 列出连接引擎的命名空间(模式)。三级命名引擎(PG 族)返回模式列表,
+// 其余引擎返回空数组 —— 空=无模式层级, 前端据此动态显隐模式下拉(能力驱动)。
+export async function listSchemas(id: string): Promise<string[]> {
+  const r = await getJSON<{ schemas: string[] }>(`/api/dbmanager/schemas?id=${id}`)
+  return r.schemas || []
+}
+
+// 整库各表行数估算(信息库统计, 与 dbx/gonavi 树徽标一致); key 与 listTables 一致(PG=限定名)
+export async function getTableCounts(id: string, database: string): Promise<Record<string, number>> {
+  const r = await getJSON<{ counts: Record<string, number> }>(
+    `/api/dbmanager/table-counts?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.counts || {}
+}
+
 export async function listTables(id: string, database: string): Promise<TableInfo[]> {
   const r = await getJSON<{ tables: TableInfo[] }>(
     `/api/dbmanager/metadata?type=tables&id=${id}&database=${encodeURIComponent(database)}`,
   )
   return r.tables || []
+}
+
+// ── 对象级枚举(视图/函数/存储过程/事件/触发器/序列) ──
+export type DbObjectKind =
+  | 'VIEW' | 'MATERIALIZED VIEW'
+  | 'FUNCTION' | 'PROCEDURE'
+  | 'EVENT' | 'TRIGGER' | 'SEQUENCE'
+
+export interface DbObject {
+  name: string
+  kind: DbObjectKind
+  table?: string // 触发器所属表(可选, 部分引擎提供)
+}
+
+export async function listObjects(id: string, database: string): Promise<DbObject[]> {
+  const r = await getJSON<{ objects: DbObject[] }>(
+    `/api/dbmanager/metadata?type=objects&id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.objects || []
+}
+
+export async function getObjectDefinition(
+  id: string,
+  database: string,
+  object: string,
+  kind: DbObjectKind,
+): Promise<string> {
+  const r = await getJSON<{ ddl: string }>(
+    `/api/dbmanager/metadata?type=object-ddl&id=${id}&database=${encodeURIComponent(database)}&object=${encodeURIComponent(object)}&kind=${kind}`,
+  )
+  return r.ddl || ''
 }
 
 export async function describeTable(
@@ -385,11 +435,28 @@ export async function describeTable(
   )
 }
 
+export interface TableMeta {
+  columns: ColumnInfo[]
+  indexes: IndexInfo[]
+  foreignKeys: Array<{ name: string; column: string; refTable: string; refColumn: string; constraint: string }>
+  triggers: Array<{ name: string; timing: string; event: string; statement: string }>
+  ddl: string
+}
+
+// 完整表信息(列/索引/外键/触发器/DDL), 表信息抽屉页签数据源
+export async function getTableMeta(id: string, database: string, table: string): Promise<TableMeta> {
+  const r = await getJSON<{ meta: TableMeta }>(
+    `/api/dbmanager/table-meta?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`,
+  )
+  return r.meta
+}
+
 export async function runQueryRaw(
   id: string,
   sql: string,
   maxRows = 5000,
   confirm = false,
+  database?: string,
 ): Promise<{ status: number; data: QueryResult & InterceptionBody }> {
   const t = localStorage.getItem('opscore-token')
   const r = await fetch('/api/dbmanager/query', {
@@ -398,7 +465,7 @@ export async function runQueryRaw(
       'Content-Type': 'application/json',
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
     },
-    body: JSON.stringify({ id, sql, maxRows, confirm }),
+    body: JSON.stringify({ id, sql, maxRows, confirm, database }),
   })
   const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   return { status: r.status, data }
@@ -471,6 +538,43 @@ export async function getDrivers(): Promise<DriverInfo[]> {
   return r.drivers || []
 }
 
+export interface FkGraph {
+  tables: string[]
+  edges: Array<{ fromTable: string; fromColumn: string; toTable: string; toColumn: string }>
+}
+
+// 库级表+外键关系(ER 图数据源)
+export async function getFkGraph(id: string, database: string): Promise<FkGraph> {
+  const r = await getJSON<FkGraph>(
+    `/api/dbmanager/fk-graph?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r
+}
+
+export interface TableOverviewRow {
+  name: string; rows: number; dataSize: number; indexSize: number
+  engine: string; comment: string; createdAt: string; updatedAt: string
+}
+
+// 库级表概览(行数/大小/引擎/注释/时间, GoNavi 同款字段)
+export async function getTableOverview(id: string, database: string): Promise<TableOverviewRow[]> {
+  const r = await getJSON<{ overview: TableOverviewRow[] }>(
+    `/api/dbmanager/table-overview?id=${id}&database=${encodeURIComponent(database)}`,
+  )
+  return r.overview || []
+}
+
+// CSV 导入(首行=列名, 事务内批量 INSERT, 任一行失败整体回滚)
+export async function importTableCsv(id: string, database: string, table: string, csv: string): Promise<{ imported: number }> {
+  return postJSON('/api/dbmanager/table-import', { id, database, table, csv })
+}
+
+// 安装启用可选驱动(写 installed.json 标记; 驱动实现已随主二进制编译)
+export async function installDriver(type: string): Promise<{ ok: boolean; marker: string }> {
+  return postJSON('/api/dbmanager/drivers/install', { type })
+}
+
+
 export function statusLabel(s: EngineStatus): { text: string; cls: string } {
   switch (s) {
     case 'builtin':  return { text: '内置',  cls: 'pill-ok' }
@@ -526,4 +630,23 @@ export async function deleteSavedQuery(id: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   }).then(r => { if (!r.ok) throw new Error('删除失败') })
+}
+
+// ── 右键菜单: DDL / 全表 INSERT ──
+export async function fetchTableDDL(id: string, database: string, table: string): Promise<string> {
+  const d = await describeTable(id, database, table)
+  return d.ddl || ''
+}
+
+export async function fetchTableInserts(id: string, database: string, table: string, maxRows = 1000): Promise<{ text: string; rows: number; truncated: boolean }> {
+  return getJSON(`/api/dbmanager/table-inserts?id=${id}&database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&maxRows=${maxRows}`)
+}
+
+// ── 行内编辑: 按主键生成 UPDATE 并执行(后端走拦截链+审计) ──
+export async function applyCellEdit(
+  id: string, database: string, table: string,
+  pkCols: string[], row: Record<string, any>,
+  setCol: string, setValue: any, confirm = false,
+): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
+  return postJSON('/api/dbmanager/apply-edit', { id, database, table, pkCols, row, setCol, setValue, confirm })
 }

@@ -6,11 +6,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"opscore/internal/dbmanager/gonavi/connection"
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"sync"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/connection"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 type sqliteI18nEmptyRowsDriver struct{}
@@ -200,8 +200,6 @@ func TestSQLiteDSNValidationErrorsUseCurrentLanguage(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestSQLiteDSNValidationErrorCatalogKeysExist(t *testing.T) {
 	catalogs, err := i18n.LoadCatalogs()

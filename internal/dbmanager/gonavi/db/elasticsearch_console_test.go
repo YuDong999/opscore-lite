@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"opscore/internal/dbmanager/gonavi/connection"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"opscore/internal/dbmanager/gonavi/connection"
 )
 
 func TestElasticsearchConsoleExecutorReturnsRawHTTPResponse(t *testing.T) {

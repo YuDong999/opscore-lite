@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"sync"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 type mysqlI18nEmptyRowsDriver struct{}
@@ -96,7 +96,6 @@ func TestMySQLCreateStatementNotFoundUsesCurrentLanguage(t *testing.T) {
 	}
 }
 
-
 func TestMySQLGetAllColumnsDatabaseRequiredUsesCurrentLanguage(t *testing.T) {
 	SetBackendLanguage(i18n.LanguageEnUS)
 	t.Cleanup(func() {
@@ -116,4 +115,3 @@ func TestMySQLGetAllColumnsDatabaseRequiredUsesCurrentLanguage(t *testing.T) {
 		t.Fatalf("expected no raw Chinese database-name text, got %q", err.Error())
 	}
 }
-

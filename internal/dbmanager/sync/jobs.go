@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -20,6 +19,9 @@ func NewJobRegistry() *JobRegistry {
 }
 
 func (g *JobRegistry) Create(req SyncRequest, tables []TableProgress) *Job {
+	if tables == nil {
+		tables = []TableProgress{} // 空表序列化为 [] 而非 null, 前端状态轮询不致空指针
+	}
 	id, _ := newJobID()
 	j := &Job{
 		ID:        id,
@@ -97,6 +99,3 @@ func newJobID() (string, error) {
 	}
 	return fmt.Sprintf("sync_%d_%s", time.Now().Unix(), hex.EncodeToString(b)), nil
 }
-
-// 供 context 取消链使用(保留 import 语义)。
-var _ = context.Background

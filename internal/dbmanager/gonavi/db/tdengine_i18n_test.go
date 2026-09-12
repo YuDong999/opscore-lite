@@ -3,9 +3,9 @@
 package db
 
 import (
+	"opscore/internal/dbmanager/gonavi/shared/i18n"
 	"strings"
 	"testing"
-	"opscore/internal/dbmanager/gonavi/shared/i18n"
 )
 
 var rawTDengineAllColumnsDatabaseRequiredText = string([]rune{0x83b7, 0x53d6, 0x5168, 0x90e8, 0x5217, 0x4fe1, 0x606f, 0x9700, 0x8981, 0x6307, 0x5b9a, 0x6570, 0x636e, 0x5e93, 0x540d, 0x79f0})
@@ -29,4 +29,3 @@ func TestTDengineGetAllColumnsDatabaseRequiredUsesCurrentLanguage(t *testing.T) 
 		t.Fatalf("expected no raw Chinese database-name text, got %q", err.Error())
 	}
 }
-
