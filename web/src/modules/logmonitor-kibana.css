@@ -23,7 +23,6 @@
   flex-direction: column;
   gap: 10px;
 }
-.kib-err { border-color: var(--danger, #ff4d4f) !important; }
 
 /* 二、顶部查询条（Kibana Discover 顶栏） */
 .kib-topbar {
@@ -34,7 +33,7 @@
   padding: 10px 12px;
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .kib-topbar-soon { font-size: 11px; color: var(--text-dim); }
 .kib-topbar label {
@@ -63,9 +62,19 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.08));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   max-width: 220px;
+}
+.kib-time {
+  appearance: none;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.08));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
 }
 
 /* 搜索/查询框 + 建议下拉 */
@@ -81,7 +90,7 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.06));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .kib-search input:focus {
   outline: none;
@@ -135,7 +144,7 @@
 .kib-fields {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -152,19 +161,6 @@
   gap: 6px;
   background: color-mix(in srgb, var(--bg-soft, #888) 10%, transparent);
 }
-.kib-fields-search {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.kib-fields-search input {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  background: var(--bg-soft, rgba(127,127,127,0.06));
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text);
-}
 .kib-fields-list {
   flex: 1;
   overflow-y: auto;
@@ -175,7 +171,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 5px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
@@ -195,7 +191,7 @@
   color: var(--text-dim);
   background: color-mix(in srgb, var(--text-dim) 15%, transparent);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 .kib-field.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -221,7 +217,7 @@
 .kib-hist-card {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 12px;
   flex: none; /* 直方图固定高度，不参与弹性伸缩 */
 }
@@ -239,7 +235,7 @@
 .kib-docs {
   background: var(--panel, rgba(255,255,255,0.6));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   flex: 1;
   min-height: 0;
@@ -269,7 +265,10 @@
   font-weight: 600;
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-soft, #888) 8%, transparent);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -301,7 +300,7 @@
   color: var(--accent);
   font-weight: 700;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-radius: 2px;
+  border-radius: 4px;
   padding: 0 1px;
 }
 
@@ -313,7 +312,7 @@
   font-size: 10px;
   font-weight: 700;
   text-align: center;
-  border-radius: 3px;
+  border-radius: 4px;
   letter-spacing: 0.02em;
 }
 .kib-idx {
@@ -321,7 +320,7 @@
   padding: 0 6px;
   font-size: 10px;
   line-height: 1.5;
-  border-radius: 3px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -330,8 +329,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
-  cursor: help;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
+.kib-idx:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
 .kib-ts { color: var(--text-secondary); font-size: 11px; }
 
 /* 分页 */
@@ -445,11 +446,13 @@
   gap: 8px;
   max-width: 360px;
   animation: kib-toast-in 0.2s ease-out;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
 }
-.kib-toast-ok { border-left: 3px solid #34c759; }
-.kib-toast-err { border-left: 3px solid #ff4d4f; }
+.kib-toast:hover { border-color: var(--text-dim); }
+.kib-toast-ok { border-left: 3px solid var(--ok); }
+.kib-toast-err { border-left: 3px solid var(--danger); }
 .kib-toast-info { border-left: 3px solid var(--accent-2); }
-.kib-toast::before { content: ''; }
 @keyframes kib-toast-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -471,7 +474,7 @@
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
@@ -491,24 +494,24 @@
   color: var(--text-dim);
 }
 .kib-btn-bare:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
-.kib-btn-bare-danger:hover { color: #ff4d4f; background: color-mix(in srgb, #ff4d4f 10%, transparent); }
+.kib-btn-bare-danger:hover { color: var(--lvl-error); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
 .kib-live {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--border);
   cursor: pointer;
-  background: color-mix(in srgb, #34c759 12%, transparent);
-  color: #34c759;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--lvl-ok);
 }
 .kib-live.on {
-  background: color-mix(in srgb, #ff4d4f 14%, transparent);
-  color: #ff4d4f;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--lvl-error);
 }
 .kib-live-dot {
   width: 8px; height: 8px;
@@ -543,6 +546,10 @@
   flex-direction: column;
   gap: 12px;
 }
+.kib-modal-wide {
+  width: 760px;
+  max-width: 96vw;
+}
 .kib-modal h3 { margin: 0; font-size: 15px; color: var(--text); }
 .kib-inline-form { display: flex; flex-direction: column; gap: 10px; }
 .kib-form-row {
@@ -557,7 +564,7 @@
   color: var(--text);
   background: var(--bg-soft, rgba(127,127,127,0.06));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .kib-form-row input:focus, .kib-form-row select:focus {
   outline: none;
@@ -600,7 +607,7 @@
 /* 从已连接资源添加(容器/K8S 发现面板) */
 .kib-discover-panel {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
   background: var(--bg-soft, rgba(127,127,127,0.04));
 }
@@ -618,7 +625,7 @@
   gap: 8px;
   padding: 7px 10px;
   font-size: 13px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -637,11 +644,160 @@
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--accent, #4c7dff);
-  color: #fff;
+  color: var(--panel, #fff);
   font-size: 11px;
   font-weight: 600;
   justify-content: center;
 }
-.kib-badge.kib-multi { background: #22a06b; }
+/* 染色徽章: 同系深字+低饱和底, 明暗主题均满足对比度(浅色文字≥4.6:1) */
+.kib-badge.kib-tint-ok { background: color-mix(in srgb, var(--lvl-ok) 15%, transparent); color: var(--lvl-ok); }
+.kib-badge.kib-tint-danger { background: color-mix(in srgb, var(--lvl-error) 15%, transparent); color: var(--lvl-error); }
+.kib-badge.kib-tint-info { background: color-mix(in srgb, var(--lvl-info) 15%, transparent); color: var(--lvl-info); }
+.kib-badge.kib-tint-accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.kib-badge.kib-multi { background: color-mix(in srgb, var(--lvl-ok) 16%, transparent); color: var(--lvl-ok); }
+
+/* 已接入标记（绿✓）: code 列等宽占位(maxName), √ 紧跟即统一对齐 */
+.kib-joined {
+  color: var(--lvl-ok);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+/* 启停采集开关 */
+.kib-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 12px;
+  background: var(--border, rgba(127,127,127,0.35));
+  cursor: pointer;
+  transition: background 0.15s ease;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+/* 视觉不变, 命中区外扩至 ~50×34 */
+.kib-switch::after { content: ''; position: absolute; inset: -8px; }
+.kib-switch:hover { box-shadow: 0 0 0 3px var(--bg-soft, rgba(127,127,127,0.15)); }
+.kib-switch i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.kib-switch.on { background: var(--lvl-ok); }
+.kib-switch.on i { transform: translateX(16px); }
+
+/* 已接入但不在当前发现列表的源（历史/已停止）灰显 */
+.kib-check-item.kib-ghost { opacity: 0.55; }
+.kib-check-item.kib-ghost .kib-joined { opacity: 1; }
+
+/* ── 合并工具栏：搜索框 + 查询/重置/Live/刷新 一行 ── */
+.kib-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.kib-search-bar .kib-search {
+  flex: 1 1 300px;
+  min-width: 200px;
+  max-width: 350px;
+}
+.kib-search-bar .kib-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.kib-search-bar .kib-live {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* ── 字段层级树（类似 Kibana） ── */
+.kib-field-tree {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.kib-field-tree:last-child {
+  border-bottom: none;
+}
+.kib-field-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.kib-field-name {
+  flex: 1;
+  font-weight: 600;
+}
+.kib-field-toggle {
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.kib-field-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.kib-field-children {
+  padding: 2px 0 4px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kib-field-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.kib-field-child:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.kib-field-child.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.kib-field-child.active .kib-field-child-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+.kib-field-child-check {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+}
+.kib-field-child-val {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.kib-field-child-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.85;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
+
+/* ── 错误横幅 ── */
+.kib-err {
+  border-color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
+}

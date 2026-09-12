@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"opscore/internal/agent"
 	"opscore/internal/ansible"
@@ -176,8 +177,20 @@ func main() {
 	}
 	defer logArchiver.Close()
 	logSvc := logmonitor.NewService(logStore, logArchiver)
+	logSvc.Start(filepath.Join(dataDir, "logs"))
+	defer logSvc.Stop()
 	lmMod := logmonitor.Module(logStore, logSvc, logArchiver, filepath.Join(dataDir, "logs"))
 	reg.Register(lmMod)
+
+	// 启动告警评估器（每 30s 评估一次）
+	alerter := logmonitor.NewAlerter(logStore)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			alerter.Evaluate()
+		}
+	}()
 
 	mux := http.NewServeMux()
 

@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"opscore/internal/registry"
 )
@@ -37,10 +39,12 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 		Routes: []registry.Route{
 			{Path: "/api/logmonitor/query", Handler: h.handleQuery},
 			{Path: "/api/logmonitor/stats", Handler: h.handleStats},
+			{Path: "/api/logmonitor/stats/terms", Handler: h.handleTerms},
 			{Path: "/api/logmonitor/ingest", Handler: h.handleIngest},
 			{Path: "/api/logmonitor/sources", Handler: h.handleSources},
 			{Path: "/api/logmonitor/sources/save", Handler: h.handleSourceSave},
 			{Path: "/api/logmonitor/sources/delete", Handler: h.handleSourceDelete},
+			{Path: "/api/logmonitor/sources/enabled", Handler: h.handleSourceSetEnabled},
 			{Path: "/api/logmonitor/scan", Handler: h.handleScan},
 			{Path: "/api/logmonitor/raw", Handler: h.handleRaw},
 			{Path: "/api/logmonitor/delete", Handler: h.handleDelete},
@@ -50,9 +54,22 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 			{Path: "/api/logmonitor/indexes/delete", Handler: h.handleIndexDelete},
 			{Path: "/api/logmonitor/indexes/stats", Handler: h.handleIndexStats},
 			{Path: "/api/logmonitor/ilm/run", Handler: h.handleIlmRun},
+			{Path: "/api/logmonitor/parsers", Handler: h.handleParsers},
+			{Path: "/api/logmonitor/parsers/save", Handler: h.handleParsersSave},
+			{Path: "/api/logmonitor/parsers/test", Handler: h.handleParsersTest},
+			{Path: "/api/logmonitor/shards", Handler: h.handleShards},
+			{Path: "/api/logmonitor/shards/save", Handler: h.handleShardsSave},
+			{Path: "/api/logmonitor/shards/delete", Handler: h.handleShardsDelete},
 			{Path: "/api/logmonitor/discover/containers", Handler: h.handleDiscoverContainers},
 			{Path: "/api/logmonitor/discover/k8s", Handler: h.handleDiscoverK8s},
 			{Path: "/api/logmonitor/discover/clusters", Handler: h.handleDiscoverClusters},
+			{Path: "/api/logmonitor/alerts/rules", Handler: h.handleListAlertRules},
+			{Path: "/api/logmonitor/alerts/rules/save", Handler: h.handleSaveAlertRule},
+			{Path: "/api/logmonitor/alerts/rules/delete", Handler: h.handleDeleteAlertRule},
+			{Path: "/api/logmonitor/alerts/channels", Handler: h.handleListAlertChannels},
+			{Path: "/api/logmonitor/alerts/channels/save", Handler: h.handleSaveAlertChannel},
+			{Path: "/api/logmonitor/alerts/channels/delete", Handler: h.handleDeleteAlertChannel},
+			{Path: "/api/logmonitor/alerts/events", Handler: h.handleListAlertEvents},
 		},
 	}
 }
@@ -159,7 +176,36 @@ func (h *Handlers) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "聚合失败: "+err.Error())
 		return
 	}
+	if hist == nil {
+		hist = []HistogramBucket{}
+	}
 	writeJSON(w, http.StatusOK, LogStatsResult{Stats: stats, Histogram: hist})
+}
+
+// GET /api/logmonitor/stats/terms?field=service&service=&level=&source=&keyword=&startTs=&endTs=&indexId=&size=
+func (h *Handlers) handleTerms(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	tq := &LogTermsQuery{
+		Field:   q.Get("field"),
+		Service: q.Get("service"),
+		Level:   q.Get("level"),
+		Source:  q.Get("source"),
+		Keyword: q.Get("keyword"),
+		IndexID: q.Get("indexId"),
+		Size:    atoiDefault(q.Get("size"), 10),
+	}
+	if v := q.Get("startTs"); v != "" {
+		tq.StartTs = atoi64Default(v, 0)
+	}
+	if v := q.Get("endTs"); v != "" {
+		tq.EndTs = atoi64Default(v, 0)
+	}
+	result, err := h.store.Terms(tq)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Terms 聚合失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // POST /api/logmonitor/ingest  { "line": "...", "service":"", "source":"" } 或 { "lines":[...] }
@@ -264,6 +310,31 @@ func (h *Handlers) handleSourceDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
+// POST /api/logmonitor/sources/enabled  { "id": "...", "enabled": true }
+func (h *Handlers) handleSourceSetEnabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if body.ID == "" {
+		writeErr(w, http.StatusBadRequest, "id 不能为空")
+		return
+	}
+	if err := h.store.SetSourceEnabled(body.ID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
 // POST /api/logmonitor/scan  { "path":"...", "service":"", "source":"", "tailOnly":false, "namespace":"", "cluster":"" }
 // source=file     → path 为本地文件路径
 // source=container→ path 为本机 docker 容器名
@@ -301,6 +372,12 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if svc == "" {
 		svc = body.Source
+	}
+	// 容器/内各 pod：svc 为空时用它自己名字（容器名/pod名）做服务名，避免统一落成 "container"/"k8s"
+	if body.Source == "container" || body.Source == "k8s" || body.Source == "k8spod" {
+		if svc == body.Source { // 说明 body.Service 与 DefaultSvc 都为空，fallback 到了 source
+			svc = body.Path
+		}
 	}
 
 	var lines []string
@@ -346,7 +423,51 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, ierr.Error())
 		return
 	}
+	// 接入成功即注册为持续跟踪源(follow=1)，后台 poller 持续增量采集
+	h.registerFollowSource(body.Path, body.Source, body.Namespace, body.Cluster, body.IndexID, svc)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"scanned": n, "path": body.Path, "source": body.Source})
+}
+
+// registerFollowSource 把一次性 scan 成功的容器/k8s 源持久化成 follow 源，供 poller 持续采集。
+// 幂等：以 type:path 为唯一 key，重复接入只更新元数据，不重置游标。
+func (h *Handlers) registerFollowSource(path, source, namespace, cluster, indexID, svc string) {
+	if source != "container" && source != "k8s" && source != "k8spod" {
+		return
+	}
+	sources, err := h.store.ListSources()
+	if err != nil {
+		return
+	}
+	id := source + ":" + path
+	for _, s := range sources {
+		if s.ID == id {
+			// 重新接入：被停用的源 → 重新启用（游标保留续采，不重扫尾部）
+			if !s.Enabled || s.IndexID != indexID {
+				s.Enabled = true
+				if s.IndexID != indexID {
+					s.IndexID = indexID
+					s.Service = svc
+				}
+				_ = h.store.SaveSource(s)
+			}
+			return
+		}
+	}
+	src := &LogSource{
+		ID:        id,
+		Name:      path,
+		Type:      source,
+		Path:      path,
+		Service:   svc,
+		Enabled:   true,
+		Follow:    true,
+		IndexID:   indexID,
+		Namespace: namespace,
+		Cluster:   cluster,
+		// 游标置为接入时刻：scan 已抓尾部入库，poller 从接入后增量抓取，避免首采 tail 重复
+		LastTs: nowMs(),
+	}
+	_ = h.store.SaveSource(src)
 }
 
 // GET /api/logmonitor/raw?id=123  → 完整原始日志内容
@@ -513,6 +634,125 @@ func (h *Handlers) handleIlmRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GET /api/logmonitor/parsers → 当前解析规则(前端编辑/展示用)
+func (h *Handlers) handleParsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	rules, builtin, errStr := h.service.ParserInfo()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rules":   rules,
+		"builtin": builtin,
+		"error":   errStr,
+	})
+}
+
+// POST /api/logmonitor/parsers/save { "rules": [...] } → 写 parsers.json + 热载
+func (h *Handlers) handleParsersSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Rules []ParserRule `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if len(body.Rules) == 0 {
+		writeErr(w, http.StatusBadRequest, "规则列表不能为空")
+		return
+	}
+	if err := h.service.ParserSave(body.Rules); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// POST /api/logmonitor/parsers/test { "rule": {...}, "lines": [...] } → 逐行解析结果, 不改全局规则
+func (h *Handlers) handleParsersTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Rule  ParserRule `json:"rule"`
+		Lines []string   `json:"lines"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if len(body.Lines) == 0 {
+		writeErr(w, http.StatusBadRequest, "请至少输入一行样例日志")
+		return
+	}
+	results := h.service.ParserTest(body.Rule, body.Lines)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+}
+
+// GET /api/logmonitor/shards → 分片配置 + 分片状态列表
+func (h *Handlers) handleShards(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config": h.store.shardCfg,
+		"shards": h.store.ListShards(h.store.shardCfg),
+	})
+}
+
+// POST /api/logmonitor/shards/save { "config": {...} } → 写 shards.json + 生效
+func (h *Handlers) handleShardsSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Config ShardConfig `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	path := filepath.Join(filepath.Dir(h.dataDir), "shards.json")
+	if err := saveShardConfig(path, body.Config); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.store.shardCfg = loadShardConfig(path)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "config": h.store.shardCfg})
+}
+
+// POST /api/logmonitor/shards/delete { "shard": "202607" } → 删除过期分片
+func (h *Handlers) handleShardsDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Shard string `json:"shard"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
+		return
+	}
+	if body.Shard == "" {
+		writeErr(w, http.StatusBadRequest, "shard 不能为空")
+		return
+	}
+	n, err := h.store.DropShard(body.Shard, h.store.shardCfg)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": n})
+}
+
 // readLogContent 按 metadata 读取日志内容。
 // 优先：若该日志归属某索引且已归档, 从 zstd 归档读取原文；否则回读源文件。
 func (h *Handlers) readLogContent(e *LogEntry) string {
@@ -559,6 +799,97 @@ func atoi64Default(s string, def int64) int64 {
 // RequireStore 在 main.go 中调用以创建 store
 func RequireStore(dbPath string) (*Store, error) {
 	return NewStore(dbPath)
+}
+
+// ---------- Alert Rules ----------
+
+func (h *Handlers) handleListAlertRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := h.store.ListAlertRules()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules, "ok": true})
+}
+
+func (h *Handlers) handleSaveAlertRule(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var rule AlertRule
+	if err := json.Unmarshal(body, &rule); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败")
+		return
+	}
+	if rule.ID == "" { rule.ID = "ar_" + strconv.FormatInt(time.Now().UnixMilli(), 10) }
+	rule.UpdatedAt = time.Now().UnixMilli()
+	if err := h.store.SaveAlertRule(&rule); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rule)
+}
+
+func (h *Handlers) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "缺 id")
+		return
+	}
+	if err := h.store.DeleteAlertRule(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// ---------- Alert Channels ----------
+
+func (h *Handlers) handleListAlertChannels(w http.ResponseWriter, r *http.Request) {
+	chans, err := h.store.ListAlertChannels()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"channels": chans, "ok": true})
+}
+
+func (h *Handlers) handleSaveAlertChannel(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var ch AlertChannel
+	if err := json.Unmarshal(body, &ch); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON 解析失败")
+		return
+	}
+	if ch.ID == "" { ch.ID = "ac_" + strconv.FormatInt(time.Now().UnixMilli(), 10) }
+	if err := h.store.SaveAlertChannel(&ch); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ch)
+}
+
+func (h *Handlers) handleDeleteAlertChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "缺 id")
+		return
+	}
+	if err := h.store.DeleteAlertChannel(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// ---------- Alert Events ----------
+
+func (h *Handlers) handleListAlertEvents(w http.ResponseWriter, r *http.Request) {
+	limit := atoiDefault(r.URL.Query().Get("limit"), 100)
+	events, err := h.store.ListAlertEvents(limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"events": events, "ok": true})
 }
 
 var _ = fmt.Sprintf

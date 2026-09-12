@@ -3,9 +3,9 @@
    2) 仅补 shadcn 组件依赖的 border 默认样式(border-width:0 solid);
    3) 主题色全部引用既有 data-theme 变量(--text/--border/--accent...),
       5 套主题自动适配, 不新增任何色值。 */
-@layer theme, base, components, utilities;
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 @import "tw-animate-css";
 
 *, ::before, ::after {
@@ -66,6 +66,9 @@ html {
   --surface: rgba(255, 255, 255, 0.38);
   --surface-solid: #ffffff;
   --surface-tint: rgba(91, 106, 191, 0.06);
+  --panel: #ffffff;
+  --bg-soft: rgba(0, 0, 0, 0.045);
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   --border: rgba(0, 0, 0, 0.10);
   --border-glow: rgba(255, 255, 255, 0.8);
   --row-hover: rgba(91, 106, 191, 0.08);
@@ -77,6 +80,12 @@ html {
   --ok: #34c759;
   --warn: #ff9f0a;
   --danger: #ff453a;
+  --lvl-error: #c1271d;
+  --lvl-fatal: #9c0715;
+  --lvl-warn: #8f5200;
+  --lvl-info: #0f62c9;
+  --lvl-debug: #5c5c6e;
+  --lvl-ok: #17692a;
   --shadow: 0 0.5rem 2.5rem rgba(91, 106, 191, 0.12);
   --radius-sm: 0.625rem;
   --radius-md: 1rem;
@@ -92,6 +101,8 @@ html {
   --surface: rgba(255, 255, 255, 0.06);
   --surface-solid: #15131e;
   --surface-tint: rgba(167, 139, 250, 0.06);
+  --panel: #15131e;
+  --bg-soft: rgba(255, 255, 255, 0.06);
   --border: rgba(255, 255, 255, 0.10);
   --border-glow: rgba(167, 139, 250, 0.15);
   --row-hover: rgba(167, 139, 250, 0.10);
@@ -103,6 +114,12 @@ html {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --lvl-error: #ff6b63;
+  --lvl-fatal: #ff8a80;
+  --lvl-warn: #ffc53d;
+  --lvl-info: #5aa9ff;
+  --lvl-debug: #9aa0b3;
+  --lvl-ok: #4ade80;
   --shadow: 0 0.5rem 2.5rem rgba(0, 0, 0, 0.6);
 }
 
@@ -114,6 +131,8 @@ html {
   --surface: rgba(255, 255, 255, 0.06);
   --surface-solid: #1c1938;
   --surface-tint: rgba(167, 139, 250, 0.06);
+  --panel: #1c1938;
+  --bg-soft: rgba(255, 255, 255, 0.06);
   --border: rgba(255, 255, 255, 0.10);
   --border-glow: rgba(167, 139, 250, 0.12);
   --row-hover: rgba(251, 146, 60, 0.10);
@@ -125,6 +144,12 @@ html {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --lvl-error: #ff6b63;
+  --lvl-fatal: #ff8a80;
+  --lvl-warn: #ffc53d;
+  --lvl-info: #5aa9ff;
+  --lvl-debug: #9aa0b3;
+  --lvl-ok: #4ade80;
   --shadow: 0 0.5rem 2.5rem rgba(0, 0, 0, 0.55);
   --blur: blur(1.875rem);
 }
@@ -212,6 +237,14 @@ body {
   box-shadow: var(--shadow), inset 0 1px 0 0.5px var(--border-glow);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
+}
+
+/* 监控页：多卡紧邻时取消外阴影与毛玻璃, 避免互相叠影 (仅监控页容器内生效) */
+.monitor-cards .card,
+.monitor-cards .glass {
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* ── Layout ── */
@@ -2994,6 +3027,8 @@ body {
 .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.375rem; }
 .dot-ok { background: #30d158; }
 .dot-off { background: var(--text-dim); }
+.dot-err { background: var(--danger); }
+.dot-warn { background: var(--warn); }
 
 /* 详情弹层 */
 .log-modal-mask {

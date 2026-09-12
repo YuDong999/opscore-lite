@@ -57,12 +57,16 @@ type ServiceStat struct {
 type LogSource struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
-	Type    string `json:"type"`    // file/syslog/http/container
-	Path    string `json:"path"`    // 文件路径 / 容器名 / URL
+	Type    string `json:"type"`    // file/syslog/http/container/k8s
+	Path    string `json:"path"`    // 文件路径 / 容器名 / pod名
 	Service string `json:"service"` // 标签：属于哪个服务
 	Enabled bool   `json:"enabled"`
-	// file 类型特有
-	Follow bool `json:"follow"` // 是否持续跟踪（tail -f 模式）
+	Follow  bool   `json:"follow"` // 是否持续跟踪（tail -f 模式）
+	IndexID string `json:"indexId"` // 采集到哪个索引
+	// container/k8s 特有
+	Namespace string `json:"namespace"` // k8s：命名空间
+	Cluster   string `json:"cluster"`   // k8s：集群 ID
+	LastTs    int64  `json:"lastTs"`    // 采集游标：最近一次入库的日志毫秒时间戳
 }
 
 // FieldMap 字段映射（对标 Kibana Data View 字段）
@@ -124,10 +128,36 @@ type BulkDeleteRequest struct {
 	IDs []int64 `json:"ids"`
 }
 
+// LogTermsQuery Terms 聚合查询
+type LogTermsQuery struct {
+	Field   string `json:"field"`   // 聚合字段：service/level/source/indexId
+	Service string `json:"service"`
+	Level   string `json:"level"`
+	Source  string `json:"source"`
+	Keyword string `json:"keyword"`
+	StartTs int64  `json:"startTs"`
+	EndTs   int64  `json:"endTs"`
+	IndexID string `json:"indexId"`
+	Size    int    `json:"size"` // top N，默认 10
+}
+
+// TermsBucket 单桶
+type TermsBucket struct {
+	Key   string `json:"key"`
+	Count int64  `json:"count"`
+}
+
+// TermsResult Terms 聚合结果
+type TermsResult struct {
+	Field string        `json:"field"`
+	Buckets []TermsBucket `json:"buckets"`
+	TookMs float64 `json:"tookMs"`
+}
+
 // LogStatsResult 包含 Histogram
 type LogStatsResult struct {
-	Stats      *LogStats       `json:"stats"`
-	Histogram  []HistogramBucket `json:"histogram"`
+	Stats     *LogStats        `json:"stats"`
+	Histogram []HistogramBucket `json:"histogram"`
 }
 
 type HistogramBucket struct {
@@ -137,4 +167,45 @@ type HistogramBucket struct {
 
 func nowMs() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+// AlertRule 告警规则
+type AlertRule struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Enabled     bool     `json:"enabled"`
+	Condition   string   `json:"condition"`   // level=ERROR / service=order-api
+	CountThresh int      `json:"countThresh"` // 触发阈值
+	WindowMs    int64    `json:"windowMs"`   // 时间窗口 ms
+	CooldownMs  int64    `json:"cooldownMs"`  // 告警冷却 ms
+	Channels    []string `json:"channels"`    // webhook channel IDs
+	CreatedAt   int64    `json:"createdAt"`
+	UpdatedAt   int64    `json:"updatedAt"`
+	State       string   `json:"state"`      // firing/ok
+	LastFired   int64    `json:"lastFired,omitempty"`
+}
+
+// AlertChannel 通知渠道（webhook）
+type AlertChannel struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`   // webhook
+	URL    string `json:"url"`    // POST 地址
+	Method string `json:"method"`  // POST/GET，默认 POST
+	Headers string `json:"headers"` // 额外请求头 JSON
+	Enabled  bool   `json:"enabled"`
+	CreatedAt int64 `json:"createdAt"`
+}
+
+// AlertEvent 触发事件（只读）
+type AlertEvent struct {
+	ID        string `json:"id"`
+	RuleID    string `json:"ruleId"`
+	RuleName  string `json:"ruleName"`
+	Level     string `json:"level"`
+	Service   string `json:"service"`
+	Count     int    `json:"count"`
+	FiredAt   int64  `json:"firedAt"`
+	ResolvedAt int64 `json:"resolvedAt,omitempty"`
+	Status    string `json:"status"` // firing/resolved
 }

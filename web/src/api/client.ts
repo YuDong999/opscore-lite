@@ -27,6 +27,7 @@ function swrBypassed(url: string): boolean {
     url.includes('source=file') ||
     url.includes('/logs?') ||
     url.includes('/stats?') ||
+    url.includes('/query?') ||
     url.includes('/sites/stats')
   )
 }

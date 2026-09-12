@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +28,8 @@ const (
 type Service struct {
 	store    *Store
 	archiver *Archiver
+	dataDir  string
+	parsers  *ParserRuleSet
 	mu       sync.Mutex
 	cancel   chan struct{}
 	// 采集状态
@@ -33,60 +37,246 @@ type Service struct {
 }
 
 func NewService(store *Store, archiver *Archiver) *Service {
-	return &Service{store: store, archiver: archiver}
+	return &Service{store: store, archiver: archiver, cancel: make(chan struct{})}
+}
+
+// Start 启动后台持续采集：每 10s 对 log_sources 中 enabled+follow 的源做增量采集。
+func (s *Service) Start(dataDir string) {
+	s.dataDir = dataDir
+	// 解析规则集: <base>/parsers.json (dataDir=<base>/logs), 缺失时用内置默认规则
+	s.parsers = NewParserRuleSet(filepath.Join(filepath.Dir(dataDir), "parsers.json"))
+	s.ValidateCursors()
+	go s.pollLoop(10 * time.Second)
+	go s.ilmAutoLoop()
+}
+
+// ilmAutoLoop 每小时自动执行一次 ILM 淘汰(按各索引 delete_after + 全局保留), 定时清数据
+func (s *Service) ilmAutoLoop() {
+	ticker := time.NewTicker(time.Hour)
+	for {
+		select {
+		case <-s.cancel:
+			return
+		case <-ticker.C:
+			if _, _, err := s.store.ApplyIlm(); err != nil {
+				log.Printf("[logmonitor] 自动 ILM 失败: %v", err)
+			}
+			if _, err := s.store.ApplyIlmAll(); err != nil {
+				log.Printf("[logmonitor] 自动 ILM(unassigned) 失败: %v", err)
+			}
+		}
+	}
+}
+
+// cursorFuzzMs 游标漂移容忍度: 超过「当前时间+该值」的 last_ts 视为时钟错乱(集群/宿主机曾快进
+// 留下的未来时间戳), 会导致 poller 用 --since-time 永远抓不到新日志。启动时自动重置。
+const cursorFuzzMs = 2 * 60 * 60 * 1000 // 2h
+
+// ValidateCursors 启动自检: 将 all enabled+follow 源里明显未来的 last_ts 重置为当前时间。
+// 返回修正的源个数。
+func (s *Service) ValidateCursors() int {
+	sources, err := s.store.ListSources()
+	if err != nil {
+		log.Printf("[logmonitor] ValidateCursors 读取源失败: %v", err)
+		return 0
+	}
+	now := time.Now().UnixMilli()
+	fixed := 0
+	for _, src := range sources {
+		if !src.Enabled || !src.Follow {
+			continue
+		}
+		if src.LastTs > now+cursorFuzzMs {
+			_ = s.store.AdvanceSourceCursor(src.ID, now-180000) // 落后3分钟, 避免与真实日志ts相等被去重吞掉
+			log.Printf("[logmonitor] 游标自检: %s last_ts=%d 超未来值, 重置为当前时间", src.ID, src.LastTs)
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Printf("[logmonitor] 游标自检完成: 修正 %d 个源", fixed)
+	}
+	return fixed
+}
+
+func (s *Service) Stop() {
+	select {
+	case <-s.cancel:
+	default:
+		close(s.cancel)
+	}
+}
+
+func (s *Service) pollLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.cancel:
+			return
+		case <-ticker.C:
+			s.poll()
+		}
+	}
+}
+
+// poll 对每个 follow 源增量采集。已归档（有 last_ts 游标）的源按游标增量，首采全量 tail。
+func (s *Service) poll() {
+	if s.inFlight.Load() > 0 {
+		return // 上一轮未完成，跳过防并发攒批
+	}
+	s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+
+	sources, err := s.store.ListSources()
+	if err != nil {
+		return
+	}
+	for _, src := range sources {
+		if !src.Enabled || !src.Follow {
+			continue
+		}
+		switch src.Type {
+		case "container":
+			s.pollContainer(src)
+		case "k8s", "k8spod":
+			s.pollK8s(src)
+		}
+	}
+}
+
+func (s *Service) pollContainer(src *LogSource) {
+	lines, err := CollectDockerLogsSince(src.Path, src.LastTs)
+	if err != nil {
+		return
+	}
+	s.ingestIncremental(src, lines, "container")
+}
+
+func (s *Service) pollK8s(src *LogSource) {
+	kc := kubeconfigPathFor(s.dataDir, src.Cluster)
+	if kc == "" {
+		return
+	}
+	// 首采(lastTs=0)不带 since-time，取尾巴后续增量; 已有游标则增量
+	lines, err := CollectK8sPodLogsSince(kc, src.Namespace, src.Path, src.LastTs)
+	if err != nil {
+		return
+	}
+	s.ingestIncremental(src, lines, "k8s")
+}
+
+// ingestIncremental 把抓到的行入库，只保留 ts>lastTs 的新行，并推进游标。
+func (s *Service) ingestIncremental(src *LogSource, lines []string, source string) {
+	entries := make([]*LogEntry, 0, len(lines))
+	var maxTs int64 = src.LastTs
+	for i, line := range lines {
+		e := s.ParseLine(line, "http-ingest", int64(i), src.Service, source, src.IndexID)
+		if source == "k8s" && src.Service != "" {
+			e.Service = src.Service
+		}
+		if e.Ts <= src.LastTs {
+			continue // 去重：跳过游标前已入库的行
+		}
+		entries = append(entries, e)
+		if e.Ts > maxTs {
+			maxTs = e.Ts
+		}
+	}
+	if len(entries) == 0 {
+		return
+	}
+	if src.IndexID != "" && s.archiver != nil {
+		_, _ = s.store.InsertBatch(entries)
+		_ = s.archiver.appendBatch(entries)
+	} else {
+		_, _ = s.store.InsertBatch(entries)
+	}
+	if maxTs > src.LastTs {
+		_ = s.store.AdvanceSourceCursor(src.ID, maxTs)
+	}
+}
+
+// NormalizeSvcName 将 K8S pod 名规整为逻辑服务名，如：
+// nginx-6d664c6d47-s7ljj        → nginx
+// halo-66859784d5-fvh9r         → halo
+// smart-alert-aggregator-b6ccff87d-scsfm → smart-alert-aggregator
+// halo-0 (statefulset)          → halo
+func NormalizeSvcName(s string) string {
+	if s == "" {
+		return s
+	}
+	if m := rePodHash.FindString(s); m != "" {
+		return strings.TrimSuffix(s, m)
+	}
+	if idx := strings.LastIndexByte(s, '-'); idx > 0 {
+		if tail, err := strconv.Atoi(s[idx+1:]); err == nil && tail >= 0 {
+			return s[:idx]
+		}
+	}
+	return s
 }
 
 var (
 	// reService 提取服务名：如 [order-api] 或 service=order-api
 	reService = regexp.MustCompile(`\[([a-zA-Z0-9\-_\.]+)\]|service[=:]\s*([a-zA-Z0-9\-_\.]+)`)
+	// rePodHash 匹配 K8S 生成的 pod 名后缀：deployment pod: <name>-<rs-hash>-<pod-hash>；statefulset pod: <name>-<序号>
+	rePodHash = regexp.MustCompile(`-[a-z0-9]{5,10}-[a-z0-9]{4,6}$`)
 	// reLevel 提取级别
 	reLevel = regexp.MustCompile(`\b(ERROR|WARN|INFO|DEBUG|FATAL)\b`)
-	// reTimestamp 时间戳匹配（多种格式）
-	reTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)`)
+	// reTimestamp 时间戳匹配（多种格式）：末尾时区可选, 匹配到 +08:00 时 parseLogTime 会用带时区格式正确换算, 避免把本地时间当 UTC
+	reTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)`)
 )
 
-// ParseLine 解析一行日志为元数据
+// ParseLine 解析一行日志为元数据（委托可配置规则集; 规则集未就绪时回退内置默认）
 func (s *Service) ParseLine(line string, filePath string, offset int64, defaultService string, defaultSource string, indexID string) *LogEntry {
-	e := &LogEntry{
-		Ts:       nowMs(),
-		Level:    LevelINFO,
-		Service:  defaultService,
-		Source:   defaultSource,
-		FilePath: filePath,
-		Offset:   offset,
-		Size:     len(line),
-		IndexID:  indexID,
+	if s.parsers != nil {
+		return s.parsers.Parse(line, filePath, offset, defaultService, defaultSource, indexID)
 	}
+	tmp, _ := compileRules(defaultParserRules())
+	return parseOneRule(tmp[0], line, filePath, offset, defaultService, defaultSource, indexID)
+}
 
-	// 提取级别
-	if m := reLevel.FindString(line); m != "" {
-		e.Level = m
+// ── 解析规则管理(前端可视化编辑/测试) ──
+
+// ParserInfo 当前规则状态
+func (s *Service) ParserInfo() (rules []ParserRule, builtin bool, errStr string) {
+	if s.parsers == nil {
+		return defaultParserRules(), true, ""
 	}
+	return s.parsers.LoadedRules(), s.parsers.IsBuiltin(), s.parsers.Err
+}
 
-	// 提取服务
-	if m := reService.FindStringSubmatch(line); m != nil {
-		if m[1] != "" {
-			e.Service = m[1]
-		} else if m[2] != "" {
-			e.Service = m[2]
+// ParserSave 保存规则文件并热载
+func (s *Service) ParserSave(rules []ParserRule) error {
+	if s.parsers == nil {
+		return fmt.Errorf("规则集未初始化")
+	}
+	return s.parsers.Save(rules)
+}
+
+// ParserTestResult 单行测试结果
+type ParserTestResult struct {
+	Line    string `json:"line"`
+	Ts      int64  `json:"ts"`
+	Level   string `json:"level"`
+	Service string `json:"service"`
+	Summary string `json:"summary"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ParserTest 用给定单条规则测试解析(不改全局规则)
+func (s *Service) ParserTest(rule ParserRule, lines []string) []ParserTestResult {
+	compiled, err := compileRules([]ParserRule{rule})
+	out := make([]ParserTestResult, 0, len(lines))
+	for i, line := range lines {
+		if err != nil {
+			out = append(out, ParserTestResult{Line: line, Error: err.Error()})
+			continue
 		}
+		e := parseOneRule(compiled[0], line, "parser-test", int64(i), "", "test", "")
+		out = append(out, ParserTestResult{Line: line, Ts: e.Ts, Level: e.Level, Service: e.Service, Summary: e.Summary})
 	}
-
-	// 提取时间戳
-	if m := reTimestamp.FindStringSubmatch(line); m != nil {
-		if t, err := parseLogTime(m[1]); err == nil {
-			e.Ts = t
-		}
-	}
-
-	// 摘要：去首行换行，限长
-	summary := strings.TrimSpace(line)
-	if len(summary) > 200 {
-		summary = summary[:200]
-	}
-	e.Summary = summary
-
-	return e
+	return out
 }
 
 func parseLogTime(s string) (int64, error) {
@@ -138,7 +328,12 @@ func (s *Service) Ingest(line, service, source, indexID string) (*LogEntry, erro
 func (s *Service) IngestBatch(lines []string, service, source, indexID string) (int, error) {
 	entries := make([]*LogEntry, 0, len(lines))
 	for i, line := range lines {
-		entries = append(entries, s.ParseLine(line, "http-ingest", int64(i), service, source, indexID))
+		e := s.ParseLine(line, "http-ingest", int64(i), service, source, indexID)
+		// k8s 来源: service 由调用方指定(pod 容器名=服务名), 不被日志行内 [xxx] 提取结果覆盖
+		if source == "k8s" && service != "" {
+			e.Service = service
+		}
+		entries = append(entries, e)
 	}
 	if indexID != "" {
 		ids, err := s.store.InsertBatch(entries)
