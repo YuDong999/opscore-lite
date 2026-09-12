@@ -1515,7 +1515,7 @@ body {
 .k8s-main .data-table tbody tr td:first-child { position: sticky; left: 0; background: inherit; z-index: 2; }
 .k8s-main .data-table tbody tr:hover td:first-child { background: rgba(127,127,127,0.085); }
 
-/* 批量操作工具条 */
+/* 批量操作工具条 — 常驻占位(未选中按钮置灰), 结构性零跳动 */
 .k8s-batch-bar {
   display: flex; align-items: center; gap: 0.5rem;
   background: rgba(91, 106, 191, 0.08);
@@ -1524,17 +1524,6 @@ body {
   padding: 0.5rem 0.625rem;
   margin-bottom: 0.5rem;
   font-size: 0.8125rem;
-  transition: all 150ms ease-out;
-  overflow: hidden;
-}
-.k8s-batch-bar-hidden {
-  max-height: 0;
-  padding: 0 0.625rem;
-  margin-bottom: 0;
-  opacity: 0;
-  border-color: transparent;
-  pointer-events: none;
-  background: transparent;
 }
 .k8s-batch-bar .mono { font-size: 0.75rem; }
 

@@ -8,6 +8,7 @@ import CreateResource from './CreateResource'
 import Card from '../components/Card'
 import EChart from '../charts/EChart'
 import K8sActionPanel from '../components/K8sActionPanel'
+import type { ActionSpec } from '../components/K8sActionPanel'
 import ExecTerminalModal from '../components/ExecTerminalModal'
 import K8sCertsModal from '../components/K8sCertsModal'
 import LogStreamModal from '../components/LogStreamModal'
@@ -393,7 +394,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     }
   }
 
-  const batchAct = (action: string, confirmMsg: string) => {
+  const batchAct = (action: string, confirmMsg: string, extra?: Record<string, any>) => {
     if (selected.size === 0) return
     if (!confirm(confirmMsg.replace('{count}', String(selected.size)))) return
     const targets = Array.from(selected).map((k) => {
@@ -401,12 +402,41 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
       return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: ns === 'all' ? nsPart : ns }) }
     })
     // 批量也走 catalog 执行 (后端 /resources/action 已是 catalog 薄代理)
-    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets })
+    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets, ...(extra || {}) })
       .then((d: any) => {
         onMsg?.(d.ok ? `✓ 批量 ${action} ${selected.size} 个资源完成` : '✗ ' + (d.error || '失败'))
         if (d.ok) { setSelected(new Set()); setTimeout(loadRows, 600) }
       })
       .catch((e) => onMsg?.('✗ ' + String(e)))
+  }
+
+  // 资源类型/集群/命名空间切换时清空选中, 防止跨页残留 key 误伤其他资源
+  useEffect(() => { setSelected(new Set()); setBatchMenuOpen(false) }, [res, clusterID, ns])
+
+  // 批量菜单: 按当前资源类型从操作目录生成(仅非 TTY 且批量端点可透传参数的动作)
+  const [batchCatalog, setBatchCatalog] = useState<ActionSpec[]>([])
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false)
+  const [batchReplicas, setBatchReplicas] = useState(1)
+  useEffect(() => {
+    let stop = false
+    getJSON<{ ok: boolean; actions: ActionSpec[] }>(`/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(res)}&_=${Date.now()}`)
+      .then(d => { if (!stop && d.ok) setBatchCatalog(d.actions || []) })
+      .catch(() => {})
+    return () => { stop = true }
+  }, [res])
+  const DC_PASS = ['replicas', 'force', 'image']
+  const DANGER_BATCH = new Set(['delete', 'drain', 'delete-node'])
+  const batchSorted = (batchCatalog || [])
+    .filter(a => !a.requiresTTY && (a.params || []).every(p => DC_PASS.includes(p.name)) && !a.name.startsWith('create-'))
+    .sort((a, b) => (DANGER_BATCH.has(a.name) ? 1 : 0) - (DANGER_BATCH.has(b.name) ? 1 : 0))
+  const runBatchAct = (a: ActionSpec) => {
+    const n = selected.size
+    const extra = a.name === 'scale' ? { replicas: Math.max(0, batchReplicas || 0) } : undefined
+    const msg = DANGER_BATCH.has(a.name)
+      ? `⚠ 批量${a.label} ${n} 个资源? 高危操作, 请确认`
+      : `确认批量${a.label} ${n} 个资源?`
+    setBatchMenuOpen(false)
+    batchAct(a.name, msg, extra)
   }
 
   const dblRow = (r: any) => {
@@ -699,23 +729,54 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 </div>
               </div>
             {note && <div className="banner banner-warn">{note}</div>}
-            {/* 批量操作工具条 — 始终在 DOM 中, 避免选择状态切换时布局跳动 */}
-            <div className={`k8s-batch-bar${selected.size === 0 ? ' k8s-batch-bar-hidden' : ''}`}>
-              <span className="mono" style={{ fontSize: '0.75rem' }}>已选 {selected.size} 个</span>
-              <div style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
-                {res === 'pods' && (
-                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
-                    onClick={() => batchAct('delete', '批量删除 {count} 个 Pod?')}>批量删除</button>
-                )}
-                {res === 'deployments' && (
-                  <button className="btn-glass-soft btn-glass-soft-sm"
-                    onClick={() => batchAct('restart', '滚动重启 {count} 个 Deployment?')}>批量重启</button>
-                )}
-                {res !== 'pods' && res !== 'deployments' && (
-                  <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
-                    onClick={() => batchAct('delete', '批量删除 {count} 个资源?')}>批量删除</button>
-                )}
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelected(new Set())}>取消选择</button>
+            {/* 批量操作工具条 — 常驻占位, 未选中置灰, 结构性零跳动 */}
+            <div className="k8s-batch-bar">
+              <span className="mono" style={{ fontSize: '0.75rem', opacity: selected.size ? 1 : 0.45 }}>
+                {selected.size ? `✓ 已选 ${selected.size} 个` : '未选择资源'}
+              </span>
+              <div style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
+                <div style={{ position: 'relative' }}>
+                  <button className="btn-glass-soft btn-glass-soft-sm" disabled={!selected.size || batchSorted.length === 0}
+                    title={batchSorted.length ? '按当前资源类型提供的批量动作' : '该资源类型暂无可用批量动作'}
+                    onClick={() => setBatchMenuOpen(o => !o)}>
+                    批量操作 ▾
+                  </button>
+                  {batchMenuOpen && selected.size > 0 && (
+                    <>
+                      <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setBatchMenuOpen(false)} />
+                      <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 91, minWidth: 230,
+                        background: 'var(--surface-solid, #fff)', border: '1px solid var(--border)', borderRadius: 8,
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.3rem', maxHeight: 340, overflowY: 'auto' }}>
+                        {batchSorted.map((a, i) => (
+                          <div key={a.name}>
+                            {i > 0 && DANGER_BATCH.has(a.name) && !DANGER_BATCH.has(batchSorted[i - 1].name) && (
+                              <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
+                            )}
+                            {a.name === 'scale' ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.3rem 0.5rem' }}>
+                                <span style={{ flex: 1, fontSize: '0.8125rem' }}>{a.label}</span>
+                                <input type="number" min={0} className="ipt" style={{ width: 58 }} value={batchReplicas}
+                                  onChange={e => setBatchReplicas(Number(e.target.value) || 0)} title="目标副本数" />
+                                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => runBatchAct(a)}>执行</button>
+                              </div>
+                            ) : (
+                              <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
+                                fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
+                                color: DANGER_BATCH.has(a.name) ? 'var(--lvl-error, #e5484d)' : 'inherit' }}
+                                onClick={() => runBatchAct(a)}>
+                                {DANGER_BATCH.has(a.name) ? '⚠ ' : ''}{a.label}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {batchSorted.length === 0 && (
+                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.8125rem', opacity: 0.6 }}>该资源类型暂无可用批量动作</div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button className="btn-glass-soft btn-glass-soft-sm" disabled={!selected.size} onClick={() => setSelected(new Set())}>取消选择</button>
               </div>
             </div>
             <div className="table-wrap">
@@ -747,7 +808,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                     const checked = selected.has(rk)
                     const warnRow = res === 'events' && r.type === 'Warning'
                     return (
-                    <tr key={rk} style={{ cursor: 'pointer', background: warnRow ? 'rgba(239, 68, 68, 0.08)' : undefined }} onDoubleClick={() => dblRow(r)}
+                    <tr key={rk} className={selected.has(rk) ? 'row-selected' : ''} style={{ cursor: 'pointer', background: warnRow ? 'rgba(239, 68, 68, 0.08)' : undefined }} onDoubleClick={() => dblRow(r)}
                       onContextMenu={(e) => onRowContext(e, r)}
                       title="双击查看详情/操作 · 右键快速操作">
                       <td style={{ padding: '0.5rem 0.375rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -789,7 +850,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                             <button className="btn-glass-soft btn-glass-soft-sm" title="优雅删除(30s, SIGTERM), 卡住时可在详情里强制删除"
                               onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete' }, `优雅删除 Pod ${r.name}? (30s 优雅期)`) }}>删除</button>
                             <button className="btn-glass-soft btn-glass-soft-sm" title="滚动重启该 Pod(删除后由 Deployment 重新创建)"
-                              onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete', grace: 0 }, `重启 Pod ${r.name}? (立即删除, Deployment 将自动重建)`) }}>重启</button>
+                              onClick={(e) => { e.stopPropagation(); act({ res: 'pods', ns: r.namespace || ns, name: r.name, action: 'delete', graceSeconds: 0 }, `重启 Pod ${r.name}? (立即删除, Deployment 将自动重建)`) }}>重启</button>
                             </>
                           )}
                           {(res === 'deployments' || res === 'statefulsets' || res === 'daemonsets') && (

@@ -309,6 +309,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
   const [list, setList] = useState<{ runtime: string; containers: AppContainer[] | null; note?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false)
   const [confirmAct, setConfirmAct] = useState<{ name: string; action: string } | null>(null)
   const [logView, setLogView] = useState<{ name: string; logs: string; target: string } | null>(null)
   const [runModal, setRunModal] = useState<{ recreateOf?: string } | null>(null)
@@ -383,6 +384,25 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
     setTimeout(load, 400); setTimeout(load, 2500)
   }
 
+  // 暂停/恢复走 dockerTool 通道(与单容器操作同源, containers/action 端点不支持)
+  const batchToolAction = async (action: 'pause' | 'unpause') => {
+    const names = [...sel]
+    if (!names.length) return
+    if (!confirm(`对 ${names.length} 个容器执行「${action}」?`)) return
+    setBusy(true)
+    let okN = 0, failN = 0, firstErr = ''
+    for (const n of names) {
+      try {
+        const d = await dockerTool(selected?.id || '', { scope: 'container', action, name: n })
+        if (d.ok) okN++
+        else { failN++; firstErr = firstErr || `${n}: ${d.error || '失败'}` }
+      } catch (e) { failN++; firstErr = firstErr || `${n}: ${String(e)}` }
+    }
+    setBusy(false); setSel(new Set())
+    onMsg?.(`✓ 批量${action === 'pause' ? '暂停' : '恢复'}完成: 成功 ${okN} / 失败 ${failN}${firstErr ? ' | 首个错误: ' + firstErr : ''}`)
+    setTimeout(load, 400); setTimeout(load, 2500)
+  }
+
   const openLogs = (c: AppContainer) => {
     getJSON<{ ok: boolean; logs: string; target: string }>(
       `/api/plugins/containers/logs?${hostQ.replace('&', '')}&runtime=${rt}&name=${encodeURIComponent(c.name)}&tail=300`)
@@ -437,13 +457,38 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
         <div className="toolbar-strip">
           <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" disabled={!canWrite}
             onClick={() => setRunModal({})}>+ 创建容器</button>
-          <span className="dim">已选 {sel.size}</span>
+          <span className="dim">{sel.size ? `已选 ${sel.size}` : '未选择容器'}</span>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleAll}>{allChecked ? '取消全选' : '全选'}</button>
           <button className="btn-glass-soft btn-glass-soft-sm" onClick={toggleInvert}>反选</button>
-          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('start')}>批量启动</button>
-          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('stop')}>批量停止</button>
-          <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size} onClick={() => batchAction('restart')}>批量重启</button>
-          <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" disabled={busy || !sel.size} onClick={() => batchAction('remove')}>批量删除</button>
+          <div style={{ position: 'relative' }}>
+            <button className="btn-glass-soft btn-glass-soft-sm" disabled={busy || !sel.size}
+              onClick={() => setBatchMenuOpen(o => !o)}>
+              批量操作 ▾
+            </button>
+            {batchMenuOpen && sel.size > 0 && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setBatchMenuOpen(false)} />
+                <div style={{ position: 'absolute', left: 0, top: 'calc(100% + 4px)', zIndex: 91, minWidth: 170,
+                  background: 'var(--surface-solid, #fff)', border: '1px solid var(--border)', borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.3rem' }}>
+                  {[['start', '批量启动'], ['stop', '批量停止'], ['restart', '批量重启'], ['pause', '批量暂停'], ['unpause', '批量恢复']].map(([act, label]) => (
+                    <button key={act} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
+                      fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer' }}
+                      onClick={() => { setBatchMenuOpen(false); act === 'pause' || act === 'unpause' ? batchToolAction(act as 'pause' | 'unpause') : batchAction(act) }}>
+                      {label}
+                    </button>
+                  ))}
+                  <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
+                  <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
+                    fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
+                    color: 'var(--lvl-error, #e5484d)' }}
+                    onClick={() => { setBatchMenuOpen(false); batchAction('remove') }}>
+                    ⚠ 批量删除
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <span className="dim" style={{ marginLeft: 'auto' }} />
           <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" disabled={busy} title="清理所有已停止容器 (docker container prune -f)" onClick={() => setPruneOpen(true)}>清理停止容器</button>
           <button className="btn-glass-soft btn-glass-soft-sm btn-ghost" title="磁盘占用总览 (docker system df)" onClick={() => setDfOpen(true)}>磁盘占用</button>
@@ -464,7 +509,7 @@ function ContainersPanel({ onMsg }: { onMsg?: (m: string) => void }) {
                 <tr><td colSpan={6} className="dim">{list ? '（未检测到容器）' : '加载中…'}</td></tr>
               )}
               {containers.map((c) => (
-                <tr key={c.name} style={{ cursor: 'pointer' }}
+                <tr key={c.name} className={sel.has(c.name) ? 'row-selected' : ''} style={{ cursor: 'pointer' }}
                   title="双击编辑配置并重建"
                   onDoubleClick={() => canWrite && openEdit(c)}
                   onContextMenu={(e) => { e.preventDefault(); setContainerCtx({ x: e.clientX, y: e.clientY, name: c.name, c }) }}>
