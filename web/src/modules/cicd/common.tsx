@@ -47,14 +47,16 @@ export function OptSelect({ value, onChange, placeholder, items, className }: {
   className?: string
 }) {
   const set = value !== ''
+  // items 自带空串项(如 LB 的「轮询(默认)」)时不再重复渲染 placeholder 项, 避免下拉出现两条同义选项
+  const hasNoneItem = items.some(i => i.value === '')
   return (
     <Select value={value || SELECT_NONE} onValueChange={v => onChange(v === SELECT_NONE ? '' : v)}>
-      <SelectTrigger className={cn(className, set && 'border-accent/60 bg-accent/10 text-accent font-medium')}>
+      <SelectTrigger className={cn(className, set && 'border-accent/60 bg-accent/10 font-medium')}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={SELECT_NONE}>{placeholder}</SelectItem>
-        {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+        {!hasNoneItem && <SelectItem value={SELECT_NONE}>{placeholder}</SelectItem>}
+        {items.map(i => <SelectItem key={i.value || SELECT_NONE} value={i.value || SELECT_NONE}>{i.label}</SelectItem>)}
       </SelectContent>
     </Select>
   )

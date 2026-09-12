@@ -1094,12 +1094,13 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
 
   const gaugeOpt = (value: number, color: string) => ({
     series: [{
-      type: 'gauge', startAngle: 210, endAngle: -30, min: 0, max: 100,
-      progress: { show: true, width: 14, itemStyle: { color } },
-      axisLine: { lineStyle: { width: 14, color: [[1, axis]] } },
+      type: 'gauge', startAngle: 210, endAngle: -30, min: 0, max: 100, radius: '85%',
+      // gauge 规格对齐系统资源的 CPU 使用率(宽16/数字居中于弧内); 卡片较矮, 字号 18 保证数字不被弧带遮挡
+      progress: { show: true, width: 16, itemStyle: { color } },
+      axisLine: { lineStyle: { width: 16, color: [[1, axis]] } },
       axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
       pointer: { show: false },
-      detail: { valueAnimation: true, fontSize: 20, color: txt, offsetCenter: [0, 0], formatter: (v: number) => v.toFixed(1) + '%' },
+      detail: { valueAnimation: true, fontSize: 18, color: txt, offsetCenter: [0, 0], formatter: (v: number) => v.toFixed(2) + '%' },
       data: [{ value }],
     }],
   })
@@ -1142,7 +1143,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
           </div>
         </Card>
         <Card title="节点 Ready 率">
-          <EChart option={gaugeOpt(ov.nodesTotal ? (num(ov.nodesReady) / num(ov.nodesTotal)) * 100 : 0, accent)} height={110} />
+          <EChart option={gaugeOpt(ov.nodesTotal ? (num(ov.nodesReady) / num(ov.nodesTotal)) * 100 : 0, accent)} height={150} />
           <div className="stat-row"><span>{num(ov.nodesReady)}</span><span className="dim">/ {num(ov.nodesTotal)} 台</span></div>
         </Card>
         <Card title="告警事件">
