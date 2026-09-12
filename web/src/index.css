@@ -483,11 +483,12 @@ body {
 @layer components {
   .grid { display: grid; gap: 1rem; margin-bottom: 1rem; }
   .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
   .grid-4 { grid-template-columns: repeat(4, 1fr); }
   .grid-5 { grid-template-columns: repeat(5, 1fr); }
 }
-@media (max-width: 1400px) { .grid-5 { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-5 { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 1400px) { .grid-5 { grid-template-columns: repeat(3, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-5 { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } .grid-3 { grid-template-columns: 1fr; } }
 
 /* ── Tables ── */
 .table-wrap {
@@ -1369,6 +1370,16 @@ body {
 .k8s-meter-head, .stat-row { font-variant-numeric: tabular-nums; }
 .k8s-node-meter .usage-bar + .usage-bar { margin-top: 0.375rem; }
 
+/* 概览两列等高: 左列上下叠(趋势 + 节点用量), 右列 Pod 用量表内部滚动 */
+.k8s-ov-stack { display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
+.k8s-ov-stack > .card { flex: 1 1 auto; min-height: 0; }
+.k8s-ov-stack > .card .card-body { overflow-y: auto; min-height: 0; }
+.k8s-ov-pods-card { display: flex; flex-direction: column; max-height: 68vh; }
+.k8s-ov-pods-card .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.k8s-ov-pods .table-wrap { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.k8s-ov-pods .table-wrap table { width: 100%; }
+.k8s-overview > .grid { align-items: stretch; }
+
 /* K8s 内嵌侧栏: 分隔线 + 收紧节奏 */
 .k8s-side-divider { height: 1px; background: var(--border); margin: 0.5rem 0.375rem; flex-shrink: 0; }
 
@@ -1634,6 +1645,13 @@ body {
 
 /* 容器管理模块高度撑满 */
 .module { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.module > .card + .card { margin-top: 1rem; }
+
+/* 服务发现卡片: 填满剩余高度, 表内滚动, 表头吸顶 */
+.module > .card.svc-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.module > .card.svc-card > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.module > .card.svc-card .table-wrap { flex: 1; min-height: 0; max-height: none; overflow: auto; }
+.module > .card.svc-card .data-table thead th { position: sticky; top: 0; background: var(--surface-solid, #15131e); z-index: 10; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
 
 /* 侧栏小图标 */
 .side-ico { width: 0.875rem; height: 0.875rem; flex-shrink: 0; opacity: 0.75; }
@@ -3641,3 +3659,33 @@ body {
 @media (max-width:1100px){.grid-4,.grid-5{grid-template-columns:repeat(2,1fr)}.grid-2,.grid-3{grid-template-columns:1fr}}
 /* K8s 概览三卡恒定一排: 不随断点折叠, 卡片压缩自适应(EChart 带 ResizeObserver 会跟随重绘) */
 .k8s-overview > .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+
+/* ── 磁盘清理 ── */
+.section-title { margin: 0 0 0.5rem; font-size: 0.875rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+.text-danger { color: #ff453a; }
+
+/* —— Docker 操作列右对齐 —— */
+.data-table.ops-right thead th:last-child,
+.data-table.ops-right tbody td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+.data-table.ops-right tbody td:last-child .k8s-row-actions,
+.data-table.ops-right tbody td:last-child .btn-row {
+  justify-content: flex-end;
+}
+
+/* —— 构建/Dockerfile 双栏: 等高 + 窄屏折叠 —— */
+.df-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+.df-grid > div:first-child .card { flex: 1; }
+.df-grid > pre,
+.df-grid pre { flex: 1; }
+@media (max-width: 1100px) {
+  .df-grid { grid-template-columns: minmax(0, 1fr); }
+}
