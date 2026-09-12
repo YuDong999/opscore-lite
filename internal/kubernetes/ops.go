@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -199,61 +202,248 @@ func (m *Manager) NodeCordon(ctx context.Context, clusterID, name string, cordon
 	return nodePatch(ctx, m, clusterID, name, fmt.Sprintf(`{"spec":{"unschedulable":%s}}`, v))
 }
 
-// NodeDrain 排空节点: cordon 后对普通 Pod 逐个 Evict(跳过 DaemonSet/Mirror/已完成 Pod)。
-func (m *Manager) NodeDrain(ctx context.Context, clusterID, name string) (evicted, skipped int, err error) {
+// DrainOptions 排空节点的选择项 (对应 kubectl drain 的常用 flag)。
+type DrainOptions struct {
+	// IgnoreDaemonsets true 时不把 DaemonSet Pod 视为错误 (kubectl --ignore-daemonsets)
+	IgnoreDaemonsets bool
+	// DeleteEmptyDir true 时允许驱逐带 emptyDir 的 Pod (kubectl --delete-emptydir-data), 默认 false
+	DeleteEmptyDir bool
+	// Force true 时忽略 PDB / 未托管工作负载 Pod, 直接删除 (kubectl --force)
+	Force bool
+	// GraceSeconds 优雅期; Force 时强制为 0
+	GraceSeconds int64
+}
+
+// NodeDrain 排空节点: cordon 后对普通 Pod 逐个 Evict (走 policy/v1 Eviction 子资源,
+// 尊重 PDB 与优雅期)。跳过 mirror pod / 已完成 Pod; DaemonSet Pod 在
+// IgnoreDaemonsets=false 时不计入删除 (仅计数)。
+func (m *Manager) NodeDrain(ctx context.Context, clusterID, name string, opt DrainOptions) (evicted, skipped int, err error) {
 	if err := m.NodeCordon(ctx, clusterID, name, true); err != nil {
 		return 0, 0, fmt.Errorf("cordon: %w", err)
 	}
-	dyn, err := m.DynamicClient(clusterID)
+	cs, err := m.clientsetFor(clusterID)
 	if err != nil {
 		return 0, 0, err
 	}
-	pods, err := dyn.Resource(gvrPods).Namespace("").List(ctx, metav1.ListOptions{
+	pods, err := cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + name,
 	})
 	if err != nil {
 		return 0, 0, err
 	}
-	for i := range pods.Items {
-		p := pods.Items[i]
-		// 跳过 DaemonSet / mirror(static pod) / 已完成
-		skip := false
-		for _, o := range p.GetOwnerReferences() {
+	for _, p := range pods.Items {
+		if phaseOfObj(&p) == "Succeeded" || phaseOfObj(&p) == "Failed" {
+			continue
+		}
+		// mirror pod (static pod) / DaemonSet 由节点管控, 不应删除
+		isMirror := p.Annotations["kubernetes.io/config.mirror"] != ""
+		dsOwned := false
+		for _, o := range p.OwnerReferences {
 			if o.Kind == "DaemonSet" {
-				skip = true
+				dsOwned = true
 				break
 			}
 		}
-		if strings.HasSuffix(p.GetName(), name) && p.GetOwnerReferences() == nil {
-			skip = true // static pod mirror
-		}
-		if phaseOf(p.Object) == "Succeeded" || phaseOf(p.Object) == "Failed" {
-			continue
-		}
-		if skip {
+		if isMirror {
 			skipped++
 			continue
 		}
-		evictJSON := map[string]any{
-			"apiVersion": "policy/v1", "kind": "Eviction",
-			"metadata": map[string]any{"name": p.GetName(), "namespace": p.GetNamespace()},
+		if dsOwned {
+			if !opt.IgnoreDaemonsets {
+				skipped++ // 不删, 仅报告
+				continue
+			}
+			// ignore-daemonsets: 仍走 Eviction, 由 DaemonSet 控制器在新节点重建
 		}
-		b, _ := json.Marshal(evictJSON)
-		err2 := dyn.Resource(gvrPods).Namespace(p.GetNamespace()).Delete(ctx, p.GetName(),
-			metav1.DeleteOptions{DryRun: nil})
-		_ = b
+		// 带 emptyDir 的 Pod 需要显式授权
+		if !opt.DeleteEmptyDir && hasEmptyDir(&p) && !opt.Force {
+			return evicted, skipped, fmt.Errorf("节点 %s 有 Pod %s/%s 挂载 emptyDir, 需开启 delete-emptydir-data 或 force", name, p.Namespace, p.Name)
+		}
+		grace := int64(30)
+		if opt.GraceSeconds > 0 {
+			grace = opt.GraceSeconds
+		}
+		if opt.Force {
+			grace = 0
+		}
+		ev := &policyv1.Eviction{
+			ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace},
+			DeleteOptions: &metav1.DeleteOptions{
+				GracePeriodSeconds: &grace,
+			},
+		}
+		err2 := cs.PolicyV1().Evictions(p.Namespace).Evict(ctx, ev)
 		if err2 != nil {
-			continue
+			// 若被 PDB 挡住且开了 Force, 则直接 delete (kubectl --force 行为)
+			if opt.Force {
+				gz := int64(0)
+				if derr := cs.CoreV1().Pods(p.Namespace).Delete(ctx, p.Name, metav1.DeleteOptions{GracePeriodSeconds: &gz}); derr == nil {
+					evicted++
+					continue
+				}
+			}
+			return evicted, skipped, fmt.Errorf("驱逐 %s/%s 失败: %w", p.Namespace, p.Name, err2)
 		}
 		evicted++
 	}
 	return evicted, skipped, nil
 }
 
-func phaseOf(obj map[string]any) string {
-	st, _ := obj["status"].(map[string]any)
-	ph, _ := st["phase"].(string)
-	return ph
+// NodeDelete 从集群移除节点 (kubeadm 语义: drain → delete node)。
+// drainOpt 控制驱逐选项; 返回 (evicted, skipped)。
+func (m *Manager) NodeDelete(ctx context.Context, clusterID, name string, drainOpt DrainOptions) (evicted, skipped int, err error) {
+	evicted, skipped, err = m.NodeDrain(ctx, clusterID, name, drainOpt)
+	if err != nil {
+		return evicted, skipped, err
+	}
+	cs, err := m.clientsetFor(clusterID)
+	if err != nil {
+		return evicted, skipped, err
+	}
+	if err := cs.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return evicted, skipped, fmt.Errorf("删除节点对象 %s: %w", name, err)
+	}
+	return evicted, skipped, nil
+}
+
+// NodeJoinCommand 生成一条可交给目标机执行的 kubeadm join 命令
+// (在 control-plane 上执行 kubeadm token create --print-join-command)。
+// role: "worker" | "control-plane"。control-plane 需要额外证书密钥
+// (kubeadm init phase upload-certs --upload-certs 生成/更新 kubeadm-certs secret)。
+// 依赖: 平台运行在 control-plane 节点上, 且 kubeadm 在 PATH 中。
+func (m *Manager) NodeJoinCommand(ctx context.Context, clusterID string, ttlHours int64, role string) (string, error) {
+	if ttlHours <= 0 {
+		ttlHours = 1
+	}
+	if ttlHours > 720 {
+		return "", fmt.Errorf("ttl 过大 (最大 720h 即 30 天)")
+	}
+	ttl := fmt.Sprintf("%dh", ttlHours)
+	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// control-plane 角色先准备证书密钥(会更新 kube-system/kubeadm-certs secret)
+	var certKey string
+	if role != "" && role != "worker" {
+		upCmd := exec.CommandContext(pctx, "kubeadm", "init", "phase", "upload-certs", "--upload-certs")
+		upOut, upErr := upCmd.Output()
+		if upErr != nil {
+			if ee, ok := upErr.(*exec.ExitError); ok {
+				return "", fmt.Errorf("kubeadm upload-certs 失败: %s", strings.TrimSpace(string(ee.Stderr)))
+			}
+			return "", fmt.Errorf("执行 kubeadm upload-certs 失败: %w", upErr)
+		}
+		lines := strings.Split(string(upOut), "\n")
+		foundMargin := false
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			// 单行形式: "[upload-certs] Using certificate key: 01854a..."
+			if !foundMargin && strings.Contains(line, "Using certificate key:") {
+				foundMargin = true
+				for _, f := range fields {
+					if len(f) == 64 && isHex(f) {
+						certKey = f
+						break
+					}
+				}
+				continue
+			}
+			// 多行形式: key 在 "Using certificate key:" 的下一行
+			if foundMargin && certKey == "" && len(fields) > 0 {
+				k := fields[len(fields)-1]
+				if len(k) == 64 && isHex(k) {
+					certKey = k
+				}
+			}
+			if certKey != "" {
+				break
+			}
+		}
+		if certKey == "" {
+			return "", fmt.Errorf("解析 upload-certs 输出失败: %s", strings.TrimSpace(string(upOut)))
+		}
+	}
+
+	var joinCmd []string
+	if role != "" && role != "worker" {
+		// control-plane 加入: 标准 join 命令本身不支持 --control-plane flag,
+		// 只能先取 worker 基础命令再手动拼装 --control-plane --certificate-key。
+		joinCmd = []string{"token", "create", "--print-join-command", "--ttl", ttl}
+	} else {
+		joinCmd = []string{"token", "create", "--print-join-command", "--ttl", ttl}
+	}
+	cmd := exec.CommandContext(pctx, "kubeadm", joinCmd...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("kubeadm token create 失败: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("执行 kubeadm 失败: %w", err)
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return "", fmt.Errorf("kubeadm 未返回 join 命令")
+	}
+	if role != "" && role != "worker" {
+		// 转成控制面加入: 在 "kubeadm join <apiserver>" 后插入
+		// --control-plane --certificate-key <key> (官方 kubeadm join 支持该组合)
+		marker := "--token"
+		if !strings.Contains(s, marker) {
+			return "", fmt.Errorf("无法在 join 命令中找到 --token 位置")
+		}
+		idx := strings.Index(s, marker)
+		s = s[:idx] + "--control-plane --certificate-key " + certKey + " " + s[idx:]
+	}
+	return s, nil
+}
+
+// NodeWaitForJoin 轮询直到某节点 Ready (加入后验收用)。
+// 返回剩余等待是否成功; 超时返回 error。
+func (m *Manager) NodeWaitForJoin(ctx context.Context, clusterID, name string, timeout time.Duration) error {
+	cs, err := m.clientsetFor(clusterID)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		n, gerr := cs.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if gerr == nil {
+			for _, c := range n.Status.Conditions {
+				if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return fmt.Errorf("节点 %s 在 %v 内未 Ready", name, timeout)
+}
+
+func phaseOfObj(p *corev1.Pod) string {
+	return string(p.Status.Phase)
+}
+
+func hasEmptyDir(p *corev1.Pod) bool {
+	for _, v := range p.Spec.Volumes {
+		if v.EmptyDir != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// isHex 判断 s 是否全为 0-9a-f 字符。
+func isHex(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // ===== PVC 扩容 =====

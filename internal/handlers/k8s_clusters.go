@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +50,53 @@ func InitK8s(mgr *kubernetes.Manager, kubeDir string, storeFn func() central.Cen
 	k8sStoreFn = storeFn
 	_ = os.MkdirAll(kubeDir, 0700)
 	k8sRestore()
+	startK8sClusterProber()
+}
+
+// startK8sClusterProber 后台每 15s 探测所有集群 API Server 连通性并持久化状态,
+// 使前端轮询列表即可自动反映集群在线/离线(绿/红), 无需手动刷新。
+func startK8sClusterProber() {
+	go func() {
+		tick := time.NewTicker(15 * time.Second)
+		defer tick.Stop()
+		for range tick.C {
+			probeOnce()
+		}
+	}()
+	log.Println("[K8S-CLUSTERS] 状态探测器已启动(15s/次)")
+}
+
+// probeOnce 遍历注册集群实时探测连通性; 状态有变化才写库, 避免无谓磁盘 IO。
+func probeOnce() {
+	cs := k8sListClusters()
+	if len(cs) == 0 {
+		return
+	}
+	dirty := false
+	for i := range cs {
+		c := &cs[i]
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		info, perr := k8sMgr.Probe(ctx, c.ID)
+		cancel()
+		if perr != nil {
+			if c.Status != "unreachable" {
+				c.Status = "unreachable"
+				dirty = true
+				log.Printf("[K8S-AUDIT] action=probe cluster=%s status=unreachable err=%v", c.ID, perr)
+			}
+			continue
+		}
+		if c.Status != "ready" || c.Version != info.Version || c.APIServer != info.APIServer {
+			c.Status, c.Version, c.APIServer = "ready", info.Version, info.APIServer
+			dirty = true
+			log.Printf("[K8S-AUDIT] action=probe cluster=%s status=ready", c.ID)
+		}
+	}
+	if dirty {
+		if err := k8sSaveClusters(cs); err != nil {
+			log.Printf("[K8S-CLUSTERS] 持久化探测状态失败: %v", err)
+		}
+	}
 }
 
 func k8sKubePath(id string) string { return filepath.Join(k8sKubeDir, id+".yaml") }
@@ -164,6 +210,12 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := central.K8sCluster{ID: id, Name: b.Name, APIServer: apiServer, Version: version, Status: status, CreatedAt: time.Now().Unix()}
+	// 注册即按 apiserver 地址反查 master 主机并落库(供证书等 master 本地操作走 SSH; 查不到留空=退本机)
+	if apiServer != "" {
+		if master := locateMasterHost(apiServer); master != "" {
+			rec.MasterHost = master
+		}
+	}
 	if uerr := k8sUpsertCluster(rec); uerr != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": "持久化失败: " + uerr.Error()})
 		return
@@ -329,7 +381,7 @@ func k8sResourcesBuild(r *http.Request) any {
 	if ns != "" && !reK8sNamespace.MatchString(ns) {
 		return map[string]any{"rows": []map[string]any{}, "note": "namespace 名称非法"}
 	}
-	if !kubernetes.ValidResource(res) {
+	if !kubernetes.ValidResource(res) && !kubernetes.IsCRDName(res) {
 		return map[string]any{"rows": []map[string]any{}, "note": "不支持的资源类型"}
 	}
 	if !reK8sClusterID.MatchString(cluster) {
@@ -368,71 +420,6 @@ func k8sOverviewBuild(r *http.Request) any {
 		return map[string]any{"note": err.Error()}
 	}
 	return out
-}
-
-// ===== Pod 日志与容器枚举 (只读) =====
-
-// K8sPodLogsHandler GET ?cluster=&ns=&pod=&container=&tail=&previous=
-func K8sPodLogsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	q := r.URL.Query()
-	cluster, ns, pod := q.Get("cluster"), q.Get("ns"), q.Get("pod")
-	if !reK8sClusterID.MatchString(cluster) || !reK8sNamespace.MatchString(ns) ||
-		!reContainerName.MatchString(pod) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(cluster/ns/pod)"})
-		return
-	}
-	tail := int64(200)
-	if v, terr := strconv.ParseInt(q.Get("tail"), 10, 64); terr == nil && v > 0 {
-		tail = v
-	}
-	if tail > 500 {
-		tail = 500 // 上限防护对齐容器日志, 避免大日志拖垮响应
-	}
-	previous := q.Get("previous") == "1"
-	container := q.Get("container")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	logs, err := k8sMgr.PodLogs(ctx, cluster, ns, pod, container, tail, previous)
-	msg := ""
-	if err != nil {
-		msg = err.Error()
-	}
-	WriteJSON(w, map[string]any{
-		"ok": err == nil, "logs": logs, "pod": pod, "namespace": ns, "error": msg,
-	})
-}
-
-// K8sPodContainersHandler GET ?cluster=&ns=&pod= → 容器名列表(日志容器选择)
-func K8sPodContainersHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !pluginGuard(k8sPluginID, w) {
-		return
-	}
-	q := r.URL.Query()
-	cluster, ns, pod := q.Get("cluster"), q.Get("ns"), q.Get("pod")
-	if !reK8sClusterID.MatchString(cluster) || !reK8sNamespace.MatchString(ns) ||
-		!reContainerName.MatchString(pod) {
-		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(cluster/ns/pod)"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	containers := k8sMgr.ListPodContainers(ctx, cluster, ns, pod)
-	if containers == nil {
-		containers = []string{}
-	}
-	WriteJSON(w, map[string]any{"ok": true, "containers": containers})
 }
 
 // ===== 内部辅助 =====
@@ -481,6 +468,31 @@ func k8sFindCluster(cs []central.K8sCluster, id string) *central.K8sCluster {
 		}
 	}
 	return nil
+}
+
+// locateMasterHost 按 apiserver 地址(host)在主机清单反查主机 ID; 查不到返回空串(调用方决定降级)。
+// 供注册/证书解析复用: 同一主机关系只写一份, 避免两处各自实现。
+func locateMasterHost(apiServer string) string {
+	host := apiServer
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(host, prefix) {
+			host = strings.TrimPrefix(host, prefix)
+			break
+		}
+	}
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	if ansibleMgr == nil {
+		return ""
+	}
+	for _, h := range ansibleMgr.ListHosts() {
+		if strings.EqualFold(h.Addr, host) || strings.EqualFold(h.Hostname, host) ||
+			strings.EqualFold(h.Alias, host) || strings.EqualFold(h.ID, host) {
+			return h.ID
+		}
+	}
+	return ""
 }
 
 func k8sRemoveCluster(cs []central.K8sCluster, id string) []central.K8sCluster {

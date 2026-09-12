@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -46,16 +47,27 @@ var (
 	gvrCronJobs      = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 	gvrStorageClasse = schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
 	gvrQuotas        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
+	gvrLimitRanges   = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "limitranges"}
+	gvrHPAs          = schema.GroupVersionResource{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}
+	gvrPDBs          = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
+	gvrPriorityClass = schema.GroupVersionResource{Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"}
+	gvrSAs           = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}
+	gvrRoles         = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}
+	gvrClusterRoles  = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}
+	gvrRoleBindings  = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}
+	gvrCRBindings    = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}
 )
 
 // ValidResource 校验资源名白名单。
 func ValidResource(res string) bool {
 	switch res {
-	case "pods", "deployments", "statefulsets", "daemonsets", "jobs", "cronjobs",
+	case "pods", "deployments", "statefulsets", "daemonsets", "replicasets", "jobs", "cronjobs",
 		"services", "ingresses", "configmaps", "secrets",
 		"persistentvolumes", "persistentvolumeclaims", "storageclasses",
 		"nodes", "namespaces", "events",
-		"networkpolicies", "resourcequotas", "ingressclasses":
+		"networkpolicies", "resourcequotas", "ingressclasses",
+		"horizontalpodautoscalers", "poddisruptionbudgets", "limitranges", "priorityclasses",
+		"serviceaccounts", "roles", "rolebindings", "clusterroles", "clusterrolebindings":
 		return true
 	}
 	return false
@@ -71,6 +83,8 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrStatefulSets
 	case "daemonsets":
 		return gvrDaemonSets
+	case "replicasets":
+		return gvrReplicaSets
 	case "jobs":
 		return gvrJobs
 	case "cronjobs":
@@ -89,6 +103,14 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrStorageClasse
 	case "resourcequotas":
 		return gvrQuotas
+	case "limitranges":
+		return gvrLimitRanges
+	case "horizontalpodautoscalers":
+		return gvrHPAs
+	case "poddisruptionbudgets":
+		return gvrPDBs
+	case "priorityclasses":
+		return gvrPriorityClass
 	case "services":
 		return gvrServices
 	case "configmaps":
@@ -101,6 +123,16 @@ func gvrOf(res string) schema.GroupVersionResource {
 		return gvrEvents
 	case "namespaces":
 		return gvrNamespaces
+	case "serviceaccounts":
+		return gvrSAs
+	case "roles":
+		return gvrRoles
+	case "clusterroles":
+		return gvrClusterRoles
+	case "rolebindings":
+		return gvrRoleBindings
+	case "clusterrolebindings":
+		return gvrCRBindings
 	}
 	return schema.GroupVersionResource{}
 }
@@ -108,23 +140,42 @@ func gvrOf(res string) schema.GroupVersionResource {
 // nsFor 决定列表的命名空间作用域: 集群级资源忽略 ns, 其余空串=All Namespaces。
 func nsFor(ns, res string) string {
 	switch res {
-	case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses":
+	case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses",
+		"clusterroles", "clusterrolebindings", "priorityclasses":
 		return ""
 	default:
 		return ns
 	}
 }
 
+// resolveGVRAndNs 统一解析 res → (gvr, effectiveNs). 内置走 fast path, CRD 走 ResolveGVR.
+// 失败: unknown res / cluster scope 但给了 ns 等情况. 删除/列表/Get/Describe 共用.
+func (m *Manager) resolveGVRAndNs(clusterID, res, ns string) (schema.GroupVersionResource, string, error) {
+	if gvr := gvrOf(res); !gvr.Empty() {
+		return gvr, nsFor(ns, res), nil
+	}
+	crdGVR, scope, err := m.ResolveGVR(clusterID, res)
+	if err != nil {
+		return schema.GroupVersionResource{}, "", fmt.Errorf("unsupported resource %q", res)
+	}
+	effectiveNs := ns
+	if scope == ScopeCluster {
+		effectiveNs = ""
+	}
+	return crdGVR, effectiveNs, nil
+}
+
 // ListResources 列出集群指定资源(精简行)。ns 为空表示全部命名空间。
 func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) ([]map[string]any, error) {
-	if !ValidResource(res) {
-		return nil, fmt.Errorf("unsupported resource %q", res)
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return nil, err
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return nil, err
 	}
-	list, err := dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).List(ctx, metav1.ListOptions{})
+	list, err := dyn.Resource(gvr).Namespace(effectiveNs).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list %s in %s: %w", res, clusterID, err)
 	}
@@ -138,6 +189,54 @@ func (m *Manager) ListResources(ctx context.Context, clusterID, res, ns string) 
 		}
 	}
 	sortRows(out)
+	return out, nil
+}
+
+// AggregateEvents 聚合全集群事件: 按 reason+对象 分组, 求和 count, 取最近时间。
+// 返回行含 type/object/reason/namespace/count/lastSeen, 字母序, 由前端按优先级再排。
+func (m *Manager) AggregateEvents(ctx context.Context, clusterID string) ([]map[string]any, error) {
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := dyn.Resource(gvrEvents).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list events in %s: %w", clusterID, err)
+	}
+	now := time.Now()
+	type key struct {
+		t, r, ns, obj string
+	}
+	agg := map[key]*map[string]any{}
+	var order []key
+	for i := range list.Items {
+		var e corev1.Event
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(list.Items[i].Object, &e) != nil {
+			continue
+		}
+		k := key{e.Type, e.Reason, e.Namespace, e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name}
+		row, ok := agg[k]
+		if !ok {
+			last := ""
+			if !e.LastTimestamp.IsZero() {
+				last = humanAge(e.LastTimestamp.Time, now)
+			}
+			agg[k] = &map[string]any{
+				"type": e.Type, "reason": e.Reason, "object": k.obj,
+				"namespace": k.ns, "count": e.Count, "lastSeen": last,
+			}
+			order = append(order, k)
+		} else {
+			(*row)["count"] = (*row)["count"].(int32) + e.Count
+			if !e.LastTimestamp.IsZero() {
+				(*row)["lastSeen"] = humanAge(e.LastTimestamp.Time, now)
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, k := range order {
+		out = append(out, *agg[k])
+	}
 	return out, nil
 }
 
@@ -266,9 +365,78 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 		return map[string]any{
 			"name": name, "namespace": ns, "age": age,
 		}, nil
+	case "serviceaccounts":
+		var sa corev1.ServiceAccount
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &sa); err != nil {
+			return nil, err
+		}
+		secrets := make([]string, 0, len(sa.Secrets))
+		for _, s := range sa.Secrets {
+			secrets = append(secrets, s.Name)
+		}
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"secrets": strings.Join(secrets, ","), "age": age,
+		}, nil
+	case "roles", "clusterroles":
+		return map[string]any{
+			"name": name, "namespace": ns, "rules": rbacRulesCount(it.Object), "age": age,
+		}, nil
+	case "rolebindings", "clusterrolebindings":
+		subjects, roleRef := rbacBindSummary(it.Object)
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"role": roleRef, "subjects": subjects, "age": age,
+		}, nil
 	case "resourcequotas":
 		row, err := quotaRow(it.Object)
 		return row, err
+	case "horizontalpodautoscalers":
+		targetName, _, _ := unstructured.NestedString(it.Object, "spec", "scaleTargetRef", "name")
+		min, _, _ := unstructured.NestedInt64(it.Object, "spec", "minReplicas")
+		max, _, _ := unstructured.NestedInt64(it.Object, "spec", "maxReplicas")
+		cur, _, _ := unstructured.NestedInt64(it.Object, "status", "currentReplicas")
+		des, _, _ := unstructured.NestedInt64(it.Object, "status", "desiredReplicas")
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"target":  targetName,
+			"min/max": fmt.Sprintf("%d→%d", min, max),
+			"current": fmt.Sprintf("%d/%d", cur, des),
+			"age":     age,
+		}, nil
+	case "poddisruptionbudgets":
+		minAvVal, _, _ := unstructured.NestedFieldNoCopy(it.Object, "spec", "minAvailable")
+		desHeal, _, _ := unstructured.NestedInt64(it.Object, "status", "desiredHealthy")
+		curHeal, _, _ := unstructured.NestedInt64(it.Object, "status", "currentHealthy")
+		dAllow, _, _ := unstructured.NestedInt64(it.Object, "status", "disruptionsAllowed")
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"minAvailable": fmt.Sprintf("%v", minAvVal),
+			"healthy":      fmt.Sprintf("%d/%d", curHeal, desHeal),
+			"allowed":      dAllow,
+			"age":          age,
+		}, nil
+	case "limitranges":
+		var lr corev1.LimitRange
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &lr); err != nil {
+			return nil, err
+		}
+		count := len(lr.Spec.Limits)
+		types := make([]string, 0, count)
+		for _, l := range lr.Spec.Limits {
+			types = append(types, string(l.Type))
+		}
+		return map[string]any{
+			"name": name, "namespace": ns,
+			"limits": strings.Join(types, ","), "count": count, "age": age,
+		}, nil
+	case "priorityclasses":
+		val, _, _ := unstructured.NestedInt64(it.Object, "value")
+		gd, _, _ := unstructured.NestedBool(it.Object, "globalDefault")
+		return map[string]any{
+			"name": name, "value": val,
+			"globalDefault": gd, "age": age,
+		}, nil
 	case "events":
 		var e corev1.Event
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(it.Object, &e); err != nil {
@@ -293,7 +461,68 @@ func rowOf(it *unstructured.Unstructured, res string, now time.Time) (map[string
 		controller, _, _ := unstructured.NestedString(it.Object, "spec", "controller")
 		return map[string]any{"name": name, "controller": controller, "age": age}, nil
 	}
-	return nil, fmt.Errorf("unsupported resource %q", res)
+	// CRD fallback: 返回 name/namespace/age + spec/status 关键字段 (label/keys/phase)
+	return crdRow(it.Object, name, ns, age)
+}
+
+// crdRow 通用 CRD 行: 不预设字段, 通用展示 name/namespace/age + 几个常见 spec 字段 (尽量通用).
+func crdRow(obj map[string]any, name, ns, age string) (map[string]any, error) {
+	row := map[string]any{"name": name, "namespace": ns, "age": age}
+	// 常见 spec 字段: spec.foo / spec.image / spec.replicas / spec.schedule / spec.phase
+	for _, p := range []string{"phase", "replicas", "image", "schedule", "host", "url", "provider"} {
+		if v, ok, _ := unstructured.NestedString(obj, "spec", p); ok {
+			row[p] = v
+		}
+	}
+	if v, ok, _ := unstructured.NestedInt64(obj, "spec", "replicas"); ok {
+		row["replicas"] = v
+	}
+	// 状态字段: status.phase / status.ready
+	for _, p := range []string{"phase", "ready", "state", "conditions"} {
+		if v, ok, _ := unstructured.NestedString(obj, "status", p); ok {
+			row["status_"+p] = v
+		}
+	}
+	// 顶层 labels 数 / annotations 数
+	if l, ok, _ := unstructured.NestedMap(obj, "metadata", "labels"); ok {
+		row["labels"] = len(l)
+	}
+	return row, nil
+}
+
+// rbacRulesCount 统计 Role/ClusterRole 的 rules 条数。
+func rbacRulesCount(obj map[string]any) int {
+	rules, _, _ := unstructured.NestedSlice(obj, "rules")
+	return len(rules)
+}
+
+// rbacBindSummary 汇总 RoleBinding/ClusterRoleBinding 的 roleRef 与 subjects。
+func rbacBindSummary(obj map[string]any) (subjects, roleRef string) {
+	if k, _, _ := unstructured.NestedString(obj, "roleRef", "name"); k != "" {
+		kr, _, _ := unstructured.NestedString(obj, "roleRef", "kind")
+		roleRef = kr + "/" + k
+	}
+	subs, _, _ := unstructured.NestedSlice(obj, "subjects")
+	parts := make([]string, 0, len(subs))
+	for _, s := range subs {
+		m, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		k := strings.Builder{}
+		kind, _ := m["kind"].(string)
+		nm, _ := m["name"].(string)
+		nsName, _ := m["namespace"].(string)
+		k.WriteString(kind)
+		k.WriteString(":")
+		if kind == "ServiceAccount" && nsName != "" {
+			k.WriteString(nsName)
+			k.WriteString("/")
+		}
+		k.WriteString(nm)
+		parts = append(parts, k.String())
+	}
+	return strings.Join(parts, ", "), roleRef
 }
 
 func sortRows(rows []map[string]any) {
@@ -771,14 +1000,15 @@ func affinitySummary(a *corev1.Affinity) string {
 
 // GetResourceYAML 返回资源对象 YAML(敏感字段脱敏: Secret 的 data)。
 func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name string) (string, error) {
-	if !ValidResource(res) || res == "overview" {
-		return "", fmt.Errorf("unsupported resource %q", res)
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return "", err
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
 		return "", err
 	}
-	u, err := dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Get(ctx, name, metav1.GetOptions{})
+	u, err := dyn.Resource(gvr).Namespace(effectiveNs).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -807,32 +1037,45 @@ func (m *Manager) GetResourceYAML(ctx context.Context, clusterID, res, ns, name 
 	return string(out), nil
 }
 
-// DeleteResource 删除指定资源(仅开放 pods/deployments/statefulsets/jobs/cronjobs)。
-var deletableResources = map[string]bool{
-	"pods": true, "deployments": true, "statefulsets": true, "jobs": true, "cronjobs": true,
-}
-
 // kindToRes: 可视化创建(apply)允许的 kind → 资源名映射。
 var kindToRes = map[string]string{
-	"Deployment":            "deployments",
-	"StatefulSet":           "statefulsets",
-	"DaemonSet":             "daemonsets",
-	"Service":               "services",
-	"ConfigMap":             "configmaps",
-	"Secret":                "secrets",
-	"CronJob":               "cronjobs",
-	"Job":                   "jobs",
-	"PersistentVolumeClaim": "persistentvolumeclaims",
-	"Ingress":               "ingresses",
+	"Deployment":               "deployments",
+	"StatefulSet":              "statefulsets",
+	"DaemonSet":                "daemonsets",
+	"Service":                  "services",
+	"ConfigMap":                "configmaps",
+	"Secret":                   "secrets",
+	"CronJob":                  "cronjobs",
+	"Job":                      "jobs",
+	"PersistentVolumeClaim":    "persistentvolumeclaims",
+	"Ingress":                  "ingresses",
+	"ServiceAccount":           "serviceaccounts",
+	"Role":                     "roles",
+	"ClusterRole":              "clusterroles",
+	"RoleBinding":              "rolebindings",
+	"ClusterRoleBinding":       "clusterrolebindings",
+	"Namespace":                "namespaces",
+	"HorizontalPodAutoscaler":  "horizontalpodautoscalers",
+	"PodDisruptionBudget":      "poddisruptionbudgets",
+	"ResourceQuota":            "resourcequotas",
+	"LimitRange":               "limitranges",
+	"PriorityClass":            "priorityclasses",
+	"NetworkPolicy":            "networkpolicies",
+	"StorageClass":             "storageclasses",
+	"PersistentVolume":         "persistentvolumes",
 }
 
 // ApplyResourceYAML 创建(或覆盖更新)单个资源对象。
 // 返回 (kind, name, created, error)。overwrite=false 时同名资源报错, 避免误覆盖。
-func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr string, overwrite bool) (string, string, bool, error) {
-	var obj map[string]any
-	if err := sigsyaml.Unmarshal([]byte(yamlStr), &obj); err != nil {
-		return "", "", false, fmt.Errorf("YAML 解析失败: %w", err)
-	}
+// clusterScopedResources lists resources that are NOT namespaced.
+var clusterScopedResources = map[string]bool{
+	"nodes": true, "namespaces": true, "persistentvolumes": true,
+	"storageclasses": true, "ingressclasses": true,
+	"clusterroles": true, "clusterrolebindings": true, "priorityclasses": true,
+}
+
+// UpsertObject 通用创建/覆盖: obj 中 kind 决定 GVR; 集群级资源自动去 namespace。
+func (m *Manager) UpsertObject(ctx context.Context, clusterID string, obj map[string]any, overwrite bool) (string, string, bool, error) {
 	kind, _ := obj["kind"].(string)
 	meta, _ := obj["metadata"].(map[string]any)
 	name, _ := meta["name"].(string)
@@ -841,10 +1084,9 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 	}
 	res, ok := kindToRes[kind]
 	if !ok {
-		return "", "", false, fmt.Errorf("暂不支持创建类型 %q (支持: Deployment/StatefulSet/DaemonSet/Service/ConfigMap/Secret/CronJob/Job/PVC/Ingress)", kind)
+		return "", "", false, fmt.Errorf("暂不支持创建类型 %q", kind)
 	}
 	if kind == "Secret" {
-		// type 字段缺失时 apiserver 默认 Opaque, 无需补; 但 stringData/data 都空时报错提醒
 		data, _ := obj["data"].(map[string]any)
 		sdata, _ := obj["stringData"].(map[string]any)
 		if len(data) == 0 && len(sdata) == 0 {
@@ -856,16 +1098,31 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 		return "", "", false, err
 	}
 	gvr := gvrOf(res)
-	ns := nsFor(nsForMeta(meta), res)
+	isCluster := clusterScopedResources[res]
+	var ns string
+	if !isCluster {
+		ns = nsFor(nsForMeta(meta), res)
+		// 确保 metadata 带 namespace 供 apiserver 校验
+		if ns != "" {
+			meta["namespace"] = ns
+		}
+	} else {
+		// 集群级资源: 删除 namespace 字段(apiserver 会拒绝含 namespace 的创建)
+		delete(meta, "namespace")
+	}
 	u := &unstructured.Unstructured{Object: obj}
-	existing, getErr := dyn.Resource(gvr).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	var dynResource dynamic.ResourceInterface = dyn.Resource(gvr)
+	if !isCluster {
+		dynResource = dyn.Resource(gvr).Namespace(ns)
+	}
+	existing, getErr := dynResource.Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case getErr == nil:
 		if !overwrite {
 			return kind, name, false, fmt.Errorf("%s %q 已存在(勾选覆盖可更新)", kind, name)
 		}
 		u.SetResourceVersion(existing.GetResourceVersion())
-		_, uerr := dyn.Resource(gvr).Namespace(ns).Update(ctx, u, metav1.UpdateOptions{})
+		_, uerr := dynResource.Update(ctx, u, metav1.UpdateOptions{})
 		if uerr != nil {
 			return kind, name, false, fmt.Errorf("更新失败: %w", uerr)
 		}
@@ -874,12 +1131,21 @@ func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr stri
 		if !apierrors.IsNotFound(getErr) {
 			return "", "", false, getErr
 		}
-		_, uerr := dyn.Resource(gvr).Namespace(ns).Create(ctx, u, metav1.CreateOptions{})
+		_, uerr := dynResource.Create(ctx, u, metav1.CreateOptions{})
 		if uerr != nil {
 			return kind, name, true, fmt.Errorf("创建失败: %w", uerr)
 		}
 		return kind, name, true, nil
 	}
+}
+
+// ApplyResourceYAML 解析 YAML 后创建或覆盖。
+func (m *Manager) ApplyResourceYAML(ctx context.Context, clusterID, yamlStr string, overwrite bool) (string, string, bool, error) {
+	var obj map[string]any
+	if err := sigsyaml.Unmarshal([]byte(yamlStr), &obj); err != nil {
+		return "", "", false, fmt.Errorf("YAML 解析失败: %w", err)
+	}
+	return m.UpsertObject(ctx, clusterID, obj, overwrite)
 }
 
 // nsForMeta 从对象 metadata.namespace 取命名空间(缺省 default)。
@@ -890,9 +1156,11 @@ func nsForMeta(meta map[string]any) string {
 	return "default"
 }
 
+// DeleteResource 删除指定资源(内置 fast-path + 集群已发现 CRD 短名都允许).
 func (m *Manager) DeleteResource(ctx context.Context, clusterID, res, ns, name string, force bool) error {
-	if !deletableResources[res] {
-		return fmt.Errorf("资源类型 %q 不允许删除", res)
+	gvr, effectiveNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return fmt.Errorf("资源类型 %q 不允许删除: %w", res, err)
 	}
 	dyn, err := m.DynamicClient(clusterID)
 	if err != nil {
@@ -903,7 +1171,7 @@ func (m *Manager) DeleteResource(ctx context.Context, clusterID, res, ns, name s
 		z := int64(0)
 		opts.GracePeriodSeconds = &z
 	}
-	return dyn.Resource(gvrOf(res)).Namespace(nsFor(ns, res)).Delete(ctx, name, opts)
+	return dyn.Resource(gvr).Namespace(effectiveNs).Delete(ctx, name, opts)
 }
 
 // ScaleWorkload 调整 deployments/statefulsets 副本数(经 scale 子资源)。
@@ -971,4 +1239,226 @@ func (m *Manager) GetReplicas(ctx context.Context, clusterID, res, ns, name stri
 	st, _ := sc.Object["status"].(map[string]any)
 	ready, _ = st["replicas"].(int64)
 	return spec, ready, nil
+}
+
+// DescribeResource 生成 kubectl describe 风格的只读文本: 对象 YAML + 关联事件。
+func (m *Manager) DescribeResource(ctx context.Context, clusterID, res, ns, name string) (string, error) {
+	if res == "overview" || res == "events" || res == "namespaces" {
+		return "", fmt.Errorf("unsupported resource %q", res)
+	}
+	gvr, effNs, err := m.resolveGVRAndNs(clusterID, res, ns)
+	if err != nil {
+		return "", err
+	}
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return "", err
+	}
+	u, err := dyn.Resource(gvr).Namespace(effNs).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("get %s %s/%s: %w", res, effNs, name, err)
+	}
+	var b strings.Builder
+
+	// ---- 头部 ----
+	kind, _ := u.Object["kind"].(string)
+	apiVer, _ := u.Object["apiVersion"].(string)
+	fmt.Fprintf(&b, "Name:         %s\n", name)
+	fmt.Fprintf(&b, "Namespace:    %s\n", effNs)
+	fmt.Fprintf(&b, "Kind:         %s\n", kind)
+	if apiVer != "" {
+		fmt.Fprintf(&b, "APIVersion:   %s/%s\n", groupOf(kind), apiVer)
+	}
+	if l := u.GetLabels(); len(l) > 0 {
+		fmt.Fprintf(&b, "Labels:       %s\n", labelsInline(l))
+	}
+	if a := u.GetAnnotations(); len(a) > 0 {
+		fmt.Fprintf(&b, "Annotations:  %s\n", labelsInline(a))
+	}
+	fmt.Fprintf(&b, "Created:      %s\n", u.GetCreationTimestamp().Format(time.RFC3339))
+
+	// ---- Pod 专属 ----
+	if res == "pods" {
+		var p corev1.Pod
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &p) == nil {
+			describePod(&b, &p)
+		}
+	}
+
+	// ---- 对象 YAML ----
+	obj := u.Object
+	if meta, ok := obj["metadata"].(map[string]any); ok {
+		delete(meta, "managedFields")
+	}
+	if res == "secrets" {
+		if data, ok := obj["data"].(map[string]any); ok {
+			masked := map[string]any{}
+			for k, v := range data {
+				if s, ok := v.(string); ok {
+					masked[k] = fmt.Sprintf("**%d bytes**", len(s))
+				}
+			}
+			obj["data"] = masked
+		}
+		delete(obj, "immutable")
+	}
+	fmt.Fprintf(&b, "\n---- Manifest ----\n")
+	if y, err := sigsyaml.Marshal(obj); err == nil {
+		b.WriteString(string(y))
+	}
+
+	// ---- 事件 ----
+	sel := "involvedObject.name=" + name
+	if strings.TrimSpace(ns) != "" {
+		sel = "involvedObject.namespace=" + ns
+	}
+	evs, err := dyn.Resource(gvrEvents).Namespace(effNs).List(ctx, metav1.ListOptions{FieldSelector: sel})
+	if err == nil {
+		fmt.Fprintf(&b, "\n---- Events (%d) ----\n", len(evs.Items))
+		if len(evs.Items) == 0 {
+			fmt.Fprintf(&b, "  <none>\n")
+		} else {
+			sort.Slice(evs.Items, func(i, j int) bool {
+				ti, _ := evs.Items[i].Object["lastTimestamp"].(string)
+				tj, _ := evs.Items[j].Object["lastTimestamp"].(string)
+				return ti > tj
+			})
+			fmt.Fprintf(&b, "  Type    Reason              Age   Message\n")
+			for i := range evs.Items {
+				o := evs.Items[i].Object
+				typ, _ := o["type"].(string)
+				reason, _ := o["reason"].(string)
+				msg, _ := o["message"].(string)
+				count, _ := o["count"].(int64)
+				last, _ := o["lastTimestamp"].(string)
+				age := humanAgeString(last)
+				marker := "  "
+				if typ == "Warning" {
+					marker = "! "
+				}
+				fmt.Fprintf(&b, "%s%-6s %-20s %-6s %dx %s\n", marker, typ, reason, age, count, msg)
+			}
+		}
+	}
+	return b.String(), nil
+}
+
+// describePod 输出 kubectl describe pod 风格的容器/条件/卷诊断文本。
+func describePod(b *strings.Builder, p *corev1.Pod) {
+	now := time.Now()
+	fmt.Fprintf(b, "Status:       %s\n", p.Status.Phase)
+	if p.Spec.NodeName != "" {
+		fmt.Fprintf(b, "Node:         %s\n", p.Spec.NodeName)
+	}
+	if p.Status.PodIP != "" {
+		fmt.Fprintf(b, "IP:           %s\n", p.Status.PodIP)
+	}
+	if p.Status.HostIP != "" {
+		fmt.Fprintf(b, "HostIP:       %s\n", p.Status.HostIP)
+	}
+	if q := p.Status.QOSClass; q != "" {
+		fmt.Fprintf(b, "QoS Class:    %s\n", q)
+	}
+	if len(p.Status.InitContainerStatuses) > 0 {
+		fmt.Fprintf(b, "\nInit Containers:\n")
+		for _, cs := range p.Status.InitContainerStatuses {
+			fmt.Fprintf(b, "  %-20s image=%s\n", cs.Name, cs.Image)
+			fmt.Fprintf(b, "    State: %s\n", containerStateText(cs.State, now))
+			fmt.Fprintf(b, "    Ready: %v  RestartCount: %d\n", cs.Ready, cs.RestartCount)
+		}
+	}
+	fmt.Fprintf(b, "\nContainers:\n")
+	for _, cs := range p.Status.ContainerStatuses {
+		fmt.Fprintf(b, "  %-20s image=%s\n", cs.Name, cs.Image)
+		fmt.Fprintf(b, "    State: %s\n", containerStateText(cs.State, now))
+		fmt.Fprintf(b, "    Ready: %v  RestartCount: %d\n", cs.Ready, cs.RestartCount)
+	}
+	if len(p.Status.Conditions) > 0 {
+		fmt.Fprintf(b, "\nConditions:\n")
+		fmt.Fprintf(b, "  Type             Status  Reason            Message\n")
+		for _, c := range p.Status.Conditions {
+			fmt.Fprintf(b, "  %-16s %-7s %-18s %s\n", string(c.Type), string(c.Status), c.Reason, c.Message)
+		}
+	}
+	if len(p.Spec.Volumes) > 0 {
+		fmt.Fprintf(b, "\nVolumes:\n")
+		for _, v := range p.Spec.Volumes {
+			src := "emptyDir"
+			switch {
+			case v.ConfigMap != nil:
+				src = "configmap/" + v.ConfigMap.Name
+			case v.Secret != nil:
+				src = "secret/" + v.Secret.SecretName
+			case v.PersistentVolumeClaim != nil:
+				src = "pvc/" + v.PersistentVolumeClaim.ClaimName
+			case v.HostPath != nil:
+				src = "hostPath:" + v.HostPath.Path
+			}
+			fmt.Fprintf(b, "  %s: %s\n", v.Name, src)
+		}
+	}
+}
+
+// containerStateText 人类可读的容器状态(kubectl describe 风格), 含等待原因。
+func containerStateText(s corev1.ContainerState, now time.Time) string {
+	if s.Running != nil {
+		return "Running (started " + humanAge(s.Running.StartedAt.Time, now) + " ago)"
+	}
+	if s.Terminated != nil {
+		return fmt.Sprintf("Terminated (exit=%d, reason=%s, started %s, finished %s)",
+			s.Terminated.ExitCode, orDash(s.Terminated.Reason),
+			s.Terminated.StartedAt.Time.Format("15:04:05"), s.Terminated.FinishedAt.Time.Format("15:04:05"))
+	}
+	if s.Waiting != nil {
+		// 突出常见故障原因
+		reason := s.Waiting.Reason
+		if reason == "" {
+			reason = "Wait"
+		}
+		return fmt.Sprintf("Waiting (%s)", reason)
+	}
+	return "Waiting"
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func groupOf(kind string) string {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
+		return "apps"
+	case "Job", "CronJob":
+		return "batch"
+	case "Ingress", "NetworkPolicy":
+		return "networking.k8s.io"
+	}
+	return "v1"
+}
+
+func labelsInline(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+m[k])
+	}
+	return strings.Join(parts, ", ")
+}
+
+func humanAgeString(ts string) string {
+	if ts == "" {
+		return "?"
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return humanAge(t, time.Now())
 }

@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -30,6 +31,7 @@ type Info struct {
 type clientSet struct {
 	dynamicClient dynamic.Interface
 	restConfig    *rest.Config
+	discState     *discoveryState
 }
 
 // Manager 管理多个已注册集群的客户端连接。并发安全。
@@ -55,13 +57,17 @@ func (m *Manager) Add(id string, kubeconfigData []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters[id] = &clientSet{dynamicClient: dyn, restConfig: restCfg}
+	// initDiscovery 改为懒加载: 首次访问 RESTMapper/CRD 时才构造, 避免启动卡顿
 	return nil
 }
 
-// Remove 注销集群。
+// Remove 注销集群.
 func (m *Manager) Remove(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if cs, ok := m.clusters[id]; ok {
+		cs.discState = nil
+	}
 	delete(m.clusters, id)
 }
 
@@ -85,6 +91,16 @@ func (m *Manager) RESTConfig(id string) (*rest.Config, error) {
 		return nil, fmt.Errorf("cluster %q not found", id)
 	}
 	return rest.CopyConfig(cs.restConfig), nil
+}
+
+// Clientset 返回指定集群的 typed kubernetes clientset
+// 供 handlers (exec/logs 等) 使用, 替代 ops.go 私有 clientsetFor。
+func (m *Manager) Clientset(id string) (*k8sclient.Clientset, error) {
+	cfg, err := m.RESTConfig(id)
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.NewForConfig(cfg)
 }
 
 // Probe 探测 API Server 连通性并返回版本信息。仅访问 /api 与 /version, 只读凭据即可。

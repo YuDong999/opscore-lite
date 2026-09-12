@@ -36,9 +36,14 @@ func DockerExecHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(容器名/命令)"})
 		return
 	}
-	out, err := RunOnTarget(b.Host, []string{"docker", "exec", b.Name, "sh", "-c", b.Cmd})
-	rt := "docker"
-	if err != nil && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
+	out, err := RunOnTarget(b.Host, []string{rtCmd, "exec", b.Name, "sh", "-c", b.Cmd})
+	rt := rtCmd
+	if err != nil && rtCmd != "podman" && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
 		out, err = RunOnTarget(b.Host, []string{"podman", "exec", b.Name, "sh", "-c", b.Cmd})
 		rt = "podman"
 	}

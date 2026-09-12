@@ -62,18 +62,23 @@ func DockerImageActionHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "非法镜像名"})
 		return
 	}
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	var argv []string
 	switch b.Action {
 	case "pull":
-		argv = []string{"docker", "pull", b.Image}
+		argv = []string{rtCmd, "pull", b.Image}
 	case "remove":
-		argv = []string{"docker", "rmi", "-f", b.Image}
+		argv = []string{rtCmd, "rmi", "-f", b.Image}
 	default:
 		WriteJSON(w, map[string]any{"ok": false, "error": "action 必须是 pull/remove"})
 		return
 	}
 	out, err := RunOnTarget(b.Host, argv)
-	if strings.Contains(out, "no such command") || strings.Contains(out, "unknown command") {
+	if err != nil && rtCmd != "podman" && (strings.Contains(out, "no such command") || strings.Contains(out, "unknown command")) {
 		// podman 主机兜底尝试同构命令
 		argv[0] = "podman"
 		out, err = RunOnTarget(b.Host, argv)
@@ -223,15 +228,20 @@ func DockerBuildHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "非法镜像 tag"})
 		return
 	}
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	dir := fmt.Sprintf("%s-%d", buildTmpPrefix, time.Now().UnixNano()%1e9)
 	script := fmt.Sprintf(
 		`mkdir -p %[1]s
 echo %[2]s | base64 -d > %[1]s/Dockerfile
-cd %[1]s && timeout 600 docker build -t %[3]s . 2>&1
+cd %[1]s && timeout 600 %[4]s build -t %[3]s . 2>&1
 rc=$?
 rm -rf %[1]s
 exit $rc`,
-		dir, Shq(base64.StdEncoding.EncodeToString([]byte(b.Dockerfile))), Shq(b.Tag))
+		dir, Shq(base64.StdEncoding.EncodeToString([]byte(b.Dockerfile))), Shq(b.Tag), rtCmd)
 	out, err := runScriptOnTarget(b.Host, script)
 	if err != nil {
 		dockerAudit(b.Host, "build", b.Tag, err)
@@ -270,6 +280,11 @@ func DockerComposeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := composeBaseDir + "/" + b.Project
 	file := dir + "/docker-compose.yml"
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 
 	var script string
 	switch b.Action {
@@ -281,14 +296,14 @@ func DockerComposeHandler(w http.ResponseWriter, r *http.Request) {
 		script = fmt.Sprintf(
 			`mkdir -p %[1]s
 echo %[2]s | base64 -d > %[1]s/docker-compose.yml
-timeout 600 docker compose -f %[3]s -p %[4]s up -d 2>&1`,
-			dir, Shq(base64.StdEncoding.EncodeToString([]byte(b.Compose))), file, Shq(b.Project))
+timeout 600 %[5]s compose -f %[3]s -p %[4]s up -d 2>&1`,
+			dir, Shq(base64.StdEncoding.EncodeToString([]byte(b.Compose))), file, Shq(b.Project), rtCmd)
 	case "down":
-		script = fmt.Sprintf(`timeout 300 docker compose -f %[1]s -p %[2]s down 2>&1`, file, Shq(b.Project))
+		script = fmt.Sprintf(`timeout 300 %[3]s compose -f %[1]s -p %[2]s down 2>&1`, file, Shq(b.Project), rtCmd)
 	case "restart":
-		script = fmt.Sprintf(`timeout 600 docker compose -f %[1]s -p %[2]s restart 2>&1`, file, Shq(b.Project))
+		script = fmt.Sprintf(`timeout 600 %[3]s compose -f %[1]s -p %[2]s restart 2>&1`, file, Shq(b.Project), rtCmd)
 	case "ps":
-		script = fmt.Sprintf(`docker compose -f %[1]s -p %[2]s ps --format json 2>/dev/null || docker ps -a --filter label=com.docker.compose.project=%[2]s --format '{{json .}}' 2>&1`, file, Shq(b.Project))
+		script = fmt.Sprintf(`%[3]s compose -f %[1]s -p %[2]s ps --format json 2>/dev/null || %[3]s ps -a --filter label=com.docker.compose.project=%[2]s --format '{{json .}}' 2>&1`, file, Shq(b.Project), rtCmd)
 	default:
 		WriteJSON(w, map[string]any{"ok": false, "error": "action 必须是 up/down/restart/ps"})
 		return
@@ -384,6 +399,18 @@ func lastLines(s string, n int) string {
 	return strings.Join(parts[len(parts)-n:], "\n")
 }
 
+func firstLines(s string, n int) string {
+	s = strings.TrimLeft(s, "\n\r ")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "\n")
+	if len(parts) <= n {
+		return s
+	}
+	return strings.Join(parts[:n], "\n")
+}
+
 func nonEmptyLines(s string) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
@@ -426,6 +453,7 @@ type pullJob struct {
 	ID        string
 	Host      string
 	Image     string
+	RT        string // 目标运行时: docker | podman | crictl | ctr("" = 自动探测)
 	Output    []string // 保留最近输出行
 	Done      bool
 	Err       string
@@ -440,9 +468,12 @@ var (
 type pullAsyncBody struct {
 	Host  string `json:"host"`
 	Image string `json:"image"`
+	RT    string `json:"rt"` // 目标运行时, 空=自动探测
 }
 
-// DockerPullAsyncHandler POST 发起异步拉取, 返回 jobId
+// DockerPullAsyncHandler POST 发起异步拉取, 返回 jobId。
+// rt=docker/podman 直接拉取; rt=crictl/ctr 走跨运行时迁移链
+// (docker pull → save 成 tar → ctr -n k8s.io images import), 因为 containerd 没有原生拉取代理。
 func DockerPullAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -456,8 +487,17 @@ func DockerPullAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body(image)"})
 		return
 	}
+	// 归一化运行时请求
+	rt := ""
+	switch b.RT {
+	case "", "docker", "podman", "crictl", "ctr":
+		rt = b.RT
+	default:
+		WriteJSON(w, map[string]any{"ok": false, "error": "rt 必须是 docker/podman/crictl/ctr / 空"})
+		return
+	}
 	jobID := fmt.Sprintf("p%d", time.Now().UnixNano())
-	job := &pullJob{ID: jobID, Host: b.Host, Image: b.Image, StartedAt: time.Now()}
+	job := &pullJob{ID: jobID, Host: b.Host, Image: b.Image, RT: rt, StartedAt: time.Now()}
 	pullJobsMu.Lock()
 	// 清理 30 分钟前的旧任务
 	for k, j := range pullJobs {
@@ -469,21 +509,35 @@ func DockerPullAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	pullJobsMu.Unlock()
 
 	go func() {
-		out, err := RunOnTarget(job.Host, []string{"docker", "pull", b.Image})
-		if err != nil && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
-			out, err = RunOnTarget(job.Host, []string{"podman", "pull", b.Image})
+		var out string
+		var err error
+		if rt == "crictl" || rt == "ctr" {
+			// 跨运行时迁移链: docker pull → docker save → tar → 远端 ctr import
+			out, err = pullIntoContainerd(job, func(s string) { pullJobsMu.Lock(); job.Output = append(job.Output, s); pullJobsMu.Unlock() })
+		} else {
+			rtCmd := rt
+			if rtCmd == "" {
+				rtCmd = dockerOrPodman(job.Host)
+			}
+			out, err = RunOnTarget(job.Host, []string{rtCmd, "pull", b.Image})
+			if err != nil && rtCmd != "podman" && (strings.Contains(out, "no such command") || strings.Contains(out, "is not a docker command")) {
+				out, err = RunOnTarget(job.Host, []string{"podman", "pull", b.Image})
+			}
+			pullJobsMu.Lock()
+			for _, l := range strings.Split(out, "\n") {
+				l = strings.TrimSpace(l)
+				if l == "" || strings.HasPrefix(l, "Digest:") {
+					continue
+				}
+				job.Output = append(job.Output, l)
+				if len(job.Output) > 40 {
+					job.Output = job.Output[len(job.Output)-40:]
+				}
+			}
+			pullJobsMu.Unlock()
 		}
+		_ = out
 		pullJobsMu.Lock()
-		for _, l := range strings.Split(out, "\n") {
-			l = strings.TrimSpace(l)
-			if l == "" || strings.HasPrefix(l, "Digest:") {
-				continue
-			}
-			job.Output = append(job.Output, l)
-			if len(job.Output) > 40 {
-				job.Output = job.Output[len(job.Output)-40:]
-			}
-		}
 		job.Done = true
 		if err != nil {
 			job.Err = lastLines(out, 3)
@@ -495,6 +549,7 @@ func DockerPullAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		dockerAudit(job.Host, "pull-async", b.Image, err)
 		if err == nil {
 			InvalidateRespCache("/api/plugins/containers/images")
+			InvalidateRespCache("/api/plugins/containers/list")
 		}
 	}()
 	WriteJSON(w, map[string]any{"ok": true, "jobId": jobID})
@@ -523,6 +578,7 @@ func DockerPullProgressHandler(w http.ResponseWriter, r *http.Request) {
 		"done":       job.Done,
 		"err":        job.Err,
 		"image":      job.Image,
+		"rt":         job.RT,
 		"lines":      append([]string{}, job.Output...), // 拷贝
 		"secs":       int(time.Since(job.StartedAt).Seconds()),
 		"layersDone": layersDone, "layersTotal": layersTotal,
@@ -555,4 +611,53 @@ func pullLayerStats(lines []string) (done, total int) {
 		}
 	}
 	return done, total
+}
+
+// pullIntoContainerd 跨运行时迁移链(全部在目标主机上执行), 每步独立提交以便前端实时显示进展:
+//   docker pull <img> → docker save <img> > /tmp/opscore-migrate-*.tar → ctr -n k8s.io images import
+// 这是 containerd(K8s 托管)无原生拉取代理、或被墙情况下下载失败时的通行解法。
+func pullIntoContainerd(job *pullJob, emit func(string)) (string, error) {
+	img := job.Image
+	tarName := "/tmp/opscore-migrate-" + job.ID + ".tar"
+	// docker save 不允许覆盖已有文件(尤其 podman 兼容层), 先清
+	_, _ = RunOnTarget(job.Host, []string{"rm", "-f", tarName})
+	// 等待上一阶段 pull 的 podman storage lock 释放
+	time.Sleep(500 * time.Millisecond)
+	emit("阶段1/3: docker 拉取源镜像  " + img)
+	out, err := RunOnTarget(job.Host, []string{"docker", "pull", img})
+	if err != nil {
+		emit("✗ 阶段1 docker pull 失败")
+		detail := lastLines(out, 6)
+		if detail == "" {
+			detail = err.Error()
+		}
+		emit("· " + firstLines(out, 2))
+		return out, fmt.Errorf("docker pull 失败: %s | raw: %q", detail, out)
+	}
+	emit("✓ 阶段1 拉取完成 → 阶段2 save 成 tar")
+	// 用 stdout 重定向而非 -o 标志, 避开 podman storage 锁与 docker-archive 写入竞态
+	out, err = RunOnTarget(job.Host, []string{"sh", "-c",
+		"docker save " + Shq(img) + " > " + Shq(tarName) + " 2>/dev/null"})
+	if err != nil {
+		emit("✗ 阶段2 docker save 失败")
+		detail := lastLines(out, 6)
+		if detail == "" {
+			detail = err.Error()
+		}
+		return out, fmt.Errorf("docker save 失败: %s | raw: %q", detail, out)
+	}
+	emit("✓ 阶段2 save 完成 → 阶段3 导入 containerd(k8s.io)")
+	out, err = RunOnTarget(job.Host, []string{"ctr", "-n", "k8s.io", "images", "import", tarName})
+	if err != nil {
+		emit("✗ 阶段3 ctr import 失败, 清理临时文件")
+		_, _ = RunOnTarget(job.Host, []string{"rm", "-f", tarName})
+		detail := lastLines(out, 6)
+		if detail == "" {
+			detail = err.Error()
+		}
+		return out, fmt.Errorf("ctr import 失败: %s | raw: %q", detail, out)
+	}
+	emit("✓ 阶段3 导入成功, 清理临时文件")
+	_, _ = RunOnTarget(job.Host, []string{"rm", "-f", tarName})
+	return out, nil
 }

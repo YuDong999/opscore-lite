@@ -15,6 +15,9 @@ type K8sCluster struct {
 	Version   string `json:"version"`
 	Status    string `json:"status"` // ready | unreachable
 	CreatedAt int64  `json:"createdAt"`
+	// MasterHost 证书等 master 本地操作的 SSH 目标主机 ID(typeof ansible 清单)。
+	// 注册时按 apiserver 地址自动推算落库; 用户可手动覆盖; 空 = 拒绝猜, 退本机或反查。
+	MasterHost string `json:"masterHost,omitempty"`
 }
 
 const k8sClustersKey = "k8s:clusters"

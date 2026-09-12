@@ -38,11 +38,16 @@ func DockerSwarmActionHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "invalid body"})
 		return
 	}
+	rtCmd := dockerOrPodman(b.Host)
+	if msg := runtimeReadOnly(rtCmd); msg != "" {
+		WriteJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	var argv []string
 	detail := ""
 	switch b.Action {
 	case "init":
-		argv = []string{"docker", "swarm", "init"}
+		argv = []string{rtCmd, "swarm", "init"}
 		if b.AdvertiseIP != "" {
 			if !regexp.MustCompile(`^[0-9.]{7,15}$`).MatchString(b.AdvertiseIP) {
 				WriteJSON(w, map[string]any{"ok": false, "error": "advertise-ip 必须为 IPv4 地址"})
@@ -58,10 +63,10 @@ func DockerSwarmActionHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"ok": false, "error": "role 必须是 worker/manager"})
 			return
 		}
-		argv = []string{"docker", "swarm", "join-token", b.Role, "-q"}
+		argv = []string{rtCmd, "swarm", "join-token", b.Role, "-q"}
 		detail = b.Role
 	case "leave":
-		argv = []string{"docker", "swarm", "leave"}
+		argv = []string{rtCmd, "swarm", "leave"}
 		if b.Force {
 			argv = append(argv, "--force")
 		}
@@ -71,7 +76,7 @@ func DockerSwarmActionHandler(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]any{"ok": false, "error": "参数非法(service/replicas)"})
 			return
 		}
-		argv = []string{"docker", "service", "scale", b.Service + "=" + strconv.Itoa(b.Replicas)}
+		argv = []string{rtCmd, "service", "scale", b.Service + "=" + strconv.Itoa(b.Replicas)}
 		detail = b.Service + "=" + strconv.Itoa(b.Replicas)
 	default:
 		WriteJSON(w, map[string]any{"ok": false, "error": "action 必须是 init/token/leave/scale"})
