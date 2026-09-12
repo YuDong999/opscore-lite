@@ -186,6 +186,7 @@ func main() {
 	logSvc.Start(filepath.Join(dataDir, "logs"))
 	defer logSvc.Stop()
 	lmMod := logmonitor.Module(logStore, logSvc, logArchiver, filepath.Join(dataDir, "logs"))
+	logmonitor.SetRemoteRunner(handlers.RunOnTarget) // 容器/pod 发现与预览跟随全局主机上下文(?host=)
 	reg.Register(lmMod)
 
 	// 启动告警评估器（每 30s 评估一次）
@@ -384,6 +385,12 @@ func registerCoreModules(r *registry.Registry) {
 	man := func(id, name, icon, routePath, group, desc string) registry.Manifest {
 		return registry.Manifest{ID: id, Name: name, Icon: icon, RoutePath: routePath, Group: group, Description: desc}
 	}
+	// manHS 标记"功能跟随全局主机上下文"的模块(前端外壳据此呈现主机切换语义)
+	manHS := func(id, name, icon, routePath, group, desc string) registry.Manifest {
+		m := man(id, name, icon, routePath, group, desc)
+		m.HostSensitive = true
+		return m
+	}
 
 	type modCfg struct {
 		m      registry.Manifest
@@ -522,7 +529,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins", Handler: handlers.PluginList},
 			{Path: "/api/plugins/", Handler: handlers.PluginAction},
 		}},
-		{man("containers", "容器管理", "box", "/containers", "plugin", "Docker 管理(启停/删除/日志/镜像/连接走向/策略修改) + Kubernetes 多集群管理(只读)"), []registry.Route{
+		{manHS("containers", "容器管理", "box", "/containers", "plugin", "Docker 管理(启停/删除/日志/镜像/连接走向/策略修改) + Kubernetes 多集群管理(只读)"), []registry.Route{
 			{Path: "/api/plugins/containers/list", Handler: handlers.ContainerListHandler},
 			{Path: "/api/plugins/containers/detail", Handler: handlers.ContainerDetailHandler},
 			{Path: "/api/plugins/containers/action", Handler: handlers.ContainerActionHandler},

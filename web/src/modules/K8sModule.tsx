@@ -11,6 +11,7 @@ import K8sActionPanel from '../components/K8sActionPanel'
 import ExecTerminalModal from '../components/ExecTerminalModal'
 import K8sCertsModal from '../components/K8sCertsModal'
 import LogStreamModal from '../components/LogStreamModal'
+import { useHost } from '../components/HostContext'
 import { useTheme } from '../theme'
 import jsYaml from 'js-yaml'
 
@@ -1188,15 +1189,9 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
   const [busy, setBusy] = useState(false)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanInfo, setScanInfo] = useState('')
-  const [hostList, setHostList] = useState<any[]>([])
-  const [pullHost, setPullHost] = useState('')
   const [pullBusy, setPullBusy] = useState(false)
-
-  useEffect(() => {
-    getJSON<any[]>('/api/ansible/hosts')
-      .then((hs) => setHostList((hs || []).filter((h: any) => !h.isLocal)))
-      .catch(() => {})
-  }, [])
+  // 目标主机跟随全局主机上下文(顶栏/各模块 HostSelector); 本机走「读取服务器默认配置」
+  const { selected: pullTarget } = useHost()
 
   const pickFile = async (f: File | null) => {
     if (f) setKubeconfig(await f.text())
@@ -1224,11 +1219,14 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
   }
 
   const pullFromHost = async () => {
-    if (!pullHost) return
+    if (!pullTarget || !pullTarget.id) {
+      setScanInfo('请先选择目标远程主机（本机请用「读取服务器默认配置」）')
+      return
+    }
     setPullBusy(true)
     setScanInfo('')
     try {
-      const d: any = await postJSON('/api/plugins/containers/k8s/kubeconfig/remote', { hostID: pullHost })
+      const d: any = await postJSON('/api/plugins/containers/k8s/kubeconfig/remote', { hostID: pullTarget.id })
       if (!d || !d.ok) {
         setScanInfo('✗ ' + (d?.error || '拉取失败'))
         return
@@ -1283,15 +1281,12 @@ function RegisterModal({ onClose, onDone }: { onClose: () => void; onDone: (ok: 
               <button className="btn-glass-soft" onClick={loadDefault} disabled={scanBusy}>
                 {scanBusy ? '读取中…' : '读取服务器默认配置'}
               </button>
-              <select className="input" value={pullHost} onChange={(e) => setPullHost(e.target.value)}
-                style={{ width: 'auto', fontSize: '0.75rem', padding: '5px 8px' }} disabled={hostList.length === 0}>
-                <option value="">{hostList.length ? '从主机组主机拉取…' : '主机组暂无远程主机'}</option>
-                {hostList.map((h: any) => (
-                  <option key={h.id} value={h.id}>{h.alias || h.addr}（{h.user}@{h.addr}）</option>
-                ))}
-              </select>
-              <button className="btn-glass-soft" onClick={pullFromHost} disabled={pullBusy || !pullHost}>
-                {pullBusy ? '拉取中…' : '拉取'}
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                目标主机: <b>{pullTarget ? pullTarget.label : '本机'}</b>
+              </span>
+              <button className="btn-glass-soft" onClick={pullFromHost} disabled={pullBusy || !pullTarget}
+                title={pullTarget ? `从 ${pullTarget.label} 拉取其自身 kubeconfig` : '选择目标远程主机后可用'}>
+                {pullBusy ? '拉取中…' : '从该主机拉取'}
               </button>
               <input type="file" accept=".yaml,.yml,.conf,.txt" onChange={(e) => pickFile(e.target.files?.[0] || null)}
                 style={{ fontSize: '0.75rem' }} />

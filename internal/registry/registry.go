@@ -17,6 +17,8 @@ type Manifest struct {
 	RoutePath   string `json:"routePath"`
 	Group       string `json:"group"`
 	Description string `json:"description"`
+	// HostSensitive 功能跟随全局主机上下文(?host=), 前端外壳据此呈现主机切换语义
+	HostSensitive bool `json:"hostSensitive,omitempty"`
 }
 
 type Module struct {
