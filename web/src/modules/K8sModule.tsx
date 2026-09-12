@@ -413,21 +413,31 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
   // 资源类型/集群/命名空间切换时清空选中, 防止跨页残留 key 误伤其他资源
   useEffect(() => { setSelected(new Set()); setBatchMenuOpen(false) }, [res, clusterID, ns])
 
-  // 批量菜单: 按当前资源类型从操作目录生成(仅非 TTY 且批量端点可透传参数的动作)
+  // 批量菜单: 按当前资源类型从操作目录生成(排除 TTY/创建类/批量语义不成立的动作; ephemeral 随 flag)
   const [batchCatalog, setBatchCatalog] = useState<ActionSpec[]>([])
   const [batchMenuOpen, setBatchMenuOpen] = useState(false)
-  const [batchReplicas, setBatchReplicas] = useState(1)
+  const [batchParamVals, setBatchParamVals] = useState<Record<string, string>>({})
+  const [ephemeralOK, setEphemeralOK] = useState(false)
   useEffect(() => {
     let stop = false
-    getJSON<{ ok: boolean; actions: ActionSpec[] }>(`/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(res)}&_=${Date.now()}`)
-      .then(d => { if (!stop && d.ok) setBatchCatalog(d.actions || []) })
-      .catch(() => {})
+    Promise.all([
+      getJSON<{ ok: boolean; actions: ActionSpec[] }>(`/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(res)}&_=${Date.now()}`),
+      getJSON<{ ok: boolean; ephemeral: boolean }>(`/api/plugins/containers/k8s/feature-flags?_=${Date.now()}`).catch(() => ({ ok: false })),
+    ]).then(([a, f]) => {
+      if (stop) return
+      if (a.ok) setBatchCatalog(a.actions || [])
+      if (f.ok) setEphemeralOK(!!f.ephemeral)
+    }).catch(() => {})
     return () => { stop = true }
   }, [res])
-  const DC_PASS = ['replicas', 'force', 'image']
   const DANGER_BATCH = new Set(['delete', 'drain', 'delete-node'])
+  const BATCH_SKIP = new Set(['edit-yaml', 'patch', 'wait'])
   const batchSorted = (batchCatalog || [])
-    .filter(a => !a.requiresTTY && (a.params || []).every(p => DC_PASS.includes(p.name)) && !a.name.startsWith('create-'))
+    .filter(a => {
+      if (a.requiresTTY || BATCH_SKIP.has(a.name) || a.name.startsWith('create-')) return false
+      if ((a.name === 'ephemeral-add' || a.name === 'ephemeral-remove') && !ephemeralOK) return false
+      return true
+    })
     .sort((a, b) => (DANGER_BATCH.has(a.name) ? 1 : 0) - (DANGER_BATCH.has(b.name) ? 1 : 0))
   const runBatchAct = (a: ActionSpec, extraOverride?: Record<string, any>) => {
     const n = selected.size
@@ -756,28 +766,91 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                             }
                             rows.push({ key: a.name, label: (DANGER_BATCH.has(a.name) ? '⚠ ' : '') + a.label, danger: DANGER_BATCH.has(a.name), spec: a })
                           }
-                          return rows.map((row, i) => (
-                            <div key={row.key}>
-                              {i > 0 && row.danger && !rows[i - 1].danger && (
-                                <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
-                              )}
-                              {row.spec.name === 'scale' ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.25rem 0.4rem', whiteSpace: 'nowrap' }}>
-                                  <span style={{ flexShrink: 0, fontSize: '0.8125rem' }}>{row.spec.label}</span>
-                                  <input type="number" min={0} className="ipt" style={{ width: 50 }} value={batchReplicas}
-                                    onChange={e => setBatchReplicas(Number(e.target.value) || 0)} title="目标副本数" />
-                                  <button className="btn-glass-soft btn-glass-soft-sm" style={{ padding: '0.15rem 0.4rem' }} onClick={() => runBatchAct(row.spec, row.extra)}>执行</button>
-                                </div>
-                              ) : (
-                                <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
-                                  fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
-                                  color: row.danger ? 'var(--lvl-error, #e5484d)' : 'inherit' }}
-                                  onClick={() => runBatchAct(row.spec, row.extra)}>
-                                  {row.label}
-                                </button>
-                              )}
-                            </div>
-                          ))
+                          return rows.map((row, i) => {
+                            const allParams = row.spec.params || []
+                            const paramKey = (pn: string) => row.key + ':' + pn
+                            const pval = (pn: string) => batchParamVals[paramKey(pn)] ?? ''
+                            const setp = (pn: string, v: string) => setBatchParamVals(prev => ({ ...prev, [paramKey(pn)]: v }))
+                            const hasParams = allParams.length > 0
+                            const collect = () => {
+                              const extra: Record<string, any> = {}
+                              for (const p of allParams) {
+                                const key = paramKey(p.name)
+                                const dflt = p.default !== undefined && p.default !== '' ? String(p.default) : ''
+                                const raw = (batchParamVals[key] ?? dflt).trim()
+                                if (String(p.type) === 'bool') {
+                                  extra[p.name] = raw === 'true'
+                                  continue
+                                }
+                                if (raw === '') continue
+                                extra[p.name] = String(p.type) === 'number' ? Number(raw) : raw
+                              }
+                              return extra
+                            }
+                            const runRow = () => {
+                              let missing = ''
+                              for (const p of allParams) {
+                                if (!p.required) continue
+                                const dflt = p.default !== undefined && p.default !== '' ? String(p.default) : ''
+                                const v = (batchParamVals[paramKey(p.name)] ?? dflt).trim()
+                                if (v === '') { missing = p.label || p.name; break }
+                              }
+                              if (missing) { onMsg?.('✗ 缺少必填参数: ' + missing); return }
+                              const extra = collect()
+                              if (row.key === 'pods-restart') extra.force = true
+                              setBatchMenuOpen(false)
+                              batchAct(row.spec.name, row.danger ? `⚠ 批量${row.label} ${selected.size} 个资源? 高危操作, 请确认` : `确认批量操作 ${selected.size} 个资源?`, extra)
+                            }
+                            return (
+                              <div key={row.key}>
+                                {i > 0 && row.danger && !rows[i - 1].danger && (
+                                  <div style={{ borderTop: '1px solid var(--border)', margin: '0.25rem 0.3rem' }} />
+                                )}
+                                {!hasParams ? (
+                                  <button style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.3rem 0.5rem',
+                                    fontSize: '0.8125rem', background: 'transparent', border: 0, borderRadius: 5, cursor: 'pointer',
+                                    color: row.danger ? 'var(--lvl-error, #e5484d)' : 'inherit' }}
+                                    onClick={() => runBatchAct(row.spec, row.extra)}>
+                                    {row.label}
+                                  </button>
+                                ) : (
+                                  <div style={{ padding: '0.3rem 0.4rem', borderBottom: '1px dashed var(--border)' }}>
+                                    <div style={{ fontSize: '0.8125rem', marginBottom: 4 }}>
+                                      {row.danger ? '⚠ ' : ''}{row.label}
+                                      <span style={{ opacity: 0.55, marginLeft: 6, fontSize: '0.6875rem' }}>* 为必填</span>
+                                    </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                                      {allParams.map(p => {
+                                        const key = paramKey(p.name)
+                                        const dflt = p.default !== undefined && p.default !== '' ? String(p.default) : ''
+                                        const val = batchParamVals[key] ?? dflt
+                                        const setp = (v: string) => setBatchParamVals(prev => ({ ...prev, [key]: v }))
+                                        const typeS = String(p.type)
+                                        const missing = p.required && val === ''
+                                        return (
+                                          <span key={p.name} style={{ fontSize: '0.75rem', opacity: missing ? 1 : 0.85, display: 'inline-flex', alignItems: 'center', gap: 4, color: missing ? 'var(--lvl-error, #e5484d)' : 'inherit' }}>
+                                            {(p.label || p.name) + (p.required ? ' *' : '')}
+                                            {typeS === 'select' && p.options?.length ? (
+                                              <select className="sel" value={val} onChange={e => setp(e.target.value)}>
+                                                {p.options.map(o => <option key={String(o.value)} value={String(o.value)}>{o.label || o.value}</option>)}
+                                              </select>
+                                            ) : typeS === 'bool' ? (
+                                              <input type="checkbox" checked={val === 'true'} onChange={e => setp(String(e.target.checked))} />
+                                            ) : (
+                                              <input className="ipt" style={{ width: typeS === 'number' ? 70 : 130 }}
+                                                type={typeS === 'number' ? 'number' : 'text'} value={val}
+                                                placeholder={p.help || p.label} onChange={e => setp(e.target.value)} />
+                                            )}
+                                          </span>
+                                        )
+                                      })}
+                                      <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={runRow}>执行</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })
                         })()}
                         {batchSorted.length === 0 && (
                           <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.8125rem', opacity: 0.6 }}>该资源类型暂无可用批量动作</div>

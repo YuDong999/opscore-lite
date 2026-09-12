@@ -438,13 +438,15 @@ func K8sYamlSaveHandler(w http.ResponseWriter, r *http.Request) {
 // ===== 批量资源写操作 =====
 
 type k8sBatchActionBody struct {
-	Cluster  string           `json:"cluster"`
-	Res      string           `json:"res"`
+	Cluster  string              `json:"cluster"`
+	Res      string              `json:"res"`
 	Targets  []map[string]string `json:"targets"`
-	Action   string           `json:"action"`
-	Replicas int32            `json:"replicas,omitempty"`
-	Force    bool             `json:"force,omitempty"`
-	Image    string           `json:"image,omitempty"`
+	Action   string              `json:"action"`
+	Replicas int32               `json:"replicas,omitempty"`
+	Force    bool                `json:"force,omitempty"`
+	Image    string              `json:"image,omitempty"`
+	// Params 通用参数透传(前端按 catalog 组装); 为空时回落旧三字段保持向后兼容
+	Params map[string]any `json:"params,omitempty"`
 }
 
 // K8sBatchActionHandler POST {cluster,res,targets,action[,replicas,force,image]}
@@ -483,6 +485,25 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	succeeded, failed := 0, 0
 	var errs []string
+	// 通用参数透传: 前端按 catalog 组装; 旧三字段(replicas/force/image)向后兼容
+	params := b.Params
+	if params == nil {
+		params = map[string]any{}
+		if b.Replicas != 0 {
+			params["replicas"] = b.Replicas
+		}
+		if b.Force {
+			params["force"] = b.Force
+		}
+		if b.Image != "" {
+			params["image"] = b.Image
+		}
+	}
+	// 必填校验(此前批量缺失: scale 缺 replicas 会静默按 0 执行)
+	if err := kubernetes.ValidateParams(spec, params); err != nil {
+		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	for _, t := range b.Targets {
 		name := t["name"]
 		tns := t["ns"]
@@ -493,16 +514,6 @@ func K8sBatchActionHandler(w http.ResponseWriter, r *http.Request) {
 		if tns != "" && !reK8sNamespace.MatchString(tns) {
 			failed++
 			continue
-		}
-		params := map[string]any{}
-		if b.Replicas != 0 {
-			params["replicas"] = b.Replicas
-		}
-		if b.Force {
-			params["force"] = b.Force
-		}
-		if b.Image != "" {
-			params["image"] = b.Image
 		}
 		rc := kubernetes.RunCtx{Ctx: ctx, Cluster: b.Cluster, Res: b.Res, Ns: tns, Name: name, Params: params}
 		if err := spec.Run(k8sMgr, rc); err != nil {

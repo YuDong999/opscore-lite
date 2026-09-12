@@ -261,10 +261,17 @@ func IsCRDName(res string) bool {
 // 优先级: 内置 switch (fast path) → RESTMapper 动态查 (覆盖 CRD).
 func (m *Manager) ResolveGVR(id, res string) (schema.GroupVersionResource, ScopeKind, error) {
 	// 1) 内置 fast path
+	//    scope 判定: gvrOf 名单里集群级资源(nodes/namespaces/pv/storageclasses/
+	//    ingressclasses/clusterroles/clusterrolebindings/priorityclasses)为 Cluster,
+	//    其余一律 namespaced。不能以"传入的 ns 是否为空"判定 —— 传 ns="" 时
+	//    namespaced 资源会被误判为集群级, 导致 label/annotate 等 metaKV 路径
+	//    把命名空间清空而 404。
 	if gvr := gvrOf(res); !gvr.Empty() {
-		scope := ScopeCluster
-		if nsFor("", res) != "" {
-			scope = ScopeNamespaced
+		scope := ScopeNamespaced
+		switch res {
+		case "nodes", "namespaces", "persistentvolumes", "storageclasses", "ingressclasses",
+			"clusterroles", "clusterrolebindings", "priorityclasses":
+			scope = ScopeCluster
 		}
 		return gvr, scope, nil
 	}

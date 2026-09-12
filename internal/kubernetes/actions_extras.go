@@ -88,7 +88,7 @@ func (m *Manager) metaKV(ctx context.Context, clusterID, res, ns, name, field, k
 	// 读现值, 检查 overwrite / value 处理
 	cur, err := dyn.Resource(gvr).Namespace(effectiveNs).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("metaKV get(gvr=%s ns=%q name=%q): %w", gvr.String(), effectiveNs, name, err)
 	}
 	var meta map[string]any
 	if cur.Object["metadata"] != nil {
@@ -127,6 +127,9 @@ func (m *Manager) metaKV(ctx context.Context, clusterID, res, ns, name, field, k
 	}
 	body, _ := json.Marshal(patchMap)
 	_, err = dyn.Resource(gvr).Namespace(effectiveNs).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("metaKV patch(gvr=%s ns=%q name=%q): %w", gvr.String(), effectiveNs, name, err)
+	}
 	return err
 }
 
