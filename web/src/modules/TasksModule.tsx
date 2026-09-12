@@ -270,19 +270,23 @@ function CrontabSection() {
               暂无定时任务，点击「+ 新增任务」创建
             </div>
           )}
-          {tasks.map(task => (
-            <CronCard
-              key={task.id}
-              task={task}
-              isEditing={form?.id === task.id}
-              onEdit={startEdit}
-              onDelete={deleteTask}
-              onCancel={cancelEdit}
-              onSubmit={submitEdit}
-              form={form}
-              onChange={handleChange}
-            />
-          ))}
+          {tasks.length > 0 && (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              {tasks.map(task => (
+                <CronCard
+                  key={task.id}
+                  task={task}
+                  isEditing={form?.id === task.id}
+                  onEdit={startEdit}
+                  onDelete={deleteTask}
+                  onCancel={cancelEdit}
+                  onSubmit={submitEdit}
+                  form={form}
+                  onChange={handleChange}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </Card>
@@ -300,9 +304,9 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
   onChange: (field: keyof CronTask, value: string) => void
 }) {
   return (
-    <div className="card glass" style={{ marginBottom: 12 }}>
+    <div style={{ borderBottom: '1px solid var(--border)', background: isEditing ? 'var(--row-hover, rgba(127,127,127,0.05))' : 'transparent' }}>
       {isEditing ? (
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             <SelectField label="分" value={form!.minute} onChange={v => onChange('minute', v)} options={MINUTE_OPTS} />
             <SelectField label="时" value={form!.hour} onChange={v => onChange('hour', v)} options={HOUR_OPTS} />
@@ -324,19 +328,15 @@ function CronCard({ task, isEditing, onEdit, onDelete, onCancel, onSubmit, form,
           </div>
         </div>
       ) : (
-        <div style={{ padding: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div>
-              <span className="pill" style={{ marginRight:'0.5rem', fontSize: 12 }}>{cronToHuman(task)}</span>
-              <span style={{ fontSize:'0.8125rem', fontFamily: 'monospace', color: 'var(--text-dim)' }}>{task.command}</span>
-              {task.comment.trim() !== '' && (
-                <span style={{ marginLeft:'0.5rem', fontSize:'0.75rem', color: 'var(--text-dim)' }}>{`# ${task.comment}`}</span>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => onEdit(task)}>编辑</button>
-              <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => onDelete(task.id)}>删除</button>
-            </div>
+        <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="pill" style={{ fontSize: 11, flexShrink: 0 }}>{cronToHuman(task)}</span>
+          <span style={{ fontSize: '0.8125rem', fontFamily: 'monospace', color: 'var(--text-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.command}>{task.command}</span>
+          {task.comment.trim() !== '' && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', flexShrink: 0 }}>{`# ${task.comment}`}</span>
+          )}
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => onEdit(task)}>编辑</button>
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger" onClick={() => onDelete(task.id)}>删除</button>
           </div>
         </div>
       )}
