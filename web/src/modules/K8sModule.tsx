@@ -402,7 +402,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
       return { name: namePart, ...(NSLESS.has(res as K8sRes) ? {} : { ns: ns === 'all' ? nsPart : ns }) }
     })
     // 批量也走 catalog 执行 (后端 /resources/action 已是 catalog 薄代理)
-    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets, ...(extra || {}) })
+    // 参数统一放 params 字段(后端通用透传); 旧三字段(replicas/force/image)由后端向后兼容
+    postJSON('/api/plugins/containers/k8s/resources/action', { cluster: clusterID, res, action: legacyActionName(action), targets, params: extra || {} })
       .then((d: any) => {
         onMsg?.(d.ok ? `✓ 批量 ${action} ${selected.size} 个资源完成` : '✗ ' + (d.error || '失败'))
         if (d.ok) { setSelected(new Set()); setTimeout(loadRows, 600) }
