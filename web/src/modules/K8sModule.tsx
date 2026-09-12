@@ -749,7 +749,17 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                 <div style={{ position: 'relative' }}>
                   <button className="btn-glass-soft btn-glass-soft-sm" disabled={!selected.size || batchSorted.length === 0}
                     title={batchSorted.length ? '按当前资源类型提供的批量动作' : '该资源类型暂无可用批量动作'}
-                    onClick={() => setBatchMenuOpen(o => !o)}>
+                    onClick={() => {
+                      // 每次打开: 参数值重置为目录默认值(不携带其它动作/历史会话的残留)
+                      const seed: Record<string, string> = {}
+                      for (const a of batchSorted) {
+                        for (const p of (a.params || [])) {
+                          if (p.default !== undefined && p.default !== '') seed[a.name + ':' + p.name] = String(p.default)
+                        }
+                      }
+                      setBatchParamVals(seed)
+                      setBatchMenuOpen(true)
+                    }}>
                     批量操作 ▾
                   </button>
                   {batchMenuOpen && selected.size > 0 && (
@@ -765,7 +775,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                               // Pod 无原生 scale/restart, 重启语义 = 立即删除由 Deployment 重建 (force)
                               rows.push({ key: 'pods-restart', label: '批量重启 (立即删除重建)', danger: false, extra: { force: true }, spec: a })
                             }
-                            rows.push({ key: a.name, label: (DANGER_BATCH.has(a.name) ? '⚠ ' : '') + a.label, danger: DANGER_BATCH.has(a.name), spec: a })
+                            rows.push({ key: a.name, label: a.label, danger: DANGER_BATCH.has(a.name), spec: a })
                           }
                           return rows.map((row, i) => {
                             const allParams = row.spec.params || []
@@ -818,7 +828,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
                                   <div style={{ padding: '0.3rem 0.4rem', borderBottom: '1px dashed var(--border)' }}>
                                     <div style={{ fontSize: '0.8125rem', marginBottom: 4 }}>
                                       {row.danger ? '⚠ ' : ''}{row.label}
-                                      <span style={{ opacity: 0.55, marginLeft: 6, fontSize: '0.6875rem' }}>* 为必填</span>
+                                      {allParams.some(p => p.required) && <span style={{ opacity: 0.55, marginLeft: 6, fontSize: '0.6875rem' }}>* 为必填</span>}
                                     </div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                                       {allParams.map(p => {
