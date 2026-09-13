@@ -67,7 +67,11 @@ interface ContainerItem {
   name: string
   image: string
   state: string
+  status?: string
 }
+
+// 容器发现聚合行: 附加来源主机信息(多主机级联展示)
+type DiscRow = ContainerItem & { hostId: string; hostLabel: string }
 
 interface TermsBucket {
   key: string
@@ -385,25 +389,45 @@ export default function LogMonitorModule() {
   const [srcDraft, setSrcDraft] = useState<LogSource>({ id: '', name: '', type: 'file', path: '', service: '', enabled: true, follow: false })
 
   // 从已连接资源添加(容器/K8S): 选择权交给用户
-  const [discContainers, setDiscContainers] = useState<ContainerItem[]>([])
+  // 容器发现升级为主机多选级联: 每行带主机信息, 多选主机时聚合展示全部容器
   const [discClusters, setDiscClusters] = useState<string[]>([])
   const [discK8sPods, setDiscK8sPods] = useState<K8sPodItem[]>([])
   const [discOpen, setDiscOpen] = useState(false)
-  const { selected: discHost } = useHost()
+  const { selected: discHost, hosts: hostCtxHosts } = useHost()
   const [discLoading, setDiscLoading] = useState(false)
 const [selCluster, setSelCluster] = useState('1')
   const [selNamespace, setSelNamespace] = useState('')
   const [podSearch, setPodSearch] = useState('')
   const [selTargetIdx, setSelTargetIdx] = useState('')
+  // selContainers 的键为 `${hostId}|${容器名}`(多主机下同名容器是两行)
   const [selContainers, setSelContainers] = useState<Set<string>>(new Set())
-  // 目标主机/集群切换时, 发现面板开着就自动重新发现(跟随全局主机上下文)
+  const [discRows, setDiscRows] = useState<DiscRow[]>([])
+  const [discHostIds, setDiscHostIds] = useState<string[]>([])
+  const [cFltHost, setCFltHost] = useState('')
+  const [cFltState, setCFltState] = useState('')
+  const [cFltSvc, setCFltSvc] = useState('')
+  // 可发现容器的主机 = 主机组中的非 Windows 主机(docker 采集通道仅 Linux)
+  const linuxHostOptions = hostCtxHosts.filter((h) => h.platform !== 'win')
+  // K8S pod 发现跟随全局主机上下文
   useEffect(() => {
     if (!discOpen) return
     setDiscLoading(true)
-    Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
+    Promise.all([loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
       .finally(() => setDiscLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discHost?.id, selCluster])
+  // 全局主机切换时, 容器发现范围回到该主机(多选可再展开)
+  useEffect(() => {
+    if (!discOpen) return
+    setDiscHostIds(discHost && discHost.platform !== 'win' ? [discHost.id] : [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discHost?.id])
+  // 容器发现跟随面板内所选主机集合(级联: 集合一变即重新聚合)
+  useEffect(() => {
+    if (!discOpen) return
+    loadDiscRows()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discOpen, discHostIds.join(',')])
   const [selPods, setSelPods] = useState<Set<string>>(new Set())
   const [ingesting, setIngesting] = useState(false)
 
@@ -719,19 +743,44 @@ const [selCluster, setSelCluster] = useState('1')
     if (next) {
       setDiscLoading(true)
       try {
-        await Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
+        await Promise.all([loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
+        // 首次展开: 容器发现主机缺省为全局主机(Linux); 已有选择则由 useEffect 级联加载
+        if (discHostIds.length === 0 && discHost && discHost.platform !== 'win') {
+          setDiscHostIds([discHost.id])
+        }
       } finally {
         setDiscLoading(false)
       }
     }
   }
 
-  async function loadDiscoverContainers() {
+  function hostLabelFor(id: string) {
+    return hostCtxHosts.find((h) => h.id === id)?.label || id
+  }
+
+  // 单主机容器发现, 行上附加主机信息; 单台失败不拖垮聚合
+  async function loadDiscoverContainersOn(hostId: string): Promise<DiscRow[]> {
     try {
-      const r = await getJSON<{ containers?: ContainerItem[] }>(`/api/logmonitor/discover/containers?host=${encodeURIComponent(discHost?.id || '')}`)
-      setDiscContainers(r.containers || [])
+      const r = await getJSON<{ containers?: ContainerItem[] }>(`/api/logmonitor/discover/containers?host=${encodeURIComponent(hostId)}`)
+      return (r.containers || []).map((c) => ({ ...c, hostId, hostLabel: hostLabelFor(hostId) }))
     } catch (e: any) {
-      pushToast('err', e?.message || '发现容器失败')
+      pushToast('err', `${hostLabelFor(hostId)} 发现容器失败: ` + (e?.message || ''))
+      return []
+    }
+  }
+
+  // 聚合所选主机的容器发现结果(并行)
+  async function loadDiscRows() {
+    if (discHostIds.length === 0) {
+      setDiscRows([])
+      return
+    }
+    setDiscLoading(true)
+    try {
+      const rows = await Promise.all(discHostIds.map((h) => loadDiscoverContainersOn(h)))
+      setDiscRows(rows.flat())
+    } finally {
+      setDiscLoading(false)
     }
   }
 
@@ -757,9 +806,9 @@ const [selCluster, setSelCluster] = useState('1')
     setDiscLoading(false)
   }
 
-  function toggleContainers(name: string) {
+  function toggleContainers(key: string) {
     const next = new Set(selContainers)
-    next.has(name) ? next.delete(name) : next.add(name)
+    next.has(key) ? next.delete(key) : next.add(key)
     setSelContainers(next)
   }
 
@@ -778,11 +827,15 @@ const [selCluster, setSelCluster] = useState('1')
     let ok = 0
     const fail: string[] = []
     try {
-      for (const c of selContainers) {
+      // 容器键为 `${hostId}|${容器名}`: 各自分发到来源主机执行扫描
+      for (const key of selContainers) {
+        const sep = key.indexOf('|')
+        const hostId = sep > 0 ? key.slice(0, sep) : ''
+        const name = sep > 0 ? key.slice(sep + 1) : key
         try {
-          await postJSON('/api/logmonitor/scan', { path: c, source: 'container', service: '', indexId: selTargetIdx, host: discHost?.id || '' })
+          await postJSON('/api/logmonitor/scan', { path: name, source: 'container', service: '', indexId: selTargetIdx, host: hostId })
           ok++
-        } catch { fail.push(c) }
+        } catch { fail.push(name) }
       }
       for (const key of selPods) {
         const p = discK8sPods.find((x) => `${x.namespace}/${x.name}` === key)
@@ -796,7 +849,7 @@ const [selCluster, setSelCluster] = useState('1')
       if (fail.length > 0) pushToast('err', `${fail.length} 个接入失败: ${fail.join(', ')}`)
       setSelContainers(new Set())
       setSelPods(new Set())
-      loadDiscoverContainers()
+      loadDiscRows()
       loadDiscoverK8s(selCluster)
       loadSources()
       loadIndexList()
@@ -1704,50 +1757,107 @@ function clearFilters() {
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
                   <span style={{ marginLeft: 10 }}><HostSelector /></span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
-                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 选择归档索引可双写。目标主机切换后自动重新发现。</div>
+                  <label htmlFor="disc-target-idx" style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</label>
+                  <select id="disc-target-idx" value={selTargetIdx} onChange={(e) => setSelTargetIdx(e.target.value)} style={{ maxWidth: 180 }}>
+                    <option value="">未归属</option>
+                    {allIndexes.map((ix) => (
+                      <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
+                    ))}
+                  </select>
+                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 容器发现范围由"容器发现主机"多选决定, 支持多选/全选主机级联聚合。</div>
                   {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
-              <div className="kib-form-row" style={{ marginTop: 10 }}>
-                <label htmlFor="disc-target-idx">归属索引(可选, 双写到归档)</label>
-                <select id="disc-target-idx" value={selTargetIdx} onChange={(e) => setSelTargetIdx(e.target.value)}>
-                  <option value="">未归属</option>
-                  {allIndexes.map((ix) => (
-                    <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
-                  ))}
-                </select>
+              <div className="log-filter-row" style={{ marginTop: 8 }}>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>容器发现主机</span>
+                <button
+                  className="btn-glass-soft btn-glass-soft-sm"
+                  title="全选/清空所有 Linux 主机"
+                  onClick={() => setDiscHostIds(discHostIds.length === linuxHostOptions.length && linuxHostOptions.length > 0 ? [] : linuxHostOptions.map((h) => h.id))}
+                >{discHostIds.length > 0 && discHostIds.length === linuxHostOptions.length ? '清空' : '全选'}</button>
+                {linuxHostOptions.map((h) => (
+                  <button
+                    key={h.id}
+                    className={`btn-glass-soft btn-glass-soft-sm${discHostIds.includes(h.id) ? ' btn-glass-soft-accent' : ''}`}
+                    onClick={() => setDiscHostIds(discHostIds.includes(h.id) ? discHostIds.filter((x) => x !== h.id) : [...discHostIds, h.id])}
+                  >{h.label}</button>
+                ))}
+                {linuxHostOptions.length === 0 && <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>主机组暂无 Linux 主机</span>}
               </div>
               {discLoading && <div className="log-empty">正在发现已连接资源…</div>}
-              <div className="kib-form-row" style={{ marginTop: 8 }}>
-                <h4 style={{ margin: 0, color: 'var(--text)' }}>本机容器 (docker/podman)</h4>
-                {discContainers.length > 0 && <span className="kib-badge">{discContainers.length} 个</span>}
-                {discContainers.length > 0 && <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setSelContainers(new Set(discContainers.map((c) => c.name)))}>全选</button>}
-              </div>
               {(() => {
-                const ghosts = sources.filter((s) => s.type === 'container' && !discContainers.some((c) => c.name === s.path))
-                  .map((s) => ({ name: s.path, image: '已停止 / 不在当前 docker', state: 'ghost' as string }))
-                const all = [...discContainers, ...ghosts]
-                const maxName = Math.max(...all.map((c) => c.name.length))
-                const maxImage = Math.max(...all.map((c) => (c.image || '—').length))
-                return (discContainers.length === 0 && ghosts.length === 0) ? (
-                  <div className="log-empty">未发现本机容器(需 docker/podman 运行在同机)</div>
-                ) : (
-                <div className="kib-check-list">
-                  {all.map((c) => {
-                    const joined = sources.some((s) => s.type === 'container' && s.path === c.name && s.enabled)
-                    const ghost = c.state === 'ghost'
-                    return (
-                      <label key={c.name} className={`kib-check-item${ghost ? ' kib-ghost' : ''}`} style={{ display: 'grid', gridTemplateColumns: `18px ${maxName}ch minmax(0,${maxImage}ch) 78px 20px`, alignItems: 'center', gap: 6 }}>
-                        <input type="checkbox" disabled={ghost} checked={!ghost && selContainers.has(c.name)} onChange={() => toggleContainers(c.name)} />
-                        <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</code>
-                        <span className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.image || '—'}</span>
-                        <span style={{ whiteSpace: 'nowrap' }}><span className={`dot ${ghost ? 'dot-off' : c.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{ghost ? '已停止' : c.state}</span>
-                        {joined && <span className="kib-joined" title="已接入">✓</span>}
-                      </label>
-                    )
-                  })}
-                </div>
+                const repoOf = (img?: string) => ((img || '').split('/').pop() || '').split(':')[0] || ''
+                const hostsInRows = [...new Set(discRows.map((r) => r.hostId))]
+                const statesInRows = [...new Set(discRows.map((r) => r.state))]
+                const svcsInRows = [...new Set(discRows.map((r) => repoOf(r.image)).filter(Boolean))].sort()
+                const visibleRows = discRows.filter((r) =>
+                  (!cFltHost || r.hostId === cFltHost) &&
+                  (!cFltState || r.state === cFltState) &&
+                  (!cFltSvc || repoOf(r.image) === cFltSvc))
+                const ghosts = sources.filter((s) => s.type === 'container' && !discRows.some((r) => r.name === s.path))
+                  .map((s) => ({ name: s.path, state: 'ghost', hostLabel: '历史源' }))
+                const joinedByName = (name: string) => sources.some((s) => s.type === 'container' && s.path === name && s.enabled)
+                return (
+                  <>
+                    <div className="log-filter-row" style={{ marginTop: 8 }}>
+                      <h4 style={{ margin: 0, color: 'var(--text)' }}>Docker 容器</h4>
+                      <span className="kib-badge">{visibleRows.length}/{discRows.length} 个</span>
+                      <select value={cFltHost} onChange={(e) => setCFltHost(e.target.value)} aria-label="按主机筛选" style={{ maxWidth: 170 }}>
+                        <option value="">主机: 全部</option>
+                        {hostsInRows.map((h) => <option key={h} value={h}>{hostLabelFor(h)}</option>)}
+                      </select>
+                      <select value={cFltState} onChange={(e) => setCFltState(e.target.value)} aria-label="按状态筛选">
+                        <option value="">状态: 全部</option>
+                        {statesInRows.map((st) => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                      <select value={cFltSvc} onChange={(e) => setCFltSvc(e.target.value)} aria-label="按服务筛选">
+                        <option value="">服务: 全部</option>
+                        {svcsInRows.map((sv) => <option key={sv} value={sv}>{sv}</option>)}
+                      </select>
+                      <span style={{ flex: 1 }} />
+                      <button
+                        className="btn-glass-soft btn-glass-soft-sm"
+                        disabled={visibleRows.length === 0}
+                        title="按当前筛选结果全选(如: 只选 running / 只选 nginx)"
+                        onClick={() => setSelContainers(new Set(visibleRows.map((r) => `${r.hostId}|${r.name}`)))}
+                      >全选可见</button>
+                    </div>
+                    {(discRows.length === 0 && ghosts.length === 0) ? (
+                      <div className="log-empty">{discHostIds.length === 0 ? '请先在上方选择要发现容器的主机' : '所选主机未发现容器'}</div>
+                    ) : (
+                      <table className="log-table" style={{ width: '100%' }}>
+                        <thead><tr><th style={{ width: 28 }}></th><th>容器名</th><th>主机</th><th>状态</th><th>服务(镜像)</th><th>运行时间</th><th style={{ width: 36 }}>接入</th></tr></thead>
+                        <tbody>
+                          {ghosts.map((g) => (
+                            <tr key={'ghost-' + g.name} style={{ opacity: 0.55 }}>
+                              <td><input type="checkbox" disabled /></td>
+                              <td><code>{g.name}</code></td>
+                              <td>{g.hostLabel}</td>
+                              <td style={{ whiteSpace: 'nowrap' }}><span className="dot dot-off" />已停止</td>
+                              <td className="log-mono" style={{ color: 'var(--text-dim)' }}>不在当前发现范围</td>
+                              <td>—</td>
+                              <td></td>
+                            </tr>
+                          ))}
+                          {visibleRows.map((r) => {
+                            const key = `${r.hostId}|${r.name}`
+                            return (
+                              <tr key={key}>
+                                <td><input type="checkbox" checked={selContainers.has(key)} onChange={() => toggleContainers(key)} /></td>
+                                <td><code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</code></td>
+                                <td style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>{r.hostLabel}</td>
+                                <td style={{ whiteSpace: 'nowrap' }}><span className={`dot ${r.state === 'running' ? 'dot-ok' : 'dot-off'}`} />{r.state}</td>
+                                <td className="log-mono" style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{r.image || '—'}</td>
+                                <td style={{ whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>{r.status || '—'}</td>
+                                <td>{joinedByName(r.name) && <span className="kib-joined" title="已接入">✓</span>}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
                 )
               })()}
 <div className="kib-form-row" style={{ marginTop: 12 }}>

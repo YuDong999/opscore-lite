@@ -5,6 +5,7 @@ export interface HostOption {
   id: string
   label: string
   addr: string
+  platform?: string
 }
 
 interface HostCtx {
@@ -49,6 +50,7 @@ export function HostProvider({ children }: { children: ReactNode }) {
           id: h.id,
           label: (h.alias || h.addr) + (h.alias && h.alias !== h.addr ? ` (${h.addr})` : ''),
           addr: h.addr,
+          platform: h.platform || '',
         }))
         setHosts(opts)
         if (selected && !opts.some(x => x.id === selected.id)) {

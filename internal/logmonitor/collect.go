@@ -131,9 +131,10 @@ func CollectClusters(dataDir string) []string {
 
 // DiscoverContainer 表示一个可接入的本机 Docker 容器。
 type DiscoverContainer struct {
-	Name  string `json:"name"`
-	Image string `json:"image"`
-	State string `json:"state"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	State  string `json:"state"`
+	Status string `json:"status,omitempty"` // 人类可读运行状态(含时长), 如 "Up 3 days"
 }
 
 // DiscoverPod 表示一个可接入的 K8S pod。
