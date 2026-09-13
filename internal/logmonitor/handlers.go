@@ -29,12 +29,13 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 	h := &Handlers{store: store, service: service, archiver: archiver, dataDir: dataDir}
 	return &registry.Module{
 		Manifest: registry.Manifest{
-			ID:          PluginID,
-			Name:        "日志监控",
-			Icon:        "activity",
-			RoutePath:   "/logmonitor",
-			Group:       "plugin",
-			Description: "日志采集 / 多条件检索 / 实时统计 / 分级存储",
+			ID:            PluginID,
+			Name:          "日志监控",
+			Icon:          "activity",
+			RoutePath:     "/logmonitor",
+			Group:         "plugin",
+			HostSensitive: true,
+			Description:   "日志采集 / 多条件检索 / 实时统计 / 分级存储",
 		},
 		Routes: []registry.Route{
 			{Path: "/api/logmonitor/query", Handler: h.handleQuery},
@@ -74,9 +75,9 @@ func Module(store *Store, service *Service, archiver *Archiver, dataDir string) 
 	}
 }
 
-// DiscoverContainersHandler 列表本机可接入的 Docker 容器。GET
+// DiscoverContainersHandler 列表目标主机(默认本机, ?host= 跟随全局主机上下文)可接入的 Docker 容器。GET
 func (h *Handlers) handleDiscoverContainers(w http.ResponseWriter, r *http.Request) {
-	list, err := DiscoverDockerContainers()
+	list, err := DiscoverDockerContainersOn(r.URL.Query().Get("host"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "发现容器失败: "+err.Error())
 		return
@@ -84,14 +85,14 @@ func (h *Handlers) handleDiscoverContainers(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"containers": list, "ok": true})
 }
 
-// DiscoverK8sHandler 列表某集群可接入的 pod。GET ?cluster=
+// DiscoverK8sHandler 列表某集群可接入的 pod。GET ?cluster=&host= (host 缺省本机)
 func (h *Handlers) handleDiscoverK8s(w http.ResponseWriter, r *http.Request) {
 	cluster := r.URL.Query().Get("cluster")
 	if cluster == "" {
 		writeErr(w, http.StatusBadRequest, "缺 cluster 参数")
 		return
 	}
-	list, err := DiscoverK8sLogTargets(h.dataDir, cluster)
+	list, err := DiscoverK8sLogTargetsOn(h.dataDir, cluster, r.URL.Query().Get("host"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "发现 K8S pod 失败: "+err.Error())
 		return
@@ -353,6 +354,7 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 		IndexID     string `json:"indexId"`
 		Namespace   string `json:"namespace"`
 		Cluster     string `json:"cluster"`
+		Host        string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON 解析失败: "+err.Error())
@@ -384,18 +386,13 @@ func (h *Handlers) handleScan(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch body.Source {
 	case "container":
-		lines, err = CollectDockerLogs(body.Path, 500)
+		lines, err = CollectDockerLogsOn(body.Host, body.Path, 500)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "读取容器日志失败: "+err.Error())
 			return
 		}
 	case "k8s", "k8spod":
-		kc := kubeconfigPathFor(h.dataDir, body.Cluster)
-		if kc == "" {
-			writeErr(w, http.StatusInternalServerError, "未找到集群 kubeconfig(cluster="+body.Cluster+")")
-			return
-		}
-		lines, err = CollectK8sPodLogs(kc, body.Namespace, body.Path, 500)
+		lines, err = CollectK8sPodLogsOn(body.Host, h.dataDir, body.Cluster, body.Namespace, body.Path, 500)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "读取 K8S pod 日志失败: "+err.Error())
 			return

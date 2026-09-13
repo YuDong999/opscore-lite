@@ -2,7 +2,6 @@ package logmonitor
 
 import (
 	"bufio"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,65 +145,12 @@ type DiscoverPod struct {
 }
 
 // DiscoverK8sLogTargets 返回某集群的全部 pod, 每个 pod 列出其全部容器。
-// 用 kubectl get pods -A -o json 取原始 JSON 再解析(兼容不同 kubectl 版本的 jsonpath 能力)。
+// 本机路径: 使用已注册集群的 kubeconfig; 远程主机见 remote_runner.go。
 func DiscoverK8sLogTargets(dataDir, clusterID string) ([]DiscoverPod, error) {
-	kc := kubeconfigPathFor(dataDir, clusterID)
-	if kc == "" {
-		return nil, os.ErrNotExist
-	}
-	cmd := exec.Command("kubectl", "--kubeconfig", kc, "get", "pods", "-A", "-o", "json")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
-	var parsed struct {
-		Items []struct {
-			Metadata struct {
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
-			} `json:"metadata"`
-			Spec struct {
-				Containers []struct {
-					Name string `json:"name"`
-				} `json:"containers"`
-			} `json:"spec"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return nil, err
-	}
-	outPods := make([]DiscoverPod, 0, len(parsed.Items))
-	for _, it := range parsed.Items {
-		names := make([]string, 0, len(it.Spec.Containers))
-		for _, c := range it.Spec.Containers {
-			if c.Name != "" {
-				names = append(names, c.Name)
-			}
-		}
-		outPods = append(outPods, DiscoverPod{
-			Name:       it.Metadata.Name,
-			Namespace:  it.Metadata.Namespace,
-			Containers: names,
-			ClusterID:  clusterID,
-		})
-	}
-	return outPods, nil
+	return DiscoverK8sLogTargetsOn(dataDir, clusterID, "")
 }
 
 // DiscoverDockerContainers 返回本机全部 docker 容器(含容器名/镜像/状态)。
 func DiscoverDockerContainers() ([]DiscoverContainer, error) {
-	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}\u007c{{.Image}}\u007c{{.State}}")
-	lines, err := collectLogLines(cmd)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]DiscoverContainer, 0, len(lines))
-	for _, ln := range lines {
-		parts := strings.SplitN(ln, "|", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		out = append(out, DiscoverContainer{Name: parts[0], Image: parts[1], State: parts[2]})
-	}
-	return out, nil
+	return DiscoverDockerContainersOn("")
 }

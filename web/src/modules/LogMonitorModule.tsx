@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import { useTheme } from '../theme'
+import { useHost } from '../components/HostContext'
+import HostSelector from '../components/HostSelector'
 import EChart from '../charts/EChart'
 import './logmonitor-kibana.css'
 
@@ -387,12 +389,21 @@ export default function LogMonitorModule() {
   const [discClusters, setDiscClusters] = useState<string[]>([])
   const [discK8sPods, setDiscK8sPods] = useState<K8sPodItem[]>([])
   const [discOpen, setDiscOpen] = useState(false)
+  const { selected: discHost } = useHost()
   const [discLoading, setDiscLoading] = useState(false)
 const [selCluster, setSelCluster] = useState('1')
   const [selNamespace, setSelNamespace] = useState('')
   const [podSearch, setPodSearch] = useState('')
   const [selTargetIdx, setSelTargetIdx] = useState('')
   const [selContainers, setSelContainers] = useState<Set<string>>(new Set())
+  // 目标主机/集群切换时, 发现面板开着就自动重新发现(跟随全局主机上下文)
+  useEffect(() => {
+    if (!discOpen) return
+    setDiscLoading(true)
+    Promise.all([loadDiscoverContainers(), loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
+      .finally(() => setDiscLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discHost?.id, selCluster])
   const [selPods, setSelPods] = useState<Set<string>>(new Set())
   const [ingesting, setIngesting] = useState(false)
 
@@ -717,7 +728,7 @@ const [selCluster, setSelCluster] = useState('1')
 
   async function loadDiscoverContainers() {
     try {
-      const r = await getJSON<{ containers?: ContainerItem[] }>('/api/logmonitor/discover/containers')
+      const r = await getJSON<{ containers?: ContainerItem[] }>(`/api/logmonitor/discover/containers?host=${encodeURIComponent(discHost?.id || '')}`)
       setDiscContainers(r.containers || [])
     } catch (e: any) {
       pushToast('err', e?.message || '发现容器失败')
@@ -737,7 +748,7 @@ const [selCluster, setSelCluster] = useState('1')
     if (!cluster) return
     setDiscLoading(true)
     try {
-      const r = await getJSON<{ pods?: K8sPodItem[] }>(`/api/logmonitor/discover/k8s?cluster=${encodeURIComponent(cluster)}`)
+      const r = await getJSON<{ pods?: K8sPodItem[] }>(`/api/logmonitor/discover/k8s?cluster=${encodeURIComponent(cluster)}&host=${encodeURIComponent(discHost?.id || '')}`)
       setDiscK8sPods(r.pods || [])
     } catch (e: any) {
       pushToast('err', e?.message || '发现 K8S pod 失败')
@@ -769,7 +780,7 @@ const [selCluster, setSelCluster] = useState('1')
     try {
       for (const c of selContainers) {
         try {
-          await postJSON('/api/logmonitor/scan', { path: c, source: 'container', service: '', indexId: selTargetIdx })
+          await postJSON('/api/logmonitor/scan', { path: c, source: 'container', service: '', indexId: selTargetIdx, host: discHost?.id || '' })
           ok++
         } catch { fail.push(c) }
       }
@@ -777,7 +788,7 @@ const [selCluster, setSelCluster] = useState('1')
         const p = discK8sPods.find((x) => `${x.namespace}/${x.name}` === key)
         if (!p) continue
         try {
-          await postJSON('/api/logmonitor/scan', { path: p.name, source: 'k8s', namespace: p.namespace, service: podSvcName(p) || '', cluster: p.clusterID, indexId: selTargetIdx })
+          await postJSON('/api/logmonitor/scan', { path: p.name, source: 'k8s', namespace: p.namespace, service: podSvcName(p) || '', cluster: p.clusterID, indexId: selTargetIdx, host: discHost?.id || '' })
           ok++
         } catch { fail.push(`${p.namespace}/${p.name}`) }
       }
@@ -1684,15 +1695,16 @@ function clearFilters() {
             >
               从已连接资源添加
             </button>
-              <span style={{ marginLeft: 10, color: 'var(--text-dim)', fontSize: 12 }}>选择接入本机容器 / 已连接 K8S 集群的日志</span>
+              <span style={{ marginLeft: 10, color: 'var(--text-dim)', fontSize: 12 }}>选择接入目标主机容器 / 已连接 K8S 集群的日志</span>
             </div>
           ) : (
             <div className="kib-discover-panel" style={{ marginTop: 16 }}>
               <div className="log-filter-row">
                 <div style={{ flex: 1 }}>
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
+                  <span style={{ marginLeft: 10 }}><HostSelector /></span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
-                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 选择归档索引可双写。</div>
+                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 选择归档索引可双写。目标主机切换后自动重新发现。</div>
                   {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
