@@ -1765,13 +1765,13 @@ function clearFilters() {
                 <div style={{ flex: 1 }}>
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
-                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>三步接入: ① 勾选发现主机(容器级联聚合) → ② 按筛选勾选容器/Pod → ③ 接入库; K8S Pod 的发现主机见 Pod 区。</div>
+                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选发现主机(容器级联聚合) → 按筛选勾选容器/Pod → 接入库; K8S Pod 的发现主机见 Pod 区。</div>
                   {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
               <div className="log-filter-row" style={{ marginTop: 8 }}>
-                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>① 发现主机</span>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>发现主机</span>
                 <button
                   className="btn-glass-soft btn-glass-soft-sm"
                   title="全选/清空所有 Linux 主机"
@@ -1803,7 +1803,7 @@ function clearFilters() {
                 return (
                   <>
                     <div className="log-filter-row" style={{ marginTop: 8 }}>
-                      <h4 style={{ margin: 0, color: 'var(--text)' }}>② Docker 容器</h4>
+                      <h4 style={{ margin: 0, color: 'var(--text)' }}>Docker 容器</h4>
                       <span className="kib-badge">{cFltState || cFltSvc ? `${visibleRows.length}/${discRows.length}` : `${discRows.length}`} 个</span>
                       {discRows.length > 0 && (
                         <OptSelect
@@ -1869,7 +1869,7 @@ function clearFilters() {
                 )
               })()}
 <div className="kib-form-row" style={{ marginTop: 12 }}>
-  <h4 style={{ margin: 0, color: 'var(--text)' }}>② K8S Pod</h4>
+  <h4 style={{ margin: 0, color: 'var(--text)' }}>K8S Pod</h4>
   {discClusters.length > 0 && (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
       <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
@@ -1951,7 +1951,7 @@ function clearFilters() {
                 )
               })()}
 <div className="log-filter-row" style={{ marginTop: 14 }}>
-  <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>③ 接入</span>
+  <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>接入</span>
   <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
     已勾选 {selContainers.size} 容器 / {selPods.size} Pod
   </span>
