@@ -1871,9 +1871,7 @@ function clearFilters() {
 <div className="kib-form-row" style={{ marginTop: 12 }}>
   <h4 style={{ margin: 0, color: 'var(--text)' }}>② K8S Pod</h4>
   {discClusters.length > 0 && (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-      <span style={{ color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>Pod 发现主机</span>
-      <HostSelector />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
       <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
         const filtered = discK8sPods.filter((p) => {
           if (!podSearch && !selNamespace) return true
@@ -1885,6 +1883,8 @@ function clearFilters() {
         })
         setSelPods(new Set(filtered.map((p) => `${p.namespace}/${p.name}`)))
       }}>全选</button>
+      <span style={{ color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>Pod 发现主机</span>
+      <HostSelector />
       <OptSelect
         className="w-40"
         value={selCluster}
