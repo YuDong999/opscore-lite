@@ -1064,7 +1064,7 @@ function ComposePanel({ onMsg }: { onMsg?: (m: string) => void }) {
                     <RowList items={active.ports} onChange={(x) => setActive({ ports: x })} placeholder="8080:80" addLabel="+ 端口" />
                   </F>
                   <F label="环境变量">
-                    <KvRows items={active.environment} onChange={(x) => setActive({ environment: x })} kHint="KEY" vHint="value" addLabel="+ ENV" />
+                    <KvRows items={active.environment.map((e) => ({ k: e.key ?? '', v: e.value ?? '' }))} onChange={(x) => setActive({ environment: x.map((e) => ({ key: e.k ?? '', value: e.v ?? '' })) })} kHint="KEY" vHint="value" addLabel="+ ENV" />
                   </F>
                   <F label="卷挂载" hint="如 ./data:/app/data">
                     <RowList items={active.volumes} onChange={(x) => setActive({ volumes: x })} placeholder="./data:/app/data" addLabel="+ 卷" />

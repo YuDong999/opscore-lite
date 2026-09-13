@@ -60,7 +60,7 @@ type Model = {
   svcType: string; svcSelector: Kv[]; svcPorts: SvcPort[]
   ingressClass: string; ingressRules: IngressRule[]; tlsSecret: string
   dataItems: Kv[]; secretType: string
-  schedule: string; command: string
+  schedule: string; suspend?: boolean; command: string
   storage: string; storageClass: string; accessModes: string[]
 }
 

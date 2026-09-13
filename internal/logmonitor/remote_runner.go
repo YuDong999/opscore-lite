@@ -41,7 +41,7 @@ func splitLines(out string) []string {
 
 // DiscoverDockerContainersOn 发现 hostID(空=本机)上可接入的 Docker 容器。
 func DiscoverDockerContainersOn(hostID string) ([]DiscoverContainer, error) {
-	argv := []string{"docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}"}
+	argv := []string{"docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}"}
 	var lines []string
 	if isRemoteHost(hostID) {
 		out, err := RemoteRunner(hostID, argv)
@@ -58,11 +58,15 @@ func DiscoverDockerContainersOn(hostID string) ([]DiscoverContainer, error) {
 	}
 	out := make([]DiscoverContainer, 0, len(lines))
 	for _, ln := range lines {
-		parts := strings.SplitN(ln, "|", 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(ln, "|", 4)
+		if len(parts) < 3 {
 			continue
 		}
-		out = append(out, DiscoverContainer{Name: parts[0], Image: parts[1], State: parts[2]})
+		c := DiscoverContainer{Name: parts[0], Image: parts[1], State: parts[2]}
+		if len(parts) > 3 {
+			c.Status = parts[3]
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
@@ -109,7 +113,7 @@ func DiscoverK8sLogTargetsOn(dataDir, clusterID, hostID string) ([]DiscoverPod, 
 		return nil, fmt.Errorf("目标机未发现可用 kubeconfig: %w", err)
 	}
 	kc := strings.TrimSpace(kcOut)
-	out, err := RemoteRunner(hostID, []string{"kubectl", "--kubeconfig", kc, "get", "pods", "-A", "-o", "json"})
+	out, err := RemoteRunner(hostID, []string{"kubectl", "--kubeconfig", kc, "--request-timeout=15s", "get", "pods", "-A", "-o", "json"})
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +135,7 @@ func CollectK8sPodLogsOn(hostID, dataDir, clusterID, ns, pod string, tail int) (
 			return nil, fmt.Errorf("目标机未发现可用 kubeconfig: %w", err)
 		}
 		kc := strings.TrimSpace(kcOut)
-		out, err := RemoteRunner(hostID, []string{"kubectl", "--kubeconfig", kc, "logs", "-n", ns, pod, "--tail=" + strconv.Itoa(tail)})
+		out, err := RemoteRunner(hostID, []string{"kubectl", "--kubeconfig", kc, "--request-timeout=15s", "logs", "-n", ns, pod, "--tail=" + strconv.Itoa(tail)})
 		if err != nil && strings.TrimSpace(out) == "" {
 			return nil, err
 		}

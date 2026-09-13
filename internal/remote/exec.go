@@ -33,6 +33,10 @@ type Result struct {
 	Error  string
 }
 
+// remoteCmdTimeout 单条远端命令的硬超时。日志采集/发现类命令正常秒级返回;
+// 半死连接或远端命令自身挂起时到点中止, 由上层决定重试或报错。
+const remoteCmdTimeout = 60 * time.Second
+
 type RunResult struct {
 	HostID  string
 	Host    Host
@@ -281,8 +285,18 @@ func (p *Pool) execLineOnce(h Host, line string) (string, int, error) {
 	session.Stderr = &buf
 	// 尾部追加退出码标记; 命令自身失败不影响标记输出
 	script := line + "\n" + `printf "__EXIT__%d" "$?"`
-	if err := session.Run(script); err != nil && buf.Len() == 0 {
-		return "", -1, fmt.Errorf("执行失败: %w", err)
+	// 命令级硬超时: 半死连接/远端命令挂起(如 kubectl 指向不可达 API)时中止会话,
+	// 返回 rc=-1 走 ExecLine 的换连重试路径, 避免 HTTP 请求无限悬挂(前端"接入中…"卡死)。
+	done := make(chan error, 1)
+	go func() { done <- session.Run(script) }()
+	select {
+	case runErr := <-done:
+		if runErr != nil && buf.Len() == 0 {
+			return "", -1, fmt.Errorf("执行失败: %w", runErr)
+		}
+	case <-time.After(remoteCmdTimeout):
+		session.Close()
+		return "", -1, fmt.Errorf("SSH 命令超时(%v)", remoteCmdTimeout)
 	}
 	out := buf.String()
 	idx := strings.LastIndex(out, "__EXIT__")
