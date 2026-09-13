@@ -4,6 +4,7 @@ import { useTheme } from '../theme'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
 import EChart from '../charts/EChart'
+import { OptSelect } from './cicd/common'
 import './logmonitor-kibana.css'
 
 interface LogEntry {
@@ -1757,13 +1758,16 @@ function clearFilters() {
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
                   <span style={{ marginLeft: 10 }}><HostSelector /></span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
-                  <label htmlFor="disc-target-idx" style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</label>
-                  <select id="disc-target-idx" value={selTargetIdx} onChange={(e) => setSelTargetIdx(e.target.value)} style={{ maxWidth: 180 }}>
-                    <option value="">未归属</option>
-                    {allIndexes.map((ix) => (
-                      <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
-                    ))}
-                  </select>
+                  <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</span>
+                  <span style={{ marginLeft: 6 }}>
+                    <OptSelect
+                      className="w-44"
+                      value={selTargetIdx}
+                      onChange={setSelTargetIdx}
+                      placeholder="未归属"
+                      items={allIndexes.map((ix) => ({ value: ix.id, label: ix.name || ix.id }))}
+                    />
+                  </span>
                   <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 容器发现范围由"容器发现主机"多选决定, 支持多选/全选主机级联聚合。</div>
                   {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
@@ -1803,18 +1807,27 @@ function clearFilters() {
                     <div className="log-filter-row" style={{ marginTop: 8 }}>
                       <h4 style={{ margin: 0, color: 'var(--text)' }}>Docker 容器</h4>
                       <span className="kib-badge">{visibleRows.length}/{discRows.length} 个</span>
-                      <select value={cFltHost} onChange={(e) => setCFltHost(e.target.value)} aria-label="按主机筛选" style={{ maxWidth: 170 }}>
-                        <option value="">主机: 全部</option>
-                        {hostsInRows.map((h) => <option key={h} value={h}>{hostLabelFor(h)}</option>)}
-                      </select>
-                      <select value={cFltState} onChange={(e) => setCFltState(e.target.value)} aria-label="按状态筛选">
-                        <option value="">状态: 全部</option>
-                        {statesInRows.map((st) => <option key={st} value={st}>{st}</option>)}
-                      </select>
-                      <select value={cFltSvc} onChange={(e) => setCFltSvc(e.target.value)} aria-label="按服务筛选">
-                        <option value="">服务: 全部</option>
-                        {svcsInRows.map((sv) => <option key={sv} value={sv}>{sv}</option>)}
-                      </select>
+                      <OptSelect
+                        className="w-44"
+                        value={cFltHost}
+                        onChange={setCFltHost}
+                        placeholder="主机: 全部"
+                        items={hostsInRows.map((h) => ({ value: h, label: hostLabelFor(h) }))}
+                      />
+                      <OptSelect
+                        className="w-32"
+                        value={cFltState}
+                        onChange={setCFltState}
+                        placeholder="状态: 全部"
+                        items={statesInRows.map((st) => ({ value: st, label: st }))}
+                      />
+                      <OptSelect
+                        className="w-32"
+                        value={cFltSvc}
+                        onChange={setCFltSvc}
+                        placeholder="服务: 全部"
+                        items={svcsInRows.map((sv) => ({ value: sv, label: sv }))}
+                      />
                       <span style={{ flex: 1 }} />
                       <button
                         className="btn-glass-soft btn-glass-soft-sm"
@@ -1875,16 +1888,20 @@ function clearFilters() {
         })
         setSelPods(new Set(filtered.map((p) => `${p.namespace}/${p.name}`)))
       }}>全选</button>
-      <select value={selCluster} onChange={(e) => { setSelCluster(e.target.value); loadDiscoverK8s(e.target.value); setSelPods(new Set()); setSelNamespace(''); setPodSearch(''); }} aria-label="集群">
-        <option value="">选择集群…</option>
-        {discClusters.map((c) => <option key={c} value={c}>集群 {c}</option>)}
-      </select>
-      <select value={selNamespace} onChange={(e) => setSelNamespace(e.target.value)} aria-label="命名空间">
-        <option value="">所有命名空间</option>
-        {[...new Set(discK8sPods.map((p) => p.namespace))].sort().map((ns) => (
-          <option key={ns} value={ns}>{ns}</option>
-        ))}
-      </select>
+      <OptSelect
+        className="w-40"
+        value={selCluster}
+        onChange={(v) => { setSelCluster(v); loadDiscoverK8s(v); setSelPods(new Set()); setSelNamespace(''); setPodSearch('') }}
+        placeholder="选择集群…"
+        items={discClusters.map((c) => ({ value: c, label: `集群 ${c}` }))}
+      />
+      <OptSelect
+        className="w-40"
+        value={selNamespace}
+        onChange={setSelNamespace}
+        placeholder="所有命名空间"
+        items={[...new Set(discK8sPods.map((p) => p.namespace))].sort().map((ns) => ({ value: ns, label: ns }))}
+      />
       <input
         placeholder="搜索 Pod 名 / 命名空间"
         aria-label="搜索 Pod 名 / 命名空间"
