@@ -1686,7 +1686,13 @@ func (s *Store) Close() {
 func (s *Store) ListIndexes() ([]*LogIndex, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listIndexesLocked()
+}
 
+// listIndexesLocked 查询索引清单; 调用方需已持 s.mu(读或写锁)。
+// 独立成无锁内层: ApplyIlm 等持写锁的路径复用, 避免 Lock 内再 RLock 的自死锁
+// (该死锁曾令 ilmAutoLoop 每小时触发后整库读写永久挂起 —— 「接入中…」卡死的根因)。
+func (s *Store) listIndexesLocked() ([]*LogIndex, error) {
 	rows, err := s.db.Query("SELECT id, name, source, source_path, service, fields, ilm, delete_after, created_at, updated_at FROM log_indexes ORDER BY name")
 	if err != nil {
 		return nil, err
@@ -1814,7 +1820,7 @@ type IlmCleanup struct {
 //   3) 返回 (indexID, cutoffDate, rows) 计划, 由上层联动删除归档文件
 func (s *Store) ApplyIlm() ([]IlmCleanup, int64, error) {
 	s.mu.Lock()
-	indexes, err := s.ListIndexes()
+	indexes, err := s.listIndexesLocked()
 	s.mu.Unlock()
 	if err != nil {
 		return nil, 0, err
