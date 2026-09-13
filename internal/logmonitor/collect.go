@@ -2,6 +2,7 @@ package logmonitor
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,18 @@ import (
 	"strings"
 	"time"
 )
+
+// localCmdTimeout 本机 docker/kubectl 采集命令硬超时(与 remote_runner 远程路径的
+// request-timeout=15s 对齐): 半死的 daemon/API 会让 CombinedOutput 永久等待,
+// poller 的 inFlight 守卫会因单次挂起导致全部源静默停摆。
+const localCmdTimeout = 15 * time.Second
+
+// runCollect 带硬超时执行本机采集命令; 超时杀进程并返回错误。
+func runCollect(argv []string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), localCmdTimeout)
+	defer cancel()
+	return collectLogLines(exec.CommandContext(ctx, argv[0], argv[1:]...))
+}
 
 // collectLogLines 执行 cmd 并返回去尾空白后的行切片；错误时返回错误。
 func collectLogLines(cmd *exec.Cmd) ([]string, error) {
@@ -38,12 +51,7 @@ func CollectDockerLogs(name string, tail int) ([]string, error) {
 	if tail > 5000 {
 		tail = 5000
 	}
-	cmd := exec.Command("docker", "logs", "--tail", strconv.Itoa(tail), name)
-	lines, err := collectLogLines(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return lines, nil
+	return runCollect([]string{"docker", "logs", "--tail", strconv.Itoa(tail), name})
 }
 
 // CollectDockerLogsSince 抓 Docker 容器自 sinceMs(毫秒时间戳) 之后的新日志。
@@ -54,12 +62,7 @@ func CollectDockerLogsSince(name string, sinceMs int64) ([]string, error) {
 		args = append(args, "--since", time.UnixMilli(sinceMs).UTC().Format(time.RFC3339Nano))
 	}
 	args = append(args, name)
-	cmd := exec.Command("docker", args...)
-	lines, err := collectLogLines(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return lines, nil
+	return runCollect(append([]string{"docker"}, args...))
 }
 
 // CollectK8sPodLogs 用落盘 kubeconfig 抓指定 K8S pod 日志尾部 <tail> 行。
@@ -71,29 +74,19 @@ func CollectK8sPodLogs(kubeconfig, ns, pod string, tail int) ([]string, error) {
 	if tail > 5000 {
 		tail = 5000
 	}
-	args := []string{"--kubeconfig", kubeconfig, "logs", "-n", ns, pod, "--tail=" + strconv.Itoa(tail)}
-	cmd := exec.Command("kubectl", args...)
-	lines, err := collectLogLines(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return lines, nil
+	args := []string{"--kubeconfig", kubeconfig, "--request-timeout=15s", "logs", "-n", ns, pod, "--tail=" + strconv.Itoa(tail)}
+	return runCollect(append([]string{"kubectl"}, args...))
 }
 
 // CollectK8sPodLogsSince 抓 K8S pod 自 sinceMs 之后的新日志。
 // 用 kubectl logs --since-time=RFC3339 绝对时间过滤 + --timestamps=true 强制行首带时间戳，
 // 保证每行可被 ParseLine 提取真实时间用于游标去重。
 func CollectK8sPodLogsSince(kubeconfig, ns, pod string, sinceMs int64) ([]string, error) {
-	args := []string{"--kubeconfig", kubeconfig, "logs", "-n", ns, pod, "--tail=2000", "--timestamps=true"}
+	args := []string{"--kubeconfig", kubeconfig, "--request-timeout=15s", "logs", "-n", ns, pod, "--tail=2000", "--timestamps=true"}
 	if sinceMs > 0 {
 		args = append(args, "--since-time", time.UnixMilli(sinceMs).UTC().Format(time.RFC3339))
 	}
-	cmd := exec.Command("kubectl", args...)
-	lines, err := collectLogLines(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return lines, nil
+	return runCollect(append([]string{"kubectl"}, args...))
 }
 
 // kubeconfigPathFor 定位已注册集群的 kubeconfig 落盘文件。

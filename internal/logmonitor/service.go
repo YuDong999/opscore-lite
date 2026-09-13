@@ -129,6 +129,7 @@ func (s *Service) poll() {
 
 	sources, err := s.store.ListSources()
 	if err != nil {
+		log.Printf("[logmonitor] poll 列出日志源失败: %v", err)
 		return
 	}
 	for _, src := range sources {
@@ -147,6 +148,8 @@ func (s *Service) poll() {
 func (s *Service) pollContainer(src *LogSource) {
 	lines, err := CollectDockerLogsSince(src.Path, src.LastTs)
 	if err != nil {
+		// 采集命令已带 15s 硬超时, 不会永久挂起; 失败必须留痕(此前静默 return, 故障不可见)
+		log.Printf("[logmonitor] poll 容器 %s 失败: %v", src.Path, err)
 		return
 	}
 	s.ingestIncremental(src, lines, "container")
@@ -155,11 +158,13 @@ func (s *Service) pollContainer(src *LogSource) {
 func (s *Service) pollK8s(src *LogSource) {
 	kc := kubeconfigPathFor(s.dataDir, src.Cluster)
 	if kc == "" {
+		log.Printf("[logmonitor] poll pod %s/%s 失败: 集群 %s 无 kubeconfig", src.Namespace, src.Path, src.Cluster)
 		return
 	}
 	// 首采(lastTs=0)不带 since-time，取尾巴后续增量; 已有游标则增量
 	lines, err := CollectK8sPodLogsSince(kc, src.Namespace, src.Path, src.LastTs)
 	if err != nil {
+		log.Printf("[logmonitor] poll pod %s/%s 失败: %v", src.Namespace, src.Path, err)
 		return
 	}
 	s.ingestIncremental(src, lines, "k8s")
