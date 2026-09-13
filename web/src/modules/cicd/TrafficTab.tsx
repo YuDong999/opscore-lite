@@ -48,7 +48,7 @@ export default function TrafficTab() {
   const [err, setErr] = useState('')
   const [applying, setApplying] = useState(false)
   const [applyMsg, setApplyMsg] = useState('')
-  const { toast } = useToast()
+  const toast = useToast()
   const [draft, setDraft] = useState<NginxUpstream[]>([])
   const [dirty, setDirty] = useState(false)
 

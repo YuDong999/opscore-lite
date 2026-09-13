@@ -32,7 +32,7 @@ import {
   fmtDur, fmtTime, fmtSize, TRIGGER_TEXT, useTableSort, SortHead, statusWeight, useLocalJSON,
   type Pipeline, type PipelineView, type Run, type Stage, type Step, type HostOpt,
   type Credential, type Repo, type Registry, type Script,
-  type StageRun, type ActionSpec,
+  type StageRun, type StepRun, type ActionSpec,
 } from './cicd/shared'
 
 const CRED_TYPE_TEXT: Record<string, string> = {

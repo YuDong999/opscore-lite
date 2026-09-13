@@ -72,7 +72,7 @@ export default function K8sActionPanel({
   useEffect(() => {
     let stop = false
     Promise.all([
-      getJSON<{ ok: boolean; actions: ActionSpec[]; ephemeral: boolean }>(
+      getJSON<{ ok: boolean; actions: ActionSpec[]; ephemeral: boolean; error?: string }>(
         `/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(res)}&_=${Date.now()}`),
       getJSON<{ ok: boolean; ephemeral: boolean }>(
         `/api/plugins/containers/k8s/feature-flags?_=${Date.now()}`),

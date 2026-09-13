@@ -89,7 +89,7 @@ export interface PipelineView extends Pipeline {
 export interface Artifact { step: string; file: string; size: number; paths: string }
 export interface StepQuality { tests: number; failed: number; skipped: number }
 export interface StepRun { name: string; command: string; status: string; exitCode: number; startedAt?: string; durationMs: number; artifacts?: Artifact[]; quality?: StepQuality }
-export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[] }
+export interface StageRun { name: string; host: string; workspace: string; status: string; steps: StepRun[]; approval?: boolean }
 export interface Run {
   id: string; pipelineId: string; pipeline: string; trigger: string; status: string
   commit?: string; branch?: string; runParams?: Record<string, string>

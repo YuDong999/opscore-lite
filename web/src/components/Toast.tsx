@@ -10,6 +10,7 @@ interface ToastItem {
 }
 
 interface ToastCtx {
+  toast: (message: string, type?: ToastType) => void
   success: (message: string) => void
   error: (message: string) => void
   info: (message: string) => void
@@ -17,6 +18,7 @@ interface ToastCtx {
 }
 
 const ToastContext = createContext<ToastCtx>({
+  toast: () => {},
   success: () => {},
   error: () => {},
   info: () => {},
@@ -48,6 +50,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [remove])
 
   const api = useMemo<ToastCtx>(() => ({
+    toast: (m, t) => toast(m, t ?? 'info'),
     success: (m) => toast(m, 'success'),
     error: (m) => toast(m, 'error'),
     info: (m) => toast(m, 'info'),

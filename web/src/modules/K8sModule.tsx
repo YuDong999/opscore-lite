@@ -423,7 +423,7 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     let stop = false
     Promise.all([
       getJSON<{ ok: boolean; actions: ActionSpec[] }>(`/api/plugins/containers/k8s/action-catalog?res=${encodeURIComponent(res)}&_=${Date.now()}`),
-      getJSON<{ ok: boolean; ephemeral: boolean }>(`/api/plugins/containers/k8s/feature-flags?_=${Date.now()}`).catch(() => ({ ok: false })),
+      getJSON<{ ok: boolean; ephemeral: boolean }>(`/api/plugins/containers/k8s/feature-flags?_=${Date.now()}`).catch(() => ({ ok: false, ephemeral: false })),
     ]).then(([a, f]) => {
       if (stop) return
       if (a.ok) setBatchCatalog(a.actions || [])
@@ -2367,8 +2367,8 @@ function K8sContextMenu({ x, y, res, ns, name, cluster, onAction, onOpenForm, on
                 if (it.action === 'view-detail') { onViewDetail() }
                 else if (it.action === 'describe') { onDescribe() }
                 else if (it.action === 'events') { onEvents() }
-                else if (it.stream) { onStream(it.stream) }
-                else if (it.form) { onOpenForm(it.action!) }
+                else if ((it as any).stream) { onStream((it as any).stream) }
+                else if ((it as any).form) { onOpenForm(it.action!) }
                 else onAction(it.action!, it.extra)
               }}>
             {it.label}
@@ -2479,7 +2479,7 @@ function HelmPanel({ clusterID, onMsg }: { clusterID: string; onMsg: (m: string)
 
   const load = () => {
     setBusy(true)
-    getJSON<{ ok: boolean; releases: any[] }>(`/api/plugins/containers/k8s/helm/releases?cluster=${clusterID}&_=${Date.now()}`)
+    getJSON<{ ok: boolean; releases: any[]; error?: string }>(`/api/plugins/containers/k8s/helm/releases?cluster=${clusterID}&_=${Date.now()}`)
       .then((d) => d.ok ? setReleases(d.releases || []) : onMsg('✗ ' + (d.error || '加载失败')))
       .catch((e) => onMsg('✗ ' + String(e)))
       .finally(() => setBusy(false))
