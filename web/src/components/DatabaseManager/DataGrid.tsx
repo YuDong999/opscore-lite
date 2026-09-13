@@ -23,7 +23,7 @@ interface EditableCell {
   value: any
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite }: {
+export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite, hidePager }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
   connId?: string
@@ -35,6 +35,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   onSortDatabase?: (col: string, dir: 'asc' | 'desc') => void
   onAfterWrite?: () => void        // 写操作(置NULL等)成功后的刷新回调
   exportSql?: string                 // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
+  hidePager?: boolean                // 不渲染内部分页脚(数据页由外层 pager 负责)
 }) {
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
   const [editedRows, setEditedRows] = useState<any[][]>([])
@@ -438,7 +439,9 @@ ${tableFromSql} WHERE ${where}
           </tbody>
         </table>
       </div>
+      {(!hidePager || isEditable) && (
       <div className="db-result-footer">
+        {!hidePager && (<>
         <span className="dim">共 {viewRows.length} 行{result.truncated ? ' · 已截断' : ''}</span>
         <select className="input db-page-size" title="每页行数" value={pageSize}
           onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
@@ -449,6 +452,7 @@ ${tableFromSql} WHERE ${where}
         <span className="dim">{page} / {Math.max(1, Math.ceil(viewRows.length / pageSize))}</span>
         <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(p => p + 1)} title="下一页" aria-label="下一页">›</button>
         <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(Math.ceil(viewRows.length / pageSize))} title="末页" aria-label="末页">»</button>
+        </>)}
         {isEditable && (
           <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
             <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
@@ -456,6 +460,7 @@ ${tableFromSql} WHERE ${where}
           </span>
         )}
       </div>
+      )}
       {ctxMenu && result && result.columns?.length && ctxMenu.col < result.columns.length && (
         <ContextMenu
           x={ctxMenu.x}

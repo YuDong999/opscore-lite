@@ -177,6 +177,7 @@ export default function ConnectionTree({
     if (dbCache[connId]) return
     try {
       const dbs = await listDatabases(connId)
+      testConnection({ id: connId }).then(r => setConnHealth(prev => ({ ...prev, [connId]: r.ok ? 'ok' : 'fail' }))).catch(() => setConnHealth(prev => ({ ...prev, [connId]: 'fail' })))
       setDbCache(prev => ({ ...prev, [connId]: dbs || [] }))
     } catch { setDbCache(prev => ({ ...prev, [connId]: [] })) }
   }
@@ -212,6 +213,7 @@ export default function ConnectionTree({
   // 模式能力探测(dbx loadSchemas 同构): 列模式非空 → 库下渲染模式层级; 空/失败 → 平铺对象
   const [schemaCache, setSchemaCache] = useState<Record<string, string[]>>({})
   const [rowCounts, setRowCounts] = useState<Record<string, Record<string, number>>>({})
+  const [connHealth, setConnHealth] = useState<Record<string, 'ok' | 'fail'>>({})
   const probeSchemas = (connId: string) => {
     listSchemas(connId)
       .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
@@ -815,6 +817,11 @@ export default function ConnectionTree({
                 ) : null
               })()}
               <span className="truncate">{node.label}</span>
+              {isConn && node.conn && (() => {
+                const h = connHealth[node.conn.id]
+                const color = h === 'ok' ? '#30d158' : h === 'fail' ? '#ff453a' : 'var(--text-dim)'
+                return <span title={h === 'ok' ? '连接正常' : h === 'fail' ? '连接失败(可能密码已变更或服务不可达)' : '未测试'} style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0, marginLeft: 4 }} />
+              })()}
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>

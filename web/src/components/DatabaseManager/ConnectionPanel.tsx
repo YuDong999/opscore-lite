@@ -185,6 +185,14 @@ export default function ConnectionPanel({
         toast.success('已创建')
         onSelect(c)
       }
+      // 保存后自动测连通, 结果即时反馈(不阻断保存)
+      try {
+        const target = editing.id ? editing : undefined
+        if (target?.id) {
+          const r = await testConnection({ id: target.id })
+          r.ok ? toast.success(`连接测试成功: ${r.version || ''}`) : toast.error(`连接测试失败: ${r.error || '未知原因'}`)
+        }
+      } catch { /* 测试失败不阻断流程 */ }
       cancelWizard()
       await reload()
     } catch (e: any) {
