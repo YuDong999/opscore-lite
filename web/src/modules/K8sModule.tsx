@@ -442,7 +442,8 @@ export default function K8sModule({ onMsg }: { onMsg?: (m: string) => void }) {
     .sort((a, b) => (DANGER_BATCH.has(a.name) ? 1 : 0) - (DANGER_BATCH.has(b.name) ? 1 : 0))
   const runBatchAct = (a: ActionSpec, extraOverride?: Record<string, any>) => {
     const n = selected.size
-    const extra = extraOverride ?? (a.name === 'scale' ? { replicas: Math.max(0, batchReplicas || 0) } : undefined)
+    // scale 的 replicas 恒由参数面板携带(经 params 字段), 此处不再留本机 state 兜底
+    const extra = extraOverride
     const msg = DANGER_BATCH.has(a.name)
       ? `⚠ 批量${a.label} ${n} 个资源? 高危操作, 请确认`
       : `确认批量${a.label} ${n} 个资源?`
