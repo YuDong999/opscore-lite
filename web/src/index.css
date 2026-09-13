@@ -3128,7 +3128,6 @@ body {
 .db-table-grid .db-th-type { display: block; font-size: 0.625rem; font-weight: 400; color: var(--text-dim); }
 
 /* 树: 行数徽标 + 对象类型彩色图标(dbx 配色) */
-.db-tree-rcount { min-width: 2.4rem; margin-left: -2.4rem; text-align: right; padding-right: 0.25rem; font-size: 0.625rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; flex-shrink: 0; line-height: 1; box-sizing: border-box; }
 .dbx-node-icon { flex-shrink: 0; }
 .icon-table { color: #16a34a; }
 .icon-view { color: #0ea5e9; }
@@ -3337,3 +3336,5 @@ body {
 /* V19: 仪表盘状态变量区块撑满底部(内部滚动), 与卡片区域底部对齐 */
 .db-dash-status { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .db-dash-status .table-wrap { flex: 1; min-height: 0; }
+
+.db-tree-rcount { position: absolute; left: 0; width: var(--ind, 40px); box-sizing: border-box; padding-right: 5px; text-align: right; font-size: 0.625rem; color: var(--text-dim); opacity: 0.85; font-variant-numeric: tabular-nums; line-height: 1; pointer-events: none; }

@@ -287,7 +287,7 @@ export default function ConnectionTree({
     return (
       <div
         className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
-        style={{ paddingLeft: `${8 + depth * 16}px`, contain: 'layout style', ...(node.sys ? { opacity: 0.6 } : {}) }}
+        style={{ paddingLeft: `${8 + depth * 16}px`, ['--ind' as any]: `${8 + depth * 16}px`, contain: 'layout style', ...(node.sys ? { opacity: 0.6 } : {}) }}
         onClick={() => onNodeClick(node)}
         onContextMenu={e => {
           e.preventDefault()
@@ -808,13 +808,13 @@ export default function ConnectionTree({
           return renderRow(node, depth, (
             <>
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} size={14} /> : <NodeIcon level={node.level} />}
-              <span className="truncate">{node.label}</span>
               {(node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table && (() => {
                 const cnt = rowCounts[`${node.conn.id}|${node.db}`]?.[node.table]
                 return cnt != null && cnt >= 0 ? (
                   <span className="db-tree-rcount" title={`约 ${cnt} 行`}>{fmtCount(cnt)}</span>
                 ) : null
               })()}
+              <span className="truncate">{node.label}</span>
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>
                   <button title="测试连接" onClick={() => quickTest(node.conn!)}>
