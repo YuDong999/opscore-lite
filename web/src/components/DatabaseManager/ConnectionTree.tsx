@@ -3,11 +3,18 @@
 // 懒加�? 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单�?
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import {
   type ConnectionInfo, listDatabases, listTables, testConnection, deleteConnection,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+
+// 树节点展开指示: 展开态 chevron 旋转 90°, 叶子节点保留占位点(对齐缩进)
+function TreeCaret({ open, leaf }: { open: boolean; leaf?: boolean }) {
+  if (leaf) return <span className="db-tree-caret leaf" />
+  return <ChevronRight size={12} strokeWidth={2.2} className={`db-tree-caret-icon${open ? ' open' : ''}`} />
+}
 
 interface TreeNode {
   key: string
@@ -246,7 +253,7 @@ export default function ConnectionTree({
                   }}
                   title={node.label}
                 >
-                  <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+                  <TreeCaret open={expanded.has(node.key) && !node.leaf} leaf={node.leaf} />
                   <NodeIcon level={node.level} />
                   <span className="db-tree-label">{node.label}</span>
                   {node.count !== undefined && <span className="db-tree-count">{node.count}</span>}
@@ -295,7 +302,7 @@ export default function ConnectionTree({
               }}
               title={node.label}
             >
-              <span className={`db-tree-caret${expanded.has(node.key) && !node.leaf ? ' open' : ''}${node.leaf ? ' leaf' : ''}`} />
+              <TreeCaret open={expanded.has(node.key) && !node.leaf} leaf={node.leaf} />
               {isConn && node.conn ? <EngineIcon engine={node.conn.engine} /> : <NodeIcon level={node.level} />}
               <span className="db-tree-label">{node.label}</span>
               {isGroup && node.count !== undefined && <span className="db-tree-count">{node.count}</span>}

@@ -102,7 +102,7 @@ func DiscoverK8sLogTargetsOn(dataDir, clusterID, hostID string) ([]DiscoverPod, 
 		if kc == "" {
 			return nil, os.ErrNotExist
 		}
-		out, err := exec.Command("kubectl", "--kubeconfig", kc, "get", "pods", "-A", "-o", "json").CombinedOutput()
+		out, err := exec.Command("kubectl", "--kubeconfig", kc, "--request-timeout=15s", "get", "pods", "-A", "-o", "json").CombinedOutput()
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +145,7 @@ func CollectK8sPodLogsOn(hostID, dataDir, clusterID, ns, pod string, tail int) (
 	if kc == "" {
 		return nil, os.ErrNotExist
 	}
-	cmd := exec.Command("kubectl", "--kubeconfig", kc, "logs", "-n", ns, pod, "--tail="+strconv.Itoa(tail))
+	cmd := exec.Command("kubectl", "--kubeconfig", kc, "--request-timeout=15s", "logs", "-n", ns, pod, "--tail="+strconv.Itoa(tail))
 	lines, err := collectLogLines(cmd)
 	if err != nil {
 		return nil, err

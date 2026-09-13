@@ -827,6 +827,19 @@ const [selCluster, setSelCluster] = useState('1')
     setSelPods(next)
   }
 
+  // 小并发池: 全选几十个 Pod 时串行逐个扫要 1-2 分钟, 4 路并发把总时长压到 1/4;
+  // 单个失败不拖垮整批(结果记入 fail)
+  async function ingestPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (cursor < items.length) {
+        const item = items[cursor++]
+        await fn(item)
+      }
+    })
+    await Promise.all(workers)
+  }
+
   async function ingestSelected() {
     if (selContainers.size === 0 && selPods.size === 0) {
       pushToast('err', '请先勾选要接入的容器或 Pod')
@@ -837,7 +850,7 @@ const [selCluster, setSelCluster] = useState('1')
     const fail: string[] = []
     try {
       // 容器键为 `${hostId}|${容器名}`: 各自分发到来源主机执行扫描
-      for (const key of selContainers) {
+      await ingestPool([...selContainers], 4, async (key) => {
         const sep = key.indexOf('|')
         const hostId = sep > 0 ? key.slice(0, sep) : ''
         const name = sep > 0 ? key.slice(sep + 1) : key
@@ -845,15 +858,15 @@ const [selCluster, setSelCluster] = useState('1')
           await postJSON('/api/logmonitor/scan', { path: name, source: 'container', service: '', indexId: selTargetIdx, host: hostId })
           ok++
         } catch { fail.push(name) }
-      }
-      for (const key of selPods) {
+      })
+      await ingestPool([...selPods], 4, async (key) => {
         const p = discK8sPods.find((x) => `${x.namespace}/${x.name}` === key)
-        if (!p) continue
+        if (!p) return
         try {
           await postJSON('/api/logmonitor/scan', { path: p.name, source: 'k8s', namespace: p.namespace, service: podSvcName(p) || '', cluster: p.clusterID, indexId: selTargetIdx, host: discHost?.id || '' })
           ok++
         } catch { fail.push(`${p.namespace}/${p.name}`) }
-      }
+      })
       if (ok > 0) pushToast('ok', `已接入 ${ok} 个来源的日志`)
       if (fail.length > 0) pushToast('err', `${fail.length} 个接入失败: ${fail.join(', ')}`)
       setSelContainers(new Set())
@@ -1807,7 +1820,7 @@ function clearFilters() {
                       <span className="kib-badge">{cFltState || cFltSvc ? `${visibleRows.length}/${discRows.length}` : `${discRows.length}`} 个</span>
                       {discRows.length > 0 && (
                         <OptSelect
-                          className="w-32"
+                          className="w-32 h-8 text-xs"
                           value={cFltState}
                           onChange={setCFltState}
                           placeholder="状态: 全部"
@@ -1816,7 +1829,7 @@ function clearFilters() {
                       )}
                       {discRows.length > 0 && (
                         <OptSelect
-                          className="w-32"
+                          className="w-32 h-8 text-xs"
                           value={cFltSvc}
                           onChange={setCFltSvc}
                           placeholder="服务: 全部"
@@ -1886,14 +1899,14 @@ function clearFilters() {
       <span style={{ color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>Pod 发现主机</span>
       <HostSelector />
       <OptSelect
-        className="w-40"
+        className="w-40 h-8 text-xs"
         value={selCluster}
         onChange={(v) => { setSelCluster(v); loadDiscoverK8s(v); setSelPods(new Set()); setSelNamespace(''); setPodSearch('') }}
         placeholder="选择集群…"
         items={discClusters.map((c) => ({ value: c, label: `集群 ${c}` }))}
       />
       <OptSelect
-        className="w-40"
+        className="w-40 h-8 text-xs"
         value={selNamespace}
         onChange={setSelNamespace}
         placeholder="所有命名空间"
@@ -1957,7 +1970,7 @@ function clearFilters() {
   </span>
   <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</span>
   <OptSelect
-    className="w-44"
+    className="w-44 h-8 text-xs"
     value={selTargetIdx}
     onChange={setSelTargetIdx}
     placeholder="未归属"

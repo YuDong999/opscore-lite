@@ -2209,6 +2209,8 @@ body {
 .db-tree-caret::before { content: '▸'; color: var(--text-dim); font-size: 0.65rem; display: inline-block; transition: transform .12s; }
 .db-tree-caret.open::before { transform: rotate(90deg); }
 .db-tree-caret.leaf::before { content: '·'; }
+.db-tree-caret-icon { color: var(--text-dim); transition: transform .12s; flex-shrink: 0; }
+.db-tree-caret-icon.open { transform: rotate(90deg); }
 .db-tree-icon { width: 0.9rem; height: 0.9rem; border-radius: 0.2rem; flex-shrink: 0; display: inline-block; }
 .icon-conn { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
 .icon-db { background: var(--surface-tint); border: 1px solid var(--border); }
