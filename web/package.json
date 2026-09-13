@@ -10,7 +10,11 @@
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
+<<<<<<< HEAD
     "@tailwindcss/forms": "^0.5.0",
+=======
+    "@types/dagre": "^0.7.54",
+>>>>>>> origin/dev/dbmanager
     "@uiw/react-codemirror": "^4.25.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
