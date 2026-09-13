@@ -390,7 +390,8 @@ export default function LogMonitorModule() {
   const [srcDraft, setSrcDraft] = useState<LogSource>({ id: '', name: '', type: 'file', path: '', service: '', enabled: true, follow: false })
 
   // 从已连接资源添加(容器/K8S): 选择权交给用户
-  // 容器发现升级为主机多选级联: 每行带主机信息, 多选主机时聚合展示全部容器
+  // 业务流三步: ①发现主机(芯片多选) → ②容器级联聚合表(筛选/勾选) → ③接入(归属索引+入库)
+  // 控件归位原则: 每个控件放在它实际起作用的那一行(HostSelector 只影响 Pod 发现, 归属索引只影响入库)
   const [discClusters, setDiscClusters] = useState<string[]>([])
   const [discK8sPods, setDiscK8sPods] = useState<K8sPodItem[]>([])
   const [discOpen, setDiscOpen] = useState(false)
@@ -400,15 +401,22 @@ const [selCluster, setSelCluster] = useState('1')
   const [selNamespace, setSelNamespace] = useState('')
   const [podSearch, setPodSearch] = useState('')
   const [selTargetIdx, setSelTargetIdx] = useState('')
-  // selContainers 的键为 `${hostId}|${容器名}`(多主机下同名容器是两行)
+  // selContainers 的键为 `${hostKey}|${容器名}`(多主机下同名容器是两行); hostKey 见 hostKeyOf
   const [selContainers, setSelContainers] = useState<Set<string>>(new Set())
   const [discRows, setDiscRows] = useState<DiscRow[]>([])
+  // 所选发现主机集合; 元素为 hostKeyOf(host) —— 空串 id(本机)统一映射为 'local' 哨兵,
+  // 否则 [] 与 [''] 的 join 相同会吞掉级联依赖(0/0 空态 bug)
   const [discHostIds, setDiscHostIds] = useState<string[]>([])
-  const [cFltHost, setCFltHost] = useState('')
   const [cFltState, setCFltState] = useState('')
   const [cFltSvc, setCFltSvc] = useState('')
+  const discAutoRef = useRef(false) // 打开面板后的"默认全选"只做一次, 保留用户后续的手工调整
   // 可发现容器的主机 = 主机组中的非 Windows 主机(docker 采集通道仅 Linux)
   const linuxHostOptions = hostCtxHosts.filter((h) => h.platform !== 'win')
+  // 主机稳定键: 后端 IsLocalTarget 认 '', 'local' 与内置本机 ID, 故空 id 用 'local' 作线上语义
+  function hostKeyOf(id: string) { return id || 'local' }
+  function hostLabelFor(key: string) {
+    return hostCtxHosts.find((h) => hostKeyOf(h.id) === key)?.label || key
+  }
   // K8S pod 发现跟随全局主机上下文
   useEffect(() => {
     if (!discOpen) return
@@ -417,18 +425,23 @@ const [selCluster, setSelCluster] = useState('1')
       .finally(() => setDiscLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discHost?.id, selCluster])
-  // 全局主机切换时, 容器发现范围回到该主机(多选可再展开)
+  // 打开面板后默认全选 Linux 主机(主机清单异步到达后兜底一次), 不再有 0/0 空态
   useEffect(() => {
-    if (!discOpen) return
-    setDiscHostIds(discHost && discHost.platform !== 'win' ? [discHost.id] : [])
+    if (!discOpen || discAutoRef.current || linuxHostOptions.length === 0) return
+    discAutoRef.current = true
+    setDiscHostIds(linuxHostOptions.map((h) => hostKeyOf(h.id)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [discHost?.id])
-  // 容器发现跟随面板内所选主机集合(级联: 集合一变即重新聚合)
+  }, [discOpen, linuxHostOptions.length])
+  // 容器发现跟随面板内所选主机集合(级联: 集合一变即重新聚合); 同时修剪不在集合内的历史勾选
   useEffect(() => {
     if (!discOpen) return
+    setSelContainers((prev) => {
+      const next = new Set([...prev].filter((k) => discHostIds.includes(k.split('|')[0])))
+      return next.size === prev.size ? prev : next
+    })
     loadDiscRows()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [discOpen, discHostIds.join(',')])
+  }, [discOpen, discHostIds.join('|')])
   const [selPods, setSelPods] = useState<Set<string>>(new Set())
   const [ingesting, setIngesting] = useState(false)
 
@@ -741,31 +754,26 @@ const [selCluster, setSelCluster] = useState('1')
     const next = !discOpen
     setDiscOpen(next)
     // Only load data when opening the panel (not when closing)
+    // 容器发现的默认全选/级联由 useEffect 兜底, 这里只管 K8S/日志源
     if (next) {
       setDiscLoading(true)
       try {
         await Promise.all([loadDiscoverClusters(), selCluster && loadDiscoverK8s(selCluster), loadSources()])
-        // 首次展开: 容器发现主机缺省为全局主机(Linux); 已有选择则由 useEffect 级联加载
-        if (discHostIds.length === 0 && discHost && discHost.platform !== 'win') {
-          setDiscHostIds([discHost.id])
-        }
       } finally {
         setDiscLoading(false)
       }
     }
   }
 
-  function hostLabelFor(id: string) {
-    return hostCtxHosts.find((h) => h.id === id)?.label || id
-  }
-
   // 单主机容器发现, 行上附加主机信息; 单台失败不拖垮聚合
-  async function loadDiscoverContainersOn(hostId: string): Promise<DiscRow[]> {
+  async function loadDiscoverContainersOn(hostKey: string): Promise<DiscRow[]> {
     try {
-      const r = await getJSON<{ containers?: ContainerItem[] }>(`/api/logmonitor/discover/containers?host=${encodeURIComponent(hostId)}`)
-      return (r.containers || []).map((c) => ({ ...c, hostId, hostLabel: hostLabelFor(hostId) }))
+      // 'local' 哨兵还原为空串(后端本机语义), 其余按主机 ID 分发
+      const wire = hostKey === 'local' ? '' : hostKey
+      const r = await getJSON<{ containers?: ContainerItem[] }>(`/api/logmonitor/discover/containers?host=${encodeURIComponent(wire)}`)
+      return (r.containers || []).map((c) => ({ ...c, hostId: hostKey, hostLabel: hostLabelFor(hostKey) }))
     } catch (e: any) {
-      pushToast('err', `${hostLabelFor(hostId)} 发现容器失败: ` + (e?.message || ''))
+      pushToast('err', `${hostLabelFor(hostKey)} 发现容器失败: ` + (e?.message || ''))
       return []
     }
   }
@@ -1756,47 +1764,37 @@ function clearFilters() {
               <div className="log-filter-row">
                 <div style={{ flex: 1 }}>
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>从已连接资源接入日志</span>
-                  <span style={{ marginLeft: 10 }}><HostSelector /></span>
                   {sources.length > 0 && <span className="kib-badge" style={{ marginLeft: 8 }}>{sources.length} 个日志源</span>}
-                  <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</span>
-                  <span style={{ marginLeft: 6 }}>
-                    <OptSelect
-                      className="w-44"
-                      value={selTargetIdx}
-                      onChange={setSelTargetIdx}
-                      placeholder="未归属"
-                      items={allIndexes.map((ix) => ({ value: ix.id, label: ix.name || ix.id }))}
-                    />
-                  </span>
-                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>勾选下方容器 / Pod, 点击"接入"即可扫其 stdout 日志入库; 容器发现范围由"容器发现主机"多选决定, 支持多选/全选主机级联聚合。</div>
+                  <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>三步接入: ① 勾选发现主机(容器级联聚合) → ② 按筛选勾选容器/Pod → ③ 接入库; K8S Pod 的发现主机见 Pod 区。</div>
                   {sources.length === 0 && !discLoading && <div style={{ color: 'var(--lvl-error)', fontSize: 12, marginTop: 4 }}>⚠ 日志源列表加载失败/为空, 下方√ 状态不可用, 请检查服务端 /api/logmonitor/sources</div>}
                 </div>
                 <button className="btn-glass btn-sm" onClick={toggleDiscoverPanel} disabled={discLoading}>收起</button>
               </div>
               <div className="log-filter-row" style={{ marginTop: 8 }}>
-                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>容器发现主机</span>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>① 发现主机</span>
                 <button
                   className="btn-glass-soft btn-glass-soft-sm"
                   title="全选/清空所有 Linux 主机"
-                  onClick={() => setDiscHostIds(discHostIds.length === linuxHostOptions.length && linuxHostOptions.length > 0 ? [] : linuxHostOptions.map((h) => h.id))}
+                  onClick={() => setDiscHostIds(discHostIds.length === linuxHostOptions.length && linuxHostOptions.length > 0 ? [] : linuxHostOptions.map((h) => hostKeyOf(h.id)))}
                 >{discHostIds.length > 0 && discHostIds.length === linuxHostOptions.length ? '清空' : '全选'}</button>
-                {linuxHostOptions.map((h) => (
-                  <button
-                    key={h.id}
-                    className={`btn-glass-soft btn-glass-soft-sm${discHostIds.includes(h.id) ? ' btn-glass-soft-accent' : ''}`}
-                    onClick={() => setDiscHostIds(discHostIds.includes(h.id) ? discHostIds.filter((x) => x !== h.id) : [...discHostIds, h.id])}
-                  >{h.label}</button>
-                ))}
+                {linuxHostOptions.map((h) => {
+                  const key = hostKeyOf(h.id)
+                  return (
+                    <button
+                      key={key}
+                      className={`btn-glass-soft btn-glass-soft-sm${discHostIds.includes(key) ? ' btn-glass-soft-accent' : ''}`}
+                      onClick={() => setDiscHostIds(discHostIds.includes(key) ? discHostIds.filter((x) => x !== key) : [...discHostIds, key])}
+                    >{h.label}</button>
+                  )
+                })}
                 {linuxHostOptions.length === 0 && <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>主机组暂无 Linux 主机</span>}
               </div>
               {discLoading && <div className="log-empty">正在发现已连接资源…</div>}
               {(() => {
                 const repoOf = (img?: string) => ((img || '').split('/').pop() || '').split(':')[0] || ''
-                const hostsInRows = [...new Set(discRows.map((r) => r.hostId))]
                 const statesInRows = [...new Set(discRows.map((r) => r.state))]
                 const svcsInRows = [...new Set(discRows.map((r) => repoOf(r.image)).filter(Boolean))].sort()
                 const visibleRows = discRows.filter((r) =>
-                  (!cFltHost || r.hostId === cFltHost) &&
                   (!cFltState || r.state === cFltState) &&
                   (!cFltSvc || repoOf(r.image) === cFltSvc))
                 const ghosts = sources.filter((s) => s.type === 'container' && !discRows.some((r) => r.name === s.path))
@@ -1805,29 +1803,26 @@ function clearFilters() {
                 return (
                   <>
                     <div className="log-filter-row" style={{ marginTop: 8 }}>
-                      <h4 style={{ margin: 0, color: 'var(--text)' }}>Docker 容器</h4>
-                      <span className="kib-badge">{visibleRows.length}/{discRows.length} 个</span>
-                      <OptSelect
-                        className="w-44"
-                        value={cFltHost}
-                        onChange={setCFltHost}
-                        placeholder="主机: 全部"
-                        items={hostsInRows.map((h) => ({ value: h, label: hostLabelFor(h) }))}
-                      />
-                      <OptSelect
-                        className="w-32"
-                        value={cFltState}
-                        onChange={setCFltState}
-                        placeholder="状态: 全部"
-                        items={statesInRows.map((st) => ({ value: st, label: st }))}
-                      />
-                      <OptSelect
-                        className="w-32"
-                        value={cFltSvc}
-                        onChange={setCFltSvc}
-                        placeholder="服务: 全部"
-                        items={svcsInRows.map((sv) => ({ value: sv, label: sv }))}
-                      />
+                      <h4 style={{ margin: 0, color: 'var(--text)' }}>② Docker 容器</h4>
+                      <span className="kib-badge">{cFltState || cFltSvc ? `${visibleRows.length}/${discRows.length}` : `${discRows.length}`} 个</span>
+                      {discRows.length > 0 && (
+                        <OptSelect
+                          className="w-32"
+                          value={cFltState}
+                          onChange={setCFltState}
+                          placeholder="状态: 全部"
+                          items={statesInRows.map((st) => ({ value: st, label: st }))}
+                        />
+                      )}
+                      {discRows.length > 0 && (
+                        <OptSelect
+                          className="w-32"
+                          value={cFltSvc}
+                          onChange={setCFltSvc}
+                          placeholder="服务: 全部"
+                          items={svcsInRows.map((sv) => ({ value: sv, label: sv }))}
+                        />
+                      )}
                       <span style={{ flex: 1 }} />
                       <button
                         className="btn-glass-soft btn-glass-soft-sm"
@@ -1837,7 +1832,7 @@ function clearFilters() {
                       >全选可见</button>
                     </div>
                     {(discRows.length === 0 && ghosts.length === 0) ? (
-                      <div className="log-empty">{discHostIds.length === 0 ? '请先在上方选择要发现容器的主机' : '所选主机未发现容器'}</div>
+                      <div className="log-empty">{discHostIds.length === 0 ? '请先在上方选择要发现容器的主机' : '所选主机未发现容器(需 docker/podman)'}</div>
                     ) : (
                       <table className="log-table" style={{ width: '100%' }}>
                         <thead><tr><th style={{ width: 28 }}></th><th>容器名</th><th>主机</th><th>状态</th><th>服务(镜像)</th><th>运行时间</th><th style={{ width: 36 }}>接入</th></tr></thead>
@@ -1874,9 +1869,11 @@ function clearFilters() {
                 )
               })()}
 <div className="kib-form-row" style={{ marginTop: 12 }}>
-  <h4 style={{ margin: 0, color: 'var(--text)' }}>K8S Pod</h4>
+  <h4 style={{ margin: 0, color: 'var(--text)' }}>② K8S Pod</h4>
   {discClusters.length > 0 && (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+      <span style={{ color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>Pod 发现主机</span>
+      <HostSelector />
       <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
         const filtered = discK8sPods.filter((p) => {
           if (!podSearch && !selNamespace) return true
@@ -1954,9 +1951,18 @@ function clearFilters() {
                 )
               })()}
 <div className="log-filter-row" style={{ marginTop: 14 }}>
+  <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>③ 接入</span>
   <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
     已勾选 {selContainers.size} 容器 / {selPods.size} Pod
   </span>
+  <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>归属索引(可选, 双写到归档)</span>
+  <OptSelect
+    className="w-44"
+    value={selTargetIdx}
+    onChange={setSelTargetIdx}
+    placeholder="未归属"
+    items={allIndexes.map((ix) => ({ value: ix.id, label: ix.name || ix.id }))}
+  />
   <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setSelContainers(new Set()); setSelPods(new Set()) }}>清空勾选</button>
   <button className="btn-glass btn-sm" onClick={ingestSelected} disabled={ingesting || (selContainers.size === 0 && selPods.size === 0)}>
     {ingesting ? '接入中…' : '接入勾选日志'}
