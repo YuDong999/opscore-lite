@@ -7,15 +7,14 @@ package handlers
 // 安全: 命令为自由文本, safe 标记仅供前端提示; 执行走一次性调试Pod, 用完即删。
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,8 +259,23 @@ func DiskCleanLogsHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, map[string]any{"logs": out, "ok": true})
 }
 
-// ── 执行引擎 ──
+// ── 执行引擎(目标主机分发) ──
+// kubectl 驱动在主机组 Linux 主机上执行(调试Pod 钉在目标节点, chroot /host 清理节点磁盘),
+// 部署机自身不需要任何 K8S 工具(Windows/无Docker 部署同样可用)。
+// 收口时此"驱动宿主选择 + 分发执行"上收为公共能力通道(与 logmonitor remote_runner 同源)。
 
+// dcExecutorHost 选定 kubectl 驱动宿主: 主机组第一个 Linux 主机(排除本机/Windows)。
+func dcExecutorHost() (string, error) {
+	for _, h := range ansibleMgr.ListHosts() {
+		if h.IsLocal || h.Platform == "win" {
+			continue
+		}
+		return h.ID, nil
+	}
+	return "", fmt.Errorf("主机组无可用 Linux 主机(磁盘清理的调试Pod 需在 Linux 主机上经 kubectl 驱动)")
+}
+
+// dcExecute 解析启用的规则并对匹配节点发起清理(经驱动宿主分发)。
 func dcExecute(nodePattern string, ruleIDs []string, scheduleID string) {
 	started := time.Now()
 	dcMu.Lock()
@@ -277,18 +291,23 @@ func dcExecute(nodePattern string, ruleIDs []string, scheduleID string) {
 	if len(rules) == 0 {
 		return
 	}
-	kcs, _ := filepath.Glob(filepath.Join(dcDataDir, "kubeconfigs", "*.yaml"))
-	sort.Strings(kcs)
-	for _, kc := range kcs {
-		cluster := strings.TrimSuffix(filepath.Base(kc), ".yaml")
-		for _, node := range dcClusterNodes(kc) {
-			ok, _ := path.Match(nodePattern, node)
-			if !ok {
-				continue
-			}
-			for _, r := range rules {
-				dcRunOnNode(kc, cluster, node, r, scheduleID, started)
-			}
+	execHost, err := dcExecutorHost()
+	if err != nil {
+		log.Printf("[diskclean] %v", err)
+		return
+	}
+	cluster, _ := dcSh(execHost, `kubectl config current-context 2>/dev/null`)
+	cluster = strings.TrimSpace(cluster)
+	if cluster == "" {
+		cluster = execHost
+	}
+	for _, node := range dcClusterNodes(execHost) {
+		ok, _ := path.Match(nodePattern, node)
+		if !ok {
+			continue
+		}
+		for _, r := range rules {
+			dcRunOnNode(execHost, cluster, node, r, scheduleID, started)
 		}
 	}
 	if scheduleID != "" {
@@ -304,9 +323,14 @@ func dcExecute(nodePattern string, ruleIDs []string, scheduleID string) {
 	}
 }
 
-// dcClusterNodes 列出集群全部节点名。
-func dcClusterNodes(kubeconfig string) []string {
-	out, err := kubectl(kubeconfig, "get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+// dcSh 在驱动宿主上执行一段 shell(经 RunOnTarget 分发)。
+func dcSh(execHost, script string) (string, error) {
+	return RunOnTarget(execHost, []string{"sh", "-c", script})
+}
+
+// dcClusterNodes 经驱动宿主列出集群全部节点名(驱动端 kubectl 用它自身的默认 kubeconfig)。
+func dcClusterNodes(execHost string) []string {
+	out, err := dcSh(execHost, `kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'`)
 	if err != nil {
 		return nil
 	}
@@ -319,8 +343,10 @@ func dcClusterNodes(kubeconfig string) []string {
 	return nodes
 }
 
-// dcRunOnNode 在节点上经调试Pod + chroot /host 执行一条规则, 记录执行日志。
-func dcRunOnNode(kubeconfig, cluster, node string, r CleanRule, scheduleID string, started time.Time) {
+// dcRunOnNode 在目标节点上经调试Pod + chroot /host 执行一条规则, 记录执行日志。
+// 调试Pod 由驱动宿主的 kubectl 创建并钉在目标节点, 清理命令作用于节点根文件系统;
+// 命令经 base64 过桥, 规避多层 shell 的引号地狱。
+func dcRunOnNode(execHost, cluster, node string, r CleanRule, scheduleID string, started time.Time) {
 	lg := CleanLog{ID: dcID(), ScheduleID: scheduleID, RuleIDs: []string{r.ID}, Cluster: cluster, Node: node, CreatedAt: time.Now().Unix()}
 	defer func() {
 		lg.DurationMs = time.Since(started).Milliseconds()
@@ -333,70 +359,60 @@ func dcRunOnNode(kubeconfig, cluster, node string, r CleanRule, scheduleID strin
 		dcMu.Unlock()
 	}()
 	pod := node + "-opscore-dc"
-	// 清理陈旧调试Pod(上次异常残留)
-	_, _ = kubectl(kubeconfig, "delete", "pod", pod, "--ignore-not-found", "--wait=false", "--timeout=10s")
-	// 创建调试Pod(挂载节点根文件系统到 /host)
-	if _, err := kubectl(kubeconfig, "debug", "node/"+node, "--image="+dcImage, "-o", "name"); err != nil {
-		lg.Status = "error"
-		lg.Output = "创建调试Pod失败: " + err.Error()
-		return
-	}
-	// 等 Pod Running(最多 60s)
-	ready := false
-	for i := 0; i < 20; i++ {
-		time.Sleep(3 * time.Second)
-		phase, err := kubectl(kubeconfig, "get", "pod", pod, "-o", "jsonpath={.status.phase}")
-		if err == nil && strings.TrimSpace(phase) == "Running" {
-			ready = true
-			break
-		}
-	}
-	defer func() { _, _ = kubectl(kubeconfig, "delete", "pod", pod, "--ignore-not-found", "--wait=false", "--timeout=15s") }()
-	if !ready {
-		lg.Status = "error"
-		lg.Output = "调试Pod 未进入 Running(60s 超时)"
-		return
-	}
-	// 前置可用空间
-	beforeOut, err := kubectl(kubeconfig, "exec", pod, "--", "chroot", "/host", "df", "-B1", "/")
-	if err == nil {
-		lg.BeforeAvail = dcLastAvailBytes(beforeOut)
-	}
-	// 执行清理命令(工作目录 = 规则 path)
-	cmd := "cd " + r.Path + " 2>/dev/null; " + r.Command
-	out, err := kubectl(kubeconfig, "exec", pod, "--", "chroot", "/host", "sh", "-c", cmd)
-	lg.Output = out
-	if err != nil {
-		lg.Status = "error"
-		lg.Output += "\n[exit] " + err.Error()
-		return
-	}
-	// 后置可用空间
-	afterOut, err2 := kubectl(kubeconfig, "exec", pod, "--", "chroot", "/host", "df", "-B1", "/")
-	if err2 == nil {
-		lg.AfterAvail = dcLastAvailBytes(afterOut)
-	}
-	lg.FreedBytes = lg.AfterAvail - lg.BeforeAvail
+	cmdB64 := base64.StdEncoding.EncodeToString([]byte("cd " + r.Path + " 2>/dev/null; " + r.Command))
+	script := fmt.Sprintf(`kubectl delete pod %[1]s --ignore-not-found --wait=false >/dev/null 2>&1
+kubectl debug node/%[2]s --image=%[3]s -o name >/dev/null 2>&1 || { echo "ERR:create"; exit 3; }
+kubectl wait --for=condition=Ready pod/%[1]s --timeout=90s >/dev/null 2>&1 || { echo "ERR:wait"; exit 2; }
+echo "BEFORE:$(kubectl exec %[1]s -- chroot /host df -B1 / 2>/dev/null | tail -1 | awk '{print $4}')"
+kubectl exec %[1]s -- chroot /host sh -c "echo __CMD__ | base64 -d | sh" || echo "ERR:cmd"
+echo "AFTER:$(kubectl exec %[1]s -- chroot /host df -B1 / 2>/dev/null | tail -1 | awk '{print $4}')"
+kubectl delete pod %[1]s --ignore-not-found --wait=false >/dev/null 2>&1
+echo "__DONE__"`, pod, node, dcImage)
+	script = strings.ReplaceAll(script, "__CMD__", cmdB64)
+	out, err := dcSh(execHost, script)
+	lg.Output = strings.TrimSpace(out)
+	status, output, before, after := dcParseNodeScript(lg.Output)
+	lg.Status = status
+	lg.Output = output
+	lg.BeforeAvail = before
+	lg.AfterAvail = after
+	lg.FreedBytes = after - before
 	if lg.FreedBytes < 0 {
 		lg.FreedBytes = 0
 	}
-	lg.Status = "ok"
+	if status == "error" && lg.Output == "" {
+		lg.Output = "执行失败: " + err.Error()
+	}
 }
 
-func dcLastAvailBytes(dfOut string) int64 {
-	fields := strings.Fields(strings.TrimSpace(dfOut))
+// dcParseNodeScript 解析节点脚本的标准标记(BEFORE:/AFTER:/__DONE__/ERR:)。
+func dcParseNodeScript(out string) (status, output string, before, after int64) {
+	var cmdOut []string
+	for _, ln := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "BEFORE:"):
+			before = dcAvailBytes(ln[len("BEFORE:"):])
+		case strings.HasPrefix(ln, "AFTER:"):
+			after = dcAvailBytes(ln[len("AFTER:"):])
+		case strings.HasPrefix(ln, "ERR:"):
+			return "error", strings.TrimPrefix(ln, "ERR:"), before, after
+		}
+		if strings.HasPrefix(ln, "BEFORE:") || strings.HasPrefix(ln, "AFTER:") {
+			continue
+		}
+		cmdOut = append(cmdOut, ln)
+	}
+	return "ok", strings.TrimSpace(strings.Join(cmdOut, "\n")), before, after
+}
+
+func dcAvailBytes(s string) int64 {
+	fields := strings.Fields(strings.TrimSpace(s))
 	if len(fields) >= 4 {
 		if v, err := strconv.ParseInt(fields[len(fields)-3], 10, 64); err == nil {
 			return v
 		}
 	}
 	return 0
-}
-
-func kubectl(kubeconfig string, args ...string) (string, error) {
-	argv := append([]string{"--kubeconfig", kubeconfig}, args...)
-	out, err := exec.Command("kubectl", argv...).CombinedOutput()
-	return string(out), err
 }
 
 // ── 调度循环 ──
