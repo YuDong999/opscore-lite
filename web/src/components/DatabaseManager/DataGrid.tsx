@@ -1,6 +1,7 @@
 // 查询结果表格: 渲染 columns/rows, 支持溢出截断、null/对象友好显示、单元格编辑。
 // 增强: 表头点击排序(本地)、单元格点击复制、导出 CSV/JSON/XLSX(后端流式下载)。
-// 编辑功能：单单元格编辑 + 批量编辑 + 发送编辑请求到后端生成 SQL。
+// 编辑(dbx CellDetailDialog 同模式): 单击仅选中; 入口 = 双击详情弹窗内的「编辑」+ 右键「编辑单元格」;
+// 提交走 onEdit 单条变更(父级负责 SQL 预览/确认/执行/刷新); 无行内编辑器与底部保存行(省一行高度给数据)。
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
@@ -17,15 +18,9 @@ function renderCell(v: any): string {
   return String(v)
 }
 
-interface EditableCell {
-  row: number
-  col: number
-  draft: string   // 编辑中草稿(输入框实时值); blur/Enter 提交, Escape 丢弃
-}
-
 export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite, hidePager }: {
   result: QueryResult | null
-  onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void
+  onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void | Promise<void>
   connId?: string
   sql?: string
   columnTypes?: (string | undefined)[]  // 列类型(数据浏览模式展示在列头第二行)
@@ -37,13 +32,15 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   exportSql?: string                 // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
   hidePager?: boolean                // 不渲染内部分页脚(数据页由外层 pager 负责)
 }) {
-  const [editingCell, setEditingCell] = useState<EditableCell | null>(null)
-  const [editedRows, setEditedRows] = useState<any[][]>([])
   const [isEditable, setIsEditable] = useState(false)
   const [sortCol, setSortCol] = useState<number | null>(null)
   const [sortAsc, setSortAsc] = useState(true)
   const [copied, setCopied] = useState('')
   const [detail, setDetail] = useState<{ r: number; c: number } | null>(null)
+  // 详情弹窗编辑态(dbx 同模式): detailEdit=编辑中, detailDraft=草稿
+  const [detailEdit, setDetailEdit] = useState(false)
+  const [detailDraft, setDetailDraft] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
   const [rowDetail, setRowDetail] = useState<number | null>(null)
   const [colDetail, setColDetail] = useState<number | null>(null)
   const [fieldFilter, setFieldFilter] = useState('')
@@ -55,77 +52,53 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     setSortCol(null); setSortAsc(true)
     if (!result || !result.columns?.length || !result.rows?.length) {
       setIsEditable(false)
-      setEditedRows([])
       return
     }
     setIsEditable(!!(result as any).isEditable)
-    setEditedRows(result.rows.map(row => [...row]))
   }, [result])
 
-  const handleCellClick = useCallback((row: number, col: number) => {
-    if (!isEditable) return
-    const cur = editedRows[row]?.[col]
-    setEditingCell({ row, col, draft: cur === null || cur === undefined ? '' : String(cur) })
-  }, [isEditable, editedRows])
-
-  // 编辑中只更新草稿(输入框保持挂载) —— 修复"onChange 提交并置空 editingCell,
-  // 敲第一个字符编辑框就卸载、onBlur 还回滚全部改动"的断裂。
-  const handleCellChange = useCallback((value: string) => {
-    setEditingCell(ec => (ec ? { ...ec, draft: value } : ec))
+  const closeDetail = useCallback(() => {
+    setDetail(null)
+    setDetailEdit(false)
   }, [])
 
-  // 关闭编辑器; commit=true 时把草稿写回工作副本(blur/Enter 提交, Escape 仅关闭)
-  const handleEditorClose = useCallback((commit: boolean) => {
-    const ec = editingCell
-    if (ec && commit) {
-      const orig = editedRows[ec.row]?.[ec.col]
-      const origStr = orig === null || orig === undefined ? '' : String(orig)
-      if (ec.draft !== origStr) {
-        setEditedRows(prev => {
-          const newRows = [...prev]
-          newRows[ec.row] = [...(newRows[ec.row] || [])]
-          newRows[ec.row][ec.col] = ec.draft
-          return newRows
-        })
-      }
-    }
-    setEditingCell(null)
-  }, [editingCell, editedRows])
-
-  const handleSave = useCallback(() => {
-    if (!isEditable || !result || !result.columns || !onEdit) return
-    const changes: Array<{ row: number, col: number, newValue: any, oldValue: any }> = []
-    result.rows.forEach((origRow, i) => {
-      editedRows[i]?.forEach((editedValue, j) => {
-        if (origRow[j] !== editedValue) {
-          changes.push({ row: i, col: j, newValue: editedValue, oldValue: origRow[j] })
-        }
-      })
-    })
-    if (changes.length > 0) {
-      onEdit(changes)
-      setEditedRows(result.rows.map(row => [...row]))
-    }
-  }, [isEditable, result, editedRows, onEdit])
-
-  const handleCancel = useCallback(() => {
-    setEditingCell(null)
-    if (result?.rows) {
-      setEditedRows(result.rows.map(row => [...row]))
-    }
+  // 进入详情弹窗编辑(右键菜单/铅笔按钮共用); 草稿取原始值
+  const openDetailEdit = useCallback((r: number, c: number) => {
+    const v = result?.rows?.[r]?.[c]
+    setDetailDraft(v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))
+    setDetailEdit(true)
   }, [result])
+
+  // 保存弹窗编辑: 单条变更交给 onEdit(父级做 SQL 预览/确认/执行/刷新)
+  const saveDetailEdit = useCallback(async () => {
+    if (detail === null || !onEdit || !result?.rows) return
+    const orig = result.rows[detail.r]?.[detail.c]
+    let nv: any = detailDraft
+    if (typeof orig === 'number' && detailDraft.trim() !== '' && !Number.isNaN(Number(detailDraft))) nv = Number(detailDraft)
+    if (typeof orig === 'boolean') nv = detailDraft === 'true'
+    if (JSON.stringify(nv) === JSON.stringify(orig)) { setDetailEdit(false); return }
+    setSavingEdit(true)
+    try {
+      await onEdit([{ row: detail.r, col: detail.c, newValue: nv, oldValue: orig }])
+      setDetail(null)
+      setDetailEdit(false)
+    } finally {
+      setSavingEdit(false)
+    }
+  }, [detail, detailDraft, onEdit, result])
 
   // ── 结果分页(dbx 同款): 默认 100 行/页 + 底部翻页栏; 行数据始终全量在内存(客户端分页) ──
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   useEffect(() => { setPage(1) }, [result])
 
-  // 本地排序视图(不影响 editedRows 的原始行号映射)
+  // 本地排序视图(不影响原始行号映射)
+  const rows = result.rows || []
   const viewRows = useMemo(() => {
-    if (sortCol === null || !editedRows.length) return editedRows.map((_, i) => i)  // 统一语义: viewRows=原行索引数组
-    const idx = editedRows.map((_, i) => i)
+    if (sortCol === null || !rows.length) return rows.map((_, i) => i)  // 统一语义: viewRows=原行索引数组
+    const idx = rows.map((_, i) => i)
     idx.sort((a, b) => {
-      const va = editedRows[a]?.[sortCol], vb = editedRows[b]?.[sortCol]
+      const va = rows[a]?.[sortCol], vb = rows[b]?.[sortCol]
       if (va === null || va === undefined) return 1
       if (vb === null || vb === undefined) return -1
       const na = Number(va), nb = Number(vb)
@@ -138,7 +111,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       return sortAsc ? cmp : -cmp
     })
     return idx
-  }, [editedRows, sortCol, sortAsc])
+  }, [rows, sortCol, sortAsc])
 
   // 当前页的原行索引切片(排序感知; 右键/详情/编辑条全部用原索引, 排序不再错位)
   const pageStart = (page - 1) * pageSize
@@ -210,10 +183,12 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       { label: '复制列名', icon: <ActionIcon kind="copy" />, onClick: () => navigator.clipboard?.writeText(colName) },
       { divider: 'heavy' },
       // ── 详情 ──
-      { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => setDetail({ r: row, c: col }) },
+      { label: '单元格详情', icon: <ActionIcon kind="doc" />, onClick: () => { setDetail({ r: row, c: col }); setDetailEdit(false) } },
       { label: '行详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setRowDetail(row) } },
       { label: '列详情', icon: <ActionIcon kind="doc" />, onClick: () => { setFieldFilter(''); setColDetail(col) } },
       { label: '转置显示此行', icon: <ActionIcon kind="doc" />, onClick: () => setTranspose({ r: row }) },
+      // 单元格编辑入口(右键): 打开详情弹窗并直接进入编辑模式(无主键表/查询页不可编辑时隐藏)
+      ...(isEditable && onEdit ? [{ label: '编辑单元格', icon: <ActionIcon kind="edit" />, onClick: () => { setDetail({ r: row, c: col }); openDetailEdit(row, col) } }] : []),
       ...(tableFromSql && pkCols.length && !pkCols.includes(colName) ? [{
         label: '置为 NULL',
         icon: <ActionIcon kind="edit" />,
@@ -412,7 +387,7 @@ ${tableFromSql} WHERE ${where}
           </thead>
           <tbody>
             {pageIdx.map((i, j) => {
-              const row = editedRows[i] || []
+              const row = rows[i] || []
               return (
               <tr
                 key={i}
@@ -436,30 +411,9 @@ ${tableFromSql} WHERE ${where}
                       setRowCtxMenu(null)
                       setCtxMenu({ row: i, col: j, x: e.clientX, y: e.clientY })
                     }}
-                    onDoubleClick={() => setDetail({ r: i, c: j })}
-                    onClick={() => {
-                      if (editingCell?.row === i && editingCell?.col === j) return
-                      if (isEditable) handleCellClick(i, j)
-                    }}
-                    className={editingCell?.row === i && editingCell?.col === j ? 'editing' : ''}
+                    onDoubleClick={() => { setDetail({ r: i, c: j }); setDetailEdit(false) }}
                   >
-                    {editingCell?.row === i && editingCell?.col === j ? (
-                      <input
-                        type="text"
-                        value={editingCell.draft}
-                        placeholder={cell === null ? 'NULL' : undefined}
-                        onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={() => handleEditorClose(true)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.preventDefault(); handleEditorClose(true) }
-                          else if (e.key === 'Escape') { e.stopPropagation(); handleEditorClose(false) }
-                        }}
-                        autoFocus
-                        className="db-edit-input"
-                      />
-                    ) : (
-                      cell === null ? <span className="dim">NULL</span> : renderCell(cell)
-                    )}
+                    {cell === null ? <span className="dim">NULL</span> : renderCell(cell)}
                   </td>
                 ))}
               </tr>
@@ -468,9 +422,8 @@ ${tableFromSql} WHERE ${where}
           </tbody>
         </table>
       </div>
-      {(!hidePager || isEditable) && (
+      {!hidePager && (
       <div className="db-result-footer">
-        {!hidePager && (<>
         <span className="dim">共 {viewRows.length} 行{result.truncated ? ' · 已截断' : ''}</span>
         <select className="input db-page-size" title="每页行数" value={pageSize}
           onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
@@ -481,13 +434,6 @@ ${tableFromSql} WHERE ${where}
         <span className="dim">{page} / {Math.max(1, Math.ceil(viewRows.length / pageSize))}</span>
         <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(p => p + 1)} title="下一页" aria-label="下一页">›</button>
         <button className="btn-glass-soft btn-glass-soft-sm" disabled={page >= Math.ceil(viewRows.length / pageSize)} onClick={() => setPage(Math.ceil(viewRows.length / pageSize))} title="末页" aria-label="末页">»</button>
-        </>)}
-        {isEditable && (
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
-            <button onClick={handleSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">保存修改</button>
-            <button onClick={handleCancel} className="btn-glass-soft btn-glass-soft-sm">取消</button>
-          </span>
-        )}
       </div>
       )}
       {ctxMenu && result && result.columns?.length && ctxMenu.col < result.columns.length && (
@@ -506,16 +452,21 @@ ${tableFromSql} WHERE ${where}
           onClose={() => setRowCtxMenu(null)}
         />
       )}
-      {/* 单元格详情: 元数据网格 + 注释 + 值(dbx CellDetailDialog 同构) */}
+      {/* 单元格详情: 元数据网格 + 注释 + 值(dbx CellDetailDialog 同构); 可编辑表内含「编辑值」入口 */}
       {detail && (() => {
         const info = buildCellInfo(detail.r, detail.c)
         if (!info) return null
         return createPortal(
-          <div className="qo-overlay" onClick={() => setDetail(null)}>
+          <div className="qo-overlay" onClick={closeDetail}>
             <div className="db-cell-detail" onClick={e => e.stopPropagation()}>
               <div className="db-cell-detail-head">
-                <span className="db-cell-detail-col">单元格详情</span>
-                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetail(null)}>✕</button>
+                <span className="db-cell-detail-col">单元格详情{detailEdit ? ' · 编辑中' : ''}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  {isEditable && onEdit && !detailEdit && (
+                    <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => openDetailEdit(detail.r, detail.c)} title="编辑此单元格(按主键 UPDATE)">编辑值</button>
+                  )}
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={closeDetail}>✕</button>
+                </span>
               </div>
               <div className="db-cell-detail-body">
                 <div className="db-cell-meta">
@@ -533,12 +484,33 @@ ${tableFromSql} WHERE ${where}
                 <div className="db-cell-meta-value">
                   <div className="db-cell-meta-value-head">
                     <span className="dim">值</span>
-                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.value === null ? '' : renderCell(info.value)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制值</button>
-                      <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.column); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制列名</button>
-                    </span>
+                    {!detailEdit && (
+                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.value === null ? '' : renderCell(info.value)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制值</button>
+                        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.column); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制列名</button>
+                      </span>
+                    )}
                   </div>
-                  <pre>{info.value === null ? <i className="dim">NULL</i> : typeof info.value === 'object' ? JSON.stringify(info.value, null, 2) : String(info.value)}</pre>
+                  {detailEdit ? (
+                    <>
+                      <textarea
+                        className="input"
+                        style={{ minHeight: '6rem', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.75rem' }}
+                        value={detailDraft}
+                        placeholder={info.value === null ? 'NULL (空串提交为空字符串; 置 NULL 用右键菜单)' : undefined}
+                        onChange={e => setDetailDraft(e.target.value)}
+                        autoFocus
+                      />
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', paddingTop: 6 }}>
+                        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetailEdit(false)} disabled={savingEdit}>取消</button>
+                        <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveDetailEdit} disabled={savingEdit}>
+                          {savingEdit ? '保存中...' : '保存修改 (按主键 UPDATE)'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <pre>{info.value === null ? <i className="dim">NULL</i> : typeof info.value === 'object' ? JSON.stringify(info.value, null, 2) : String(info.value)}</pre>
+                  )}
                 </div>
               </div>
             </div>
