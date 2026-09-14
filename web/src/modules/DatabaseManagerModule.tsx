@@ -8,7 +8,7 @@ import { useToast } from '../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
   listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
-  listTables, fetchTableDDL,
+  listTables, fetchTableDDL, describeTable, applyCellEdit,
 } from '../components/DatabaseManager/api'
 import ConnectionPanel from '../components/DatabaseManager/ConnectionPanel'
 import ConnectionTree from '../components/DatabaseManager/ConnectionTree'
@@ -252,6 +252,61 @@ ${ddl};
     }
   }
 
+  // ── 查询页行内编辑: 解析目标表 → describe 取主键 → 预览确认 → 执行 → 原位更新结果 ──
+  // 仅支持单表 SELECT(QueryEditor 的 isEditable 判定已先行过滤); 无主键表后端同样拒绝。
+  const handleQueryEditChanges = async (
+    changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>,
+    c: ConnectionInfo, tabDb?: string,
+  ) => {
+    if (!result?.columns || !result.rows) return
+    const m = /FROM\s+([`"\[\]\w.]+)/i.exec(lastSQL || '')
+    if (!m) { toast.error('无法定位目标表: 行内编辑仅支持单表 SELECT'); return }
+    const parts = m[1].replace(/[`"\[\]]/g, '').split('.').filter(Boolean)
+    const database = parts.length >= 2 ? parts[0] : (tabDb || c.config?.database || '')
+    const table = parts.length >= 2 ? parts[parts.length - 1] : parts[0]
+    if (!database || !table) { toast.error('无法定位目标库表(表名未带库前缀且连接未指定默认库)'); return }
+    try {
+      const d = await describeTable(c.id, database, table)
+      const pkCols = (d.columns || []).filter(x => x.key === 'PRI').map(x => x.name)
+      if (pkCols.length === 0) { toast.error(`表 ${database}.${table} 无主键, 已拒绝编辑`); return }
+      const rowObjAt = (ri: number) => {
+        const obj: Record<string, any> = {}
+        result.columns!.forEach((name, i) => { obj[name] = result.rows![ri]?.[i] ?? null })
+        return obj
+      }
+      // 第一刀 confirm=false 拿后端生成的 UPDATE 预览(透明原则), 确认后再执行
+      const previews = await Promise.all(changes.map(ch =>
+        applyCellEdit(c.id, database, table, pkCols, rowObjAt(ch.row), result.columns![ch.col], ch.newValue, false)
+      ))
+      const sqls = previews.map(p => p.sql).filter(Boolean)
+      if (sqls.length && !window.confirm('将执行以下语句:\n\n' + sqls.join('\n\n'))) return
+      for (const ch of changes) {
+        const r = await applyCellEdit(c.id, database, table, pkCols, rowObjAt(ch.row), result.columns![ch.col], ch.newValue, true)
+        if (!r.ok) throw new Error(r.error || '写入失败')
+      }
+      toast.success(`已更新 ${changes.length} 个单元格 (结果网格已原位刷新)`)
+      const byRow = new Map<number, Array<{ col: number; newValue: any }>>()
+      changes.forEach(ch => {
+        const arr = byRow.get(ch.row) || []
+        arr.push({ col: ch.col, newValue: ch.newValue })
+        byRow.set(ch.row, arr)
+      })
+      setResult(prev => {
+        if (!prev?.rows) return prev
+        const rows = prev.rows.map((row, ri) => {
+          const chs = byRow.get(ri)
+          if (!chs) return row
+          const next = [...row]
+          chs.forEach(ch => { next[ch.col] = ch.newValue })
+          return next
+        })
+        return { ...prev, rows }
+      })
+    } catch (e: any) {
+      toast.error('更新失败: ' + (e.message || e))
+    }
+  }
+
   const isProd = useMemo(() => {
     if (!conn) return false
     const hay = (conn.name + ' ' + (conn.config.host || '') + ' ' + (conn.config.database || '')).toLowerCase()
@@ -420,7 +475,7 @@ ${ddl};
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={setLastSQL}
                         />
-                        {result && <DataGrid result={result} connId={c!.id} sql={lastSQL} />}
+                        {result && <DataGrid result={result} connId={c!.id} sql={lastSQL} onEdit={(changes) => handleQueryEditChanges(changes, c!, t.db)} />}
                       </div>
                     )
                   }

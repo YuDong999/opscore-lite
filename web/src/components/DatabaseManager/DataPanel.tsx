@@ -316,6 +316,8 @@ export default function DataPanel({
               affected: 0,
               durationMs: data.durationMs || 0,
               truncated: false,
+              // 单表浏览天然可编辑; 有主键才激活(后端 apply-edit 对无主键表同样拒绝), 视图不可编辑
+              isEditable: !isView && (colMeta ?? []).some(c => c.key === 'PRI'),
             }}
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}

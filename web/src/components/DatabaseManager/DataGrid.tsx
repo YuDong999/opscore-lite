@@ -20,7 +20,7 @@ function renderCell(v: any): string {
 interface EditableCell {
   row: number
   col: number
-  value: any
+  draft: string   // 编辑中草稿(输入框实时值); blur/Enter 提交, Escape 丢弃
 }
 
 export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite, hidePager }: {
@@ -64,16 +64,33 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
 
   const handleCellClick = useCallback((row: number, col: number) => {
     if (!isEditable) return
-    setEditingCell({ row, col, value: editedRows[row]?.[col] })
+    const cur = editedRows[row]?.[col]
+    setEditingCell({ row, col, draft: cur === null || cur === undefined ? '' : String(cur) })
   }, [isEditable, editedRows])
 
-  const handleCellChange = useCallback((value: any) => {
-    if (!editingCell || !result) return
-    const newRows = [...editedRows]
-    newRows[editingCell.row][editingCell.col] = value
-    setEditedRows(newRows)
+  // 编辑中只更新草稿(输入框保持挂载) —— 修复"onChange 提交并置空 editingCell,
+  // 敲第一个字符编辑框就卸载、onBlur 还回滚全部改动"的断裂。
+  const handleCellChange = useCallback((value: string) => {
+    setEditingCell(ec => (ec ? { ...ec, draft: value } : ec))
+  }, [])
+
+  // 关闭编辑器; commit=true 时把草稿写回工作副本(blur/Enter 提交, Escape 仅关闭)
+  const handleEditorClose = useCallback((commit: boolean) => {
+    const ec = editingCell
+    if (ec && commit) {
+      const orig = editedRows[ec.row]?.[ec.col]
+      const origStr = orig === null || orig === undefined ? '' : String(orig)
+      if (ec.draft !== origStr) {
+        setEditedRows(prev => {
+          const newRows = [...prev]
+          newRows[ec.row] = [...(newRows[ec.row] || [])]
+          newRows[ec.row][ec.col] = ec.draft
+          return newRows
+        })
+      }
+    }
     setEditingCell(null)
-  }, [editingCell, editedRows, result])
+  }, [editingCell, editedRows])
 
   const handleSave = useCallback(() => {
     if (!isEditable || !result || !result.columns || !onEdit) return
@@ -422,9 +439,14 @@ ${tableFromSql} WHERE ${where}
                     {editingCell?.row === i && editingCell?.col === j ? (
                       <input
                         type="text"
-                        value={String(cell)}
+                        value={editingCell.draft}
+                        placeholder={cell === null ? 'NULL' : undefined}
                         onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={handleCancel}
+                        onBlur={() => handleEditorClose(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); handleEditorClose(true) }
+                          else if (e.key === 'Escape') { e.stopPropagation(); handleEditorClose(false) }
+                        }}
                         autoFocus
                         className="db-edit-input"
                       />

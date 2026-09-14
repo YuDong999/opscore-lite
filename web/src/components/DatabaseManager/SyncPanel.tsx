@@ -285,12 +285,41 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           if (d.job?.status === 'running') setTimeout(tick, 1200)
           else if (d.job?.status === 'done') {
             toast.success('同步完成')
+            loadJobs()
             window.dispatchEvent(new CustomEvent('dbmanager:tree-refresh'))
           }
-          else if (d.job?.status === 'failed') toast.error('同步失败: ' + (d.job.err || ''))
+          else if (d.job?.status === 'failed') { toast.error('同步失败: ' + (d.job.err || '')); loadJobs() }
+          else if (d.job?.status === 'canceled') { toast.warn('任务已取消'); loadJobs() }
         }).catch(() => {})
     }
     tick()
+  }
+
+  // ── 任务记录(补接后端 /sync/jobs、/sync/cancel 端点: 此前任务只能干等, 不能看历史不能取消) ──
+  const [jobs, setJobs] = useState<Job[] | null>(null)
+  const [jobsBusy, setJobsBusy] = useState(false)
+
+  const loadJobs = () => {
+    setJobsBusy(true)
+    const token = localStorage.getItem('opscore-token')
+    fetch('/api/dbmanager/sync/jobs', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.json())
+      .then(d => setJobs(d.jobs || []))
+      .catch(() => setJobs([]))
+      .finally(() => setJobsBusy(false))
+  }
+  useEffect(() => { loadJobs() }, [])
+
+  const doCancel = async (id: string) => {
+    if (!window.confirm('确认取消该任务?')) return
+    try {
+      await post('/api/dbmanager/sync/cancel', { id })
+      toast.success('已请求取消')
+      if (job?.id === id) poll(id)
+      loadJobs()
+    } catch (e: any) {
+      toast.error('取消失败: ' + (e.message || e))
+    }
   }
 
   const visiblePlan = plan?.tables?.filter(t => !t.skipped) || []
@@ -583,6 +612,42 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           ))}
         </div>
       )}
+
+      {/* 任务记录: 最近 10 条(新→旧), 运行中可取消, 点查看载入上方进度区 */}
+      <div className="db-advanced-block">
+        <div className="db-conn-editor-title">
+          任务记录
+          <button className="btn-glass-soft btn-glass-soft-sm" style={{ marginLeft: 'auto' }} onClick={loadJobs} disabled={jobsBusy}>
+            {jobsBusy ? '刷新中...' : '刷新'}
+          </button>
+        </div>
+        {(jobs || []).length === 0 ? (
+          <div className="dim" style={{ fontSize: '0.75rem' }}>{jobsBusy ? '加载中...' : '暂无同步任务'}</div>
+        ) : (
+          (jobs || []).slice().reverse().slice(0, 10).map(j => {
+            const src = conns.find(x => x.id === j.request.sourceId)
+            const dst = conns.find(x => x.id === j.request.targetId)
+            return (
+              <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', padding: '0.25rem 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                <span className={`pill ${j.status === 'done' ? 'pill-ok' : j.status === 'failed' ? 'pill-err' : j.status === 'running' ? 'pill-warn' : ''}`}>
+                  {j.status === 'running' ? '执行中' : j.status === 'done' ? '完成' : j.status === 'failed' ? '失败' : j.status === 'canceled' ? '已取消' : j.status}
+                </span>
+                <span title={j.err || undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                  {src?.name || j.request.sourceId} · {j.request.sourceDb} → {dst?.name || j.request.targetId} · {j.request.targetSchema || j.request.targetDb}
+                  {j.err ? <span style={{ color: 'var(--danger)' }}> · {j.err.slice(0, 60)}</span> : null}
+                </span>
+                <span className="dim">{MODE_LABELS[j.request.mode as SyncMode]?.text || j.request.mode}</span>
+                <span className="dim">{j.totalRows} 行</span>
+                <span className="dim" title={j.startedAt}>{new Date(j.startedAt).toLocaleString()}</span>
+                {j.status === 'running' && (
+                  <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => doCancel(j.id)}>取消</button>
+                )}
+                <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setJob(j)} title="在上方进度区查看该任务">查看</button>
+              </div>
+            )
+          })
+        )}
+      </div>
     </div>
   )
 }
