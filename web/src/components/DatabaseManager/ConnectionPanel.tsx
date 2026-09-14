@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '../Toast'
-import { CategoryIcon, EngineIcon } from './DbIcons'
+import { CategoryIcon, EngineIcon, ActionIcon } from './DbIcons'
 import {
   type ConnectionInfo,
   type ConnectionConfig,
@@ -63,6 +63,9 @@ export default function ConnectionPanel({
   // 表单测试连接(不保存): 结果内联横幅 + toast, 保存与测试彻底分离
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // 密码可见性(小眼睛)
+  const [showPwd, setShowPwd] = useState(false)
+  const [showSshPwd, setShowSshPwd] = useState(false)
 
   const reload = async () => {
     setLoading(true)
@@ -108,6 +111,7 @@ export default function ConnectionPanel({
     setPassword('')
     setPickedEngine(null)
     setTestMsg(null)
+    setShowPwd(false); setShowSshPwd(false)
     setStep('pick-engine')
   }
 
@@ -116,6 +120,7 @@ export default function ConnectionPanel({
     setPassword('')
     setPickedEngine(c.engine)
     setTestMsg(null)
+    setShowPwd(false); setShowSshPwd(false)
     setStep('fill-config')
   }
 
@@ -124,6 +129,7 @@ export default function ConnectionPanel({
     setPassword('')
     setPickedEngine(null)
     setTestMsg(null)
+    setShowPwd(false); setShowSshPwd(false)
     setStep('list')
   }
 
@@ -370,7 +376,18 @@ export default function ConnectionPanel({
                 </label>
                 <label>
                   密码{editing.id && <span className="dim" style={{ fontSize: '0.625rem' }}> (留空表示不修改)</span>}
-                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+                  <div style={{ position: 'relative' }}>
+                    <input className="input" type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} style={{ paddingRight: '2.4rem' }} />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd(v => !v)}
+                      title={showPwd ? '隐藏密码' : '显示密码'}
+                      aria-label={showPwd ? '隐藏密码' : '显示密码'}
+                      style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', padding: 2 }}
+                    >
+                      <ActionIcon kind={showPwd ? 'eye-off' : 'eye'} size={14} />
+                    </button>
+                  </div>
                 </label>
                 {meta.hasDatabase && (
                   <label>
@@ -460,7 +477,18 @@ export default function ConnectionPanel({
                         ) : (
                           <label>
                             SSH 密码
-                            <input className="input" type="password" value={cfg.ssh?.password || ''} onChange={e => setEditing({ ...editing, config: { ...cfg, ssh: { ...(cfg.ssh || { enabled: true, host: '', port: 22, user: '', authMode: 'password' as const }), password: e.target.value } } })} />
+                            <div style={{ position: 'relative' }}>
+                              <input className="input" type={showSshPwd ? 'text' : 'password'} value={cfg.ssh?.password || ''} onChange={e => setEditing({ ...editing, config: { ...cfg, ssh: { ...(cfg.ssh || { enabled: true, host: '', port: 22, user: '', authMode: 'password' as const }), password: e.target.value } } })} style={{ paddingRight: '2.4rem' }} />
+                              <button
+                                type="button"
+                                onClick={() => setShowSshPwd(v => !v)}
+                                title={showSshPwd ? '隐藏密码' : '显示密码'}
+                                aria-label={showSshPwd ? '隐藏密码' : '显示密码'}
+                                style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', padding: 2 }}
+                              >
+                                <ActionIcon kind={showSshPwd ? 'eye-off' : 'eye'} size={14} />
+                              </button>
+                            </div>
                           </label>
                         )}
                       </div>

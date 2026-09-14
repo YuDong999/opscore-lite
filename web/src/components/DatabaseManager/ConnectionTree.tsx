@@ -2,7 +2,7 @@
 //   连接(引擎图标+状态点+hover 操作) -> 库 -> [模式(三级引擎)] -> 表/视图(行数徽标) 等对象节点。
 // 懒加载: 点开才请求。顶部搜索框。表节点: 单击打开数据浏览, 右键菜单提供更多操作。
 import React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
 } from './api'
@@ -237,6 +237,20 @@ export default function ConnectionTree({
     window.addEventListener('dbmanager:conn-tested', handler)
     return () => window.removeEventListener('dbmanager:conn-tested', handler)
   }, [])
+  // 会话内自动探测已有连接(状态灯即真实连通性): 每 id 只探一次, 失败记录错误供点击查看, 不 toast 打扰
+  const autoProbedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const c of conns) {
+      if (connHealth[c.id] !== undefined || autoProbedRef.current.has(c.id)) continue
+      autoProbedRef.current.add(c.id)
+      testConnection({ id: c.id })
+        .then(r => {
+          setConnHealth(prev => ({ ...prev, [c.id]: r.ok ? 'ok' : 'fail' }))
+          setConnHealthMsg(prev => ({ ...prev, [c.id]: r.ok ? '' : (r.error || '未知原因') }))
+        })
+        .catch(() => setConnHealth(prev => ({ ...prev, [c.id]: 'fail' })))
+    }
+  }, [conns, connHealth])
   const probeSchemas = (connId: string) => {
     listSchemas(connId)
       .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
