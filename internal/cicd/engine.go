@@ -155,6 +155,7 @@ type StageRun struct {
 	Host      string    `json:"host"`
 	Workspace string    `json:"workspace"`
 	Status    string    `json:"status"`
+	Approval  bool      `json:"approval"` // 执行前需人工审批(前端节点流阶段标签显示用)
 	Steps     []StepRun `json:"steps"`
 }
 
@@ -969,7 +970,7 @@ func newRun(p *Pipeline, trigger string, rt *runtimeCtx) *Run {
 		Status:     StatusQueued,
 	}
 	for i, st := range p.Stages {
-		sr := StageRun{Name: st.Name, Host: st.Host, Workspace: st.Workspace, Status: StatusPending}
+		sr := StageRun{Name: st.Name, Host: st.Host, Workspace: st.Workspace, Status: StatusPending, Approval: st.Approval}
 		for _, sp := range st.Steps {
 			sr.Steps = append(sr.Steps, StepRun{Name: sp.Name, Command: sp.Command, Status: StatusPending})
 		}
