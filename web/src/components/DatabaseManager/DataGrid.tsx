@@ -387,20 +387,27 @@ ${tableFromSql} WHERE ${where}
           <thead>
             <tr>
               <th className="db-col-num">#</th>
-              {result.columns.map((c, j) => (
-                <th key={c} title="点击排序" onClick={() => {
+              {result.columns.map((c, j) => {
+                // 键列着色: 主键淡红 / 索引(UNI/MUL)淡绿 —— 行内编辑定位与索引感知; 标记走类型行后缀不用 emoji
+                const k = columnMeta?.[j]?.key || ''
+                const keyCls = k === 'PRI' ? 'db-th-pri' : (k === 'UNI' || k === 'MUL') ? 'db-th-idx' : ''
+                const keyTip = k === 'PRI' ? '主键 · ' : keyCls ? '索引 · ' : ''
+                const keyTag = k === 'PRI' ? ' · PRI' : k === 'UNI' ? ' · UNI' : k === 'MUL' ? ' · MUL' : ''
+                return (
+                <th key={c} className={keyCls} title={keyTip + '点击排序'} onClick={() => {
                   if (sortCol === j) { setSortAsc(!sortAsc) } else { setSortCol(j); setSortAsc(true) }
                 }}>
                   {columnTypes ? (
                     <span className="db-th-two-line">
                       <span className="db-th-name">{c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}</span>
-                      <span className="db-th-type">{columnTypes[j] || ''}</span>
+                      <span className="db-th-type">{columnTypes[j] || ''}{keyTag}</span>
                     </span>
                   ) : (
                     <>{c}{sortCol === j ? (sortAsc ? ' ↑' : ' ↓') : ''}</>
                   )}
                 </th>
-              ))}
+                )
+              })}
             </tr>
           </thead>
           <tbody>

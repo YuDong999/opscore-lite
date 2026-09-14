@@ -3417,6 +3417,9 @@ body {
 .db-table-grid th:last-child, .db-table-grid td:last-child { border-right: none; }
 .db-table-grid thead th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 650; z-index: 2; cursor: pointer; user-select: none; }
 .db-table-grid thead th.db-col-num { background: var(--surface-tint); }
+/* 键列着色: 主键淡红 / 索引(UNI/MUL)淡绿 —— 与 surface-solid 实色混合保证 sticky 表头不透底 */
+.db-table-grid thead th.db-th-pri { background: color-mix(in srgb, var(--danger) 11%, var(--surface-solid)); }
+.db-table-grid thead th.db-th-idx { background: color-mix(in srgb, var(--ok) 13%, var(--surface-solid)); }
 .db-table-grid tbody tr:nth-child(even) { background: var(--surface-tint); }
 .db-table-grid tbody tr:hover { background: var(--row-hover); }
 .db-table-grid td.db-col-num { color: var(--text-dim); text-align: right; background: var(--surface-tint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
