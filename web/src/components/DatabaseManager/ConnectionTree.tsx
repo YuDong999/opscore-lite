@@ -173,13 +173,23 @@ export default function ConnectionTree({
     [conns, f],
   )
 
-  const loadDbs = async (connId: string) => {
-    if (dbCache[connId]) return
+  const loadDbs = async (connId: string, force = false): Promise<boolean> => {
+    if (!force && dbCache[connId]) return true
     try {
       const dbs = await listDatabases(connId)
-      testConnection({ id: connId }).then(r => setConnHealth(prev => ({ ...prev, [connId]: r.ok ? 'ok' : 'fail' }))).catch(() => setConnHealth(prev => ({ ...prev, [connId]: 'fail' })))
+      setConnHealth(prev => ({ ...prev, [connId]: 'ok' }))
+      setConnHealthMsg(prev => ({ ...prev, [connId]: '' }))
       setDbCache(prev => ({ ...prev, [connId]: dbs || [] }))
-    } catch { setDbCache(prev => ({ ...prev, [connId]: [] })) }
+      return true
+    } catch (e: any) {
+      // 失败缓存空数组占位 —— 懒加载 effect 不会反复重试刷屏; 点击失败连接时走 force 重试
+      const msg = e?.message || '未知原因'
+      setConnHealth(prev => ({ ...prev, [connId]: 'fail' }))
+      setConnHealthMsg(prev => ({ ...prev, [connId]: msg }))
+      notify(false, `连接失败: ${msg}`)
+      setDbCache(prev => ({ ...prev, [connId]: [] }))
+      return false
+    }
   }
 
   const loadTables = async (connId: string, db: string) => {
@@ -214,6 +224,8 @@ export default function ConnectionTree({
   const [schemaCache, setSchemaCache] = useState<Record<string, string[]>>({})
   const [rowCounts, setRowCounts] = useState<Record<string, Record<string, number>>>({})
   const [connHealth, setConnHealth] = useState<Record<string, 'ok' | 'fail'>>({})
+  // 连接失败的具体错误(点击失败连接时展示; 灯色对 fail/未测试统一为灰 —— 不吓人, 点开看原因)
+  const [connHealthMsg, setConnHealthMsg] = useState<Record<string, string>>({})
   const probeSchemas = (connId: string) => {
     listSchemas(connId)
       .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
@@ -266,6 +278,13 @@ export default function ConnectionTree({
     setActiveKey(node.key)
     if (node.level === 'conn' && node.conn) {
       onSelectConn(node.conn)
+      if (connHealth[node.conn.id] === 'fail') {
+        // 点击失败连接: 静默重试(失败会带当前具体错误 toast, 成功转绿并展开) —— 不预报过期错误
+        loadDbs(node.conn.id, true).then(ok => {
+          if (ok) setExpanded(prev => new Set(prev).add(node.key))
+        })
+        return
+      }
       toggle(node.key)
       // 钻取模式: 默认加载由懒加载 effect 全量负责, 手动展开时再按需补齐缓存即可
       if (drill ? !dbCache[node.conn.id] : !expanded.has(node.key)) loadDbs(node.conn.id)
@@ -485,7 +504,15 @@ export default function ConnectionTree({
     setTesting(c.id)
     try {
       const r = await testConnection({ id: c.id })
-      notify(r.ok, r.ok ? `${c.name}: ${r.version || '连接成功'}` : `${c.name}: ${r.error}`)
+      if (r.ok) {
+        setConnHealth(prev => ({ ...prev, [c.id]: 'ok' }))
+        setConnHealthMsg(prev => ({ ...prev, [c.id]: '' }))
+        notify(true, `${c.name}: ${r.version || '连接成功'}`)
+      } else {
+        setConnHealth(prev => ({ ...prev, [c.id]: 'fail' }))
+        setConnHealthMsg(prev => ({ ...prev, [c.id]: r.error || '未知原因' }))
+        notify(false, `${c.name}: ${r.error}`)
+      }
     } catch (e: any) {
       notify(false, `${c.name}: ${e.message}`)
     } finally { setTesting(null) }
@@ -819,8 +846,9 @@ export default function ConnectionTree({
               <span className="truncate">{node.label}</span>
               {isConn && node.conn && (() => {
                 const h = connHealth[node.conn.id]
-                const color = h === 'ok' ? '#30d158' : h === 'fail' ? '#ff453a' : 'var(--text-dim)'
-                return <span title={h === 'ok' ? '连接正常' : h === 'fail' ? '连接失败(可能密码已变更或服务不可达)' : '未测试'} style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0, marginLeft: 4 }} />
+                // fail 与未测试同为灰灯(约定: 错误配置也正常入侧栏, 不红不吓人), 点击行可看具体错误
+                const color = h === 'ok' ? '#30d158' : 'var(--text-dim)'
+                return <span title={h === 'ok' ? '连接正常' : h === 'fail' ? '连接失败 · 点击查看错误' : '未测试'} style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0, marginLeft: 4 }} />
               })()}
               {isConn && node.conn && (
                 <span className="db-tree-actions" onClick={e => e.stopPropagation()}>

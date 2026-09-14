@@ -60,6 +60,9 @@ export default function ConnectionPanel({
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // 表单测试连接(不保存): 结果内联横幅 + toast, 保存与测试彻底分离
+  const [testing, setTesting] = useState(false)
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const reload = async () => {
     setLoading(true)
@@ -104,6 +107,7 @@ export default function ConnectionPanel({
     setEditing({ engine: undefined, config: { host: '127.0.0.1', port: 0, database: '', username: '', sslMode: 'preferred' } })
     setPassword('')
     setPickedEngine(null)
+    setTestMsg(null)
     setStep('pick-engine')
   }
 
@@ -111,6 +115,7 @@ export default function ConnectionPanel({
     setEditing({ ...c, config: { ...c.config } })
     setPassword('')
     setPickedEngine(c.engine)
+    setTestMsg(null)
     setStep('fill-config')
   }
 
@@ -118,6 +123,7 @@ export default function ConnectionPanel({
     setEditing(null)
     setPassword('')
     setPickedEngine(null)
+    setTestMsg(null)
     setStep('list')
   }
 
@@ -161,6 +167,33 @@ export default function ConnectionPanel({
       .catch(() => { /* 后端不可达时保持本地默认 */ })
   }
 
+  // 测试连接(不保存): 用当前表单值直连探测; 失败提示具体错误内容, 成功弹窗提醒 —— 保存与测试彻底分离
+  const doTestForm = async () => {
+    if (!editing?.engine) { toast.error('请先选择引擎'); return }
+    const meta = getEngineMeta(editing.engine)
+    const isCustom = meta?.category === 'custom'
+    if (!isCustom && !editing.config?.host) { toast.error('主机不能为空'); return }
+    if (isCustom && !editing.config?.dsn?.trim() && !editing.config?.driver?.trim()) { toast.error('自定义连接需填写 Driver 或 DSN'); return }
+    setTesting(true)
+    setTestMsg(null)
+    try {
+      const r = await testConnection({ engine: editing.engine, config: editing.config, password })
+      if (r.ok) {
+        const text = `连接成功${r.version ? ': ' + r.version : ''}`
+        setTestMsg({ ok: true, text })
+        toast.success(text)
+      } else {
+        setTestMsg({ ok: false, text: r.error || '未知原因' })
+        toast.error('连接失败: ' + (r.error || '未知原因'))
+      }
+    } catch (e: any) {
+      setTestMsg({ ok: false, text: e.message || '测试请求失败' })
+      toast.error('测试失败: ' + (e.message || e))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const save = async () => {
     if (!editing) return
     if (!editing.name?.trim()) { toast.error('名称不能为空'); return }
@@ -178,21 +211,13 @@ export default function ConnectionPanel({
     try {
       if (editing.id) {
         await updateConnection(editing.id, editing.name!, editing.config!, password)
-        toast.success('已更新')
+        toast.success('已保存 (连通性请用「测试连接」验证)')
       } else {
         if (!password && !isCustom) { toast.error('新建连接必须输入密码'); setBusy(false); return }
         const c = await createConnection(editing.name!, editing.engine!, editing.config!, password)
-        toast.success('已创建')
+        toast.success('已保存到侧栏 (未测试, 状态灯为灰)')
         onSelect(c)
       }
-      // 保存后自动测连通, 结果即时反馈(不阻断保存)
-      try {
-        const target = editing.id ? editing : undefined
-        if (target?.id) {
-          const r = await testConnection({ id: target.id })
-          r.ok ? toast.success(`连接测试成功: ${r.version || ''}`) : toast.error(`连接测试失败: ${r.error || '未知原因'}`)
-        }
-      } catch { /* 测试失败不阻断流程 */ }
       cancelWizard()
       await reload()
     } catch (e: any) {
@@ -576,8 +601,16 @@ export default function ConnectionPanel({
                 )}
               </div>
             </details>
+            {testMsg && (
+              <div className={`banner ${testMsg.ok ? 'banner-ok' : 'banner-err'}`} style={{ margin: '0.4rem 0' }}>
+                {testMsg.ok ? '✓ ' : '✗ '}{testMsg.text}
+              </div>
+            )}
             <div className="db-form-actions">
               <button className="btn-glass-soft btn-glass-soft-sm" onClick={cancelWizard} disabled={busy}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={doTestForm} disabled={busy || testing} title="用当前表单值直连探测, 不保存">
+                {testing ? '测试中...' : '测试连接'}
+              </button>
               <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={save} disabled={busy}>
                 {busy ? '保存中...' : '保存'}
               </button>
