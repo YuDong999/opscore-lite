@@ -210,13 +210,25 @@ export default function ConnectionPanel({
     setBusy(true)
     try {
       if (editing.id) {
+        // 编辑 = 纯更新(dbx 同语义), 不自动连接; 连通性用「测试连接」验证
         await updateConnection(editing.id, editing.name!, editing.config!, password)
-        toast.success('已保存 (连通性请用「测试连接」验证)')
+        toast.success('已保存')
       } else {
         if (!password && !isCustom) { toast.error('新建连接必须输入密码'); setBusy(false); return }
+        // 新建 = 保存并连接(dbx saveAndConnect 同语义): 入侧栏后立即探测, 失败保留连接供重试与查看错误
         const c = await createConnection(editing.name!, editing.engine!, editing.config!, password)
-        toast.success('已保存到侧栏 (未测试, 状态灯为灰)')
+        toast.success('已保存到侧栏, 正在连接...')
         onSelect(c)
+        try {
+          const r = await testConnection({ id: c.id })
+          window.dispatchEvent(new CustomEvent('dbmanager:conn-tested', { detail: { id: c.id, ok: !!r.ok, error: r.ok ? '' : (r.error || '未知原因') } }))
+          if (r.ok) toast.success(`连接成功: ${r.version || ''}`)
+          else toast.error(`连接失败: ${r.error || '未知原因'} (连接已保留, 点击侧栏条目可重试)`)
+        } catch (e: any) {
+          const msg = e?.message || '未知原因'
+          window.dispatchEvent(new CustomEvent('dbmanager:conn-tested', { detail: { id: c.id, ok: false, error: msg } }))
+          toast.error(`连接失败: ${msg} (连接已保留, 点击侧栏条目可重试)`)
+        }
       }
       cancelWizard()
       await reload()
@@ -601,18 +613,33 @@ export default function ConnectionPanel({
                 )}
               </div>
             </details>
-            {testMsg && (
-              <div className={`banner ${testMsg.ok ? 'banner-ok' : 'banner-err'}`} style={{ margin: '0.4rem 0' }}>
-                {testMsg.ok ? '✓ ' : '✗ '}{testMsg.text}
-              </div>
-            )}
-            <div className="db-form-actions">
+            {/* 测试结果(dbx 同布局): footer 左侧内联一行, 绿/红 + 截断 + title 全文 + 失败可复制 */}
+            <div className="db-form-actions" style={{ alignItems: 'center' }}>
+              <span
+                style={{
+                  flex: 1, minWidth: 0, fontSize: '0.72rem', textAlign: 'left',
+                  display: 'inline-flex', alignItems: 'center', gap: 4, overflow: 'hidden',
+                  color: testMsg ? (testMsg.ok ? 'var(--ok)' : 'var(--danger)') : 'transparent',
+                }}
+                title={testMsg?.text || ''}
+                role="status"
+              >
+                {testMsg && <>{testMsg.ok ? '✓' : '✗'} {testMsg.text}</>}
+                {testMsg && !testMsg.ok && (
+                  <button
+                    className="btn-glass-soft btn-glass-soft-sm"
+                    style={{ padding: '0 0.3rem', fontSize: '0.625rem', flexShrink: 0 }}
+                    title="复制错误内容"
+                    onClick={() => navigator.clipboard?.writeText(testMsg.text).catch(() => {})}
+                  >复制</button>
+                )}
+              </span>
               <button className="btn-glass-soft btn-glass-soft-sm" onClick={cancelWizard} disabled={busy}>取消</button>
               <button className="btn-glass-soft btn-glass-soft-sm" onClick={doTestForm} disabled={busy || testing} title="用当前表单值直连探测, 不保存">
                 {testing ? '测试中...' : '测试连接'}
               </button>
               <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={save} disabled={busy}>
-                {busy ? '保存中...' : '保存'}
+                {busy ? '保存中...' : editing.id ? '保存' : '保存并连接'}
               </button>
             </div>
           </div>

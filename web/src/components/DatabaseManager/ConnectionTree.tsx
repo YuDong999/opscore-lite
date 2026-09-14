@@ -226,6 +226,17 @@ export default function ConnectionTree({
   const [connHealth, setConnHealth] = useState<Record<string, 'ok' | 'fail'>>({})
   // 连接失败的具体错误(点击失败连接时展示; 灯色对 fail/未测试统一为灰 —— 不吓人, 点开看原因)
   const [connHealthMsg, setConnHealthMsg] = useState<Record<string, string>>({})
+  // 面板「保存并连接」的探测结果同步状态灯(dbx 同语义: 新建即连接, 失败保留可重试)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; ok: boolean; error?: string }>).detail
+      if (!d?.id) return
+      setConnHealth(prev => ({ ...prev, [d.id]: d.ok ? 'ok' : 'fail' }))
+      setConnHealthMsg(prev => ({ ...prev, [d.id]: d.ok ? '' : (d.error || '未知原因') }))
+    }
+    window.addEventListener('dbmanager:conn-tested', handler)
+    return () => window.removeEventListener('dbmanager:conn-tested', handler)
+  }, [])
   const probeSchemas = (connId: string) => {
     listSchemas(connId)
       .then(ss => setSchemaCache(prev => ({ ...prev, [connId]: ss || [] })))
