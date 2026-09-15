@@ -104,9 +104,13 @@ func DiscoverK8sLogTargetsOn(dataDir, clusterID, hostID string) ([]DiscoverPod, 
 		}
 		out, err := exec.Command("kubectl", "--kubeconfig", kc, "--request-timeout=15s", "get", "pods", "-A", "-o", "json").CombinedOutput()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("kubectl: %w\n%s", err, firstLines(out, 5))
 		}
-		return parseDiscoverPods(out, clusterID)
+		pods, perr := parseDiscoverPods(out, clusterID)
+		if perr != nil {
+			return nil, fmt.Errorf("kubectl 输出不是有效 JSON:\n%s", firstLines(out, 5))
+		}
+		return pods, nil
 	}
 	kcOut, err := RemoteRunner(hostID, []string{"sh", "-c", remoteKubeconfigProbe})
 	if err != nil {
@@ -115,9 +119,31 @@ func DiscoverK8sLogTargetsOn(dataDir, clusterID, hostID string) ([]DiscoverPod, 
 	kc := strings.TrimSpace(kcOut)
 	out, err := RemoteRunner(hostID, []string{"kubectl", "--kubeconfig", kc, "--request-timeout=15s", "get", "pods", "-A", "-o", "json"})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("kubectl: %w\n%s", err, firstLines([]byte(out), 5))
 	}
-	return parseDiscoverPods([]byte(out), clusterID)
+	pods, perr := parseDiscoverPods([]byte(out), clusterID)
+	if perr != nil {
+		// 非 JSON 输出(错误横幅/凭据提示)不该被 json 错误掩盖 —— 带原始输出首几行定位真实原因
+		return nil, fmt.Errorf("kubectl 输出不是有效 JSON:\n%s", firstLines([]byte(out), 5))
+	}
+	return pods, nil
+}
+
+// firstLines 取输出的前 n 行(截断单行), 供错误上下文。
+func firstLines(out []byte, n int) string {
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	joined := strings.Join(lines, "\n")
+	if len(joined) > 400 {
+		joined = joined[:400] + "…"
+	}
+	return joined
 }
 
 // CollectK8sPodLogsOn 预览 hostID(空=本机)上指定 pod 的日志。

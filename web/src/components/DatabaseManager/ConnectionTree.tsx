@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
+  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw, shortConnError,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -183,7 +183,7 @@ export default function ConnectionTree({
       return true
     } catch (e: any) {
       // 失败缓存空数组占位 —— 懒加载 effect 不会反复重试刷屏; 点击失败连接时走 force 重试
-      const msg = e?.message || '未知原因'
+      const msg = shortConnError(e?.message || '未知原因')
       setConnHealth(prev => ({ ...prev, [connId]: 'fail' }))
       setConnHealthMsg(prev => ({ ...prev, [connId]: msg }))
       notify(false, `连接失败: ${msg}`)
@@ -232,7 +232,7 @@ export default function ConnectionTree({
       const d = (e as CustomEvent<{ id: string; ok: boolean; error?: string }>).detail
       if (!d?.id) return
       setConnHealth(prev => ({ ...prev, [d.id]: d.ok ? 'ok' : 'fail' }))
-      setConnHealthMsg(prev => ({ ...prev, [d.id]: d.ok ? '' : (d.error || '未知原因') }))
+      setConnHealthMsg(prev => ({ ...prev, [d.id]: d.ok ? '' : shortConnError(d.error || '未知原因') }))
     }
     window.addEventListener('dbmanager:conn-tested', handler)
     return () => window.removeEventListener('dbmanager:conn-tested', handler)
@@ -535,11 +535,11 @@ export default function ConnectionTree({
         notify(true, `${c.name}: ${r.version || '连接成功'}`)
       } else {
         setConnHealth(prev => ({ ...prev, [c.id]: 'fail' }))
-        setConnHealthMsg(prev => ({ ...prev, [c.id]: r.error || '未知原因' }))
-        notify(false, `${c.name}: ${r.error}`)
+        setConnHealthMsg(prev => ({ ...prev, [c.id]: shortConnError(r.error || '未知原因') }))
+        notify(false, `${c.name}: ${shortConnError(r.error || '未知原因')}`)
       }
     } catch (e: any) {
-      notify(false, `${c.name}: ${e.message}`)
+      notify(false, `${c.name}: ${shortConnError(e.message)}`)
     } finally { setTesting(null) }
   }
 

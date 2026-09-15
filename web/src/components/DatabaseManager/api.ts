@@ -650,3 +650,32 @@ export async function applyCellEdit(
 ): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
   return postJSON('/api/dbmanager/apply-edit', { id, database, table, pkCols, row, setCol, setValue, confirm })
 }
+
+// ── 连接错误人性化(dbx translateBackendError 同思路) ──
+// 1) 驱动会把"两套兼容参数各试一次"的失败拼成超长文案(以；分隔且核心错误相同) → 去重为一句
+// 2) 常见底层错误翻译成人话; 完整原文仍由 title/复制按钮承载
+export function shortConnError(msg: string): string {
+  if (!msg) return msg
+  let m = msg
+  const parts = m.split('；').map(s => s.trim()).filter(Boolean)
+  if (parts.length > 1) {
+    const core = (p: string) => { const i = p.indexOf('验证失败: '); return i >= 0 ? p.slice(i + '验证失败: '.length) : p }
+    const cores = [...new Set(parts.map(core))]
+    if (cores.length === 1) {
+      const head = parts[0].split(' [')[0].replace(/验证失败[：:]\s*$/, '')
+      m = `${head}: ${cores[0]}（两种兼容参数均失败）`
+    }
+  }
+  const rules: Array<[RegExp, string]> = [
+    [/No connection could be made because the target machine actively refused it/i, '目标端口无服务监听'],
+    [/Connection refused/i, '连接被拒绝(端口未开或服务未启动)'],
+    [/invalid connection/i, '服务端拒绝/重置了连接(协议不兼容或服务异常)'],
+    [/Access denied for user/i, '认证失败: 用户名或密码错误'],
+    [/getaddrinfo\s+(ENOTFOUND|EAI_AGAIN)/i, '主机名无法解析'],
+    [/(i\/o timeout|handshake timeout|connectex.*timeout)/i, '连接超时(网络不通或被防火墙拦截)'],
+  ]
+  for (const [re, human] of rules) {
+    if (re.test(m)) { m = m.replace(re, human); break }
+  }
+  return m
+}

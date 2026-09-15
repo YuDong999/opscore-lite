@@ -24,6 +24,7 @@ import {
   testConnection,
   loadEngines,
   getEngineConfig,
+  shortConnError,
 } from './api'
 
 const CATEGORY_LABELS: Record<EngineCategory, string> = {
@@ -62,7 +63,7 @@ export default function ConnectionPanel({
   const [showAdvanced, setShowAdvanced] = useState(false)
   // 表单测试连接(不保存): 结果内联横幅 + toast, 保存与测试彻底分离
   const [testing, setTesting] = useState(false)
-  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string; full?: string } | null>(null)
   // 密码可见性(小眼睛)
   const [showPwd, setShowPwd] = useState(false)
   const [showSshPwd, setShowSshPwd] = useState(false)
@@ -189,12 +190,14 @@ export default function ConnectionPanel({
         setTestMsg({ ok: true, text })
         toast.success(text)
       } else {
-        setTestMsg({ ok: false, text: r.error || '未知原因' })
-        toast.error('连接失败: ' + (r.error || '未知原因'))
+        const full = r.error || '未知原因'
+        setTestMsg({ ok: false, text: shortConnError(full), full })
+        toast.error('连接失败: ' + shortConnError(full))
       }
     } catch (e: any) {
-      setTestMsg({ ok: false, text: e.message || '测试请求失败' })
-      toast.error('测试失败: ' + (e.message || e))
+      const full = e.message || '测试请求失败'
+      setTestMsg({ ok: false, text: shortConnError(full), full })
+      toast.error('测试失败: ' + shortConnError(full))
     } finally {
       setTesting(false)
     }
@@ -227,11 +230,11 @@ export default function ConnectionPanel({
         onSelect(c)
         try {
           const r = await testConnection({ id: c.id })
-          window.dispatchEvent(new CustomEvent('dbmanager:conn-tested', { detail: { id: c.id, ok: !!r.ok, error: r.ok ? '' : (r.error || '未知原因') } }))
+          window.dispatchEvent(new CustomEvent('dbmanager:conn-tested', { detail: { id: c.id, ok: !!r.ok, error: r.ok ? '' : shortConnError(r.error || '未知原因') } }))
           if (r.ok) toast.success(`连接成功: ${r.version || ''}`)
-          else toast.error(`连接失败: ${r.error || '未知原因'} (连接已保留, 点击侧栏条目可重试)`)
+          else toast.error(`连接失败: ${shortConnError(r.error || '未知原因')} (连接已保留, 点击侧栏条目可重试)`)
         } catch (e: any) {
-          const msg = e?.message || '未知原因'
+          const msg = shortConnError(e?.message || '未知原因')
           window.dispatchEvent(new CustomEvent('dbmanager:conn-tested', { detail: { id: c.id, ok: false, error: msg } }))
           toast.error(`连接失败: ${msg} (连接已保留, 点击侧栏条目可重试)`)
         }
@@ -649,17 +652,22 @@ export default function ConnectionPanel({
                   display: 'inline-flex', alignItems: 'center', gap: 4, overflow: 'hidden',
                   color: testMsg ? (testMsg.ok ? 'var(--ok)' : 'var(--danger)') : 'transparent',
                 }}
-                title={testMsg?.text || ''}
                 role="status"
               >
-                {testMsg && <>{testMsg.ok ? '✓' : '✗'} {testMsg.text}</>}
-                {testMsg && !testMsg.ok && (
-                  <button
-                    className="btn-glass-soft btn-glass-soft-sm"
-                    style={{ padding: '0 0.3rem', fontSize: '0.625rem', flexShrink: 0 }}
-                    title="复制错误内容"
-                    onClick={() => navigator.clipboard?.writeText(testMsg.text).catch(() => {})}
-                  >复制</button>
+                {testMsg && (
+                  <>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={testMsg.full || testMsg.text}>
+                      {testMsg.ok ? '✓' : '✗'} {testMsg.text}
+                    </span>
+                    {!testMsg.ok && (
+                      <button
+                        className="btn-glass-soft btn-glass-soft-sm"
+                        style={{ padding: '0 0.3rem', fontSize: '0.625rem', flexShrink: 0 }}
+                        title="复制完整错误内容"
+                        onClick={() => navigator.clipboard?.writeText(testMsg.full || testMsg.text).catch(() => {})}
+                      >复制</button>
+                    )}
+                  </>
                 )}
               </span>
               <button className="btn-glass-soft btn-glass-soft-sm" onClick={cancelWizard} disabled={busy}>取消</button>

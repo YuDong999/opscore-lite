@@ -40,13 +40,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((message: string, type: ToastType = 'info') => {
     const id = nextId++
-    setItems(list => [...list, { id, message, type, exiting: false }])
-    const t1 = setTimeout(() => {
-      setItems(list => list.map(t => t.id === id ? { ...t, exiting: true } : t))
-      const t2 = setTimeout(() => remove(id), 320)
-      timers.current.set(id, t2)
-    }, 2800)
-    timers.current.set(id, t1)
+    setItems(list => {
+      // 同文案+同类型去重: 失败重试/自动探测反复触发时复用同一条(刷新计时), 不堆一摞弹窗
+      const dup = list.find(t => t.message === message && t.type === type && !t.exiting)
+      if (dup) {
+        const t1 = setTimeout(() => {
+          setItems(l => l.map(x => x.id === dup.id ? { ...x, exiting: true } : x))
+          const t2 = setTimeout(() => remove(dup.id), 320)
+          timers.current.set(dup.id, t2)
+        }, 2800)
+        timers.current.set(dup.id, t1)
+        return list
+      }
+      const t1 = setTimeout(() => {
+        setItems(l => l.map(t => t.id === id ? { ...t, exiting: true } : t))
+        const t2 = setTimeout(() => remove(id), 320)
+        timers.current.set(id, t2)
+      }, 2800)
+      timers.current.set(id, t1)
+      return [...list, { id, message, type, exiting: false }]
+    })
   }, [remove])
 
   const api = useMemo<ToastCtx>(() => ({
