@@ -1,0 +1,1022 @@
+// ── 可视化创建资源(页面级) ──
+// 类型卡 → 必填常显 + 可选折叠 → 右栏 YAML 实时预览 ⇄ 手改模式 → apply
+// 引用类字段分两档: 严格下拉(只从集群已有选) / 宽松 combobox(可输可选)。
+
+import { useEffect, useMemo, useState } from 'react'
+import yaml from 'js-yaml'
+import { getJSON, postJSON } from '../../../api/client'
+
+type Kv = { k: string; v: string }
+type Toleration = { key: string; op: string; effect: string; seconds: string }
+type SvcPort = { port: string; targetPort: string; protocol: string; nodePort: string }
+type Volume = { type: 'configmap' | 'secret' | 'pvc'; name: string; mountPath: string; subPath: string; readOnly: boolean }
+type EnvFrom = { type: 'configmap' | 'secret'; name: string }
+type IngressPath = { path: string; pathType: string; svc: string; svcPort: string }
+type IngressRule = { host: string; paths: IngressPath[] }
+type RbacRule = { apiGroups: string; resources: string; verbs: string; resourceNames: string; nonResourceURLs: string }
+type RbacSubject = { kind: string; name: string; namespace: string }
+
+// 权限建模: 用 RbacKind 标记关系(role/clusterrole 有 rules; binding 有 subjects+roleRef; sa 无 rules)
+type RbacKind = 'Role' | 'ClusterRole' | 'RoleBinding' | 'ClusterRoleBinding' | 'ServiceAccount'
+
+// 主题色线性图标(feather 风格, currentColor 跟随主题), 替代 emoji
+function KindIcon({ kind, size = 13 }: { kind: string; size?: number }) {
+  const paths: Record<string, any> = {
+    Deployment: <><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 12 12 17 22 12" /><polyline points="2 17 12 22 22 17" /></>,
+    StatefulSet: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>,
+    DaemonSet: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+    Service: <><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></>,
+    Ingress: <><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></>,
+    ConfigMap: <><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></>,
+    Secret: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+    CronJob: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+    PVC: <><line x1="22" y1="12" x2="2" y2="12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /><line x1="6" y1="16" x2="6.01" y2="16" /><line x1="10" y1="16" x2="10.01" y2="16" /></>,
+    PV: <><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="3" /></>,
+    StorageClass: <><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></>,
+    Role: <><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /><path d="M7 3v18M5 21l2-2 2 2M18 3v5" /></>,
+    ClusterRole: <><circle cx="10" cy="8" r="5" /><line x1="2" y1="21" x2="10" y2="21" /><line x1="4" y1="16.5" x2="16" y2="16.5" /><line x1="16" y1="21" x2="22" y2="21" /></>,
+    RoleBinding: <><circle cx="6" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="M9 9l6 6" /><path d="M6 12V9M6 12a7 7 0 0 1 6-6M12 18h3M12 18a7 7 0 0 0 6-6" /></>,
+    ClusterRoleBinding: <><rect x="3" y="12" width="7" height="7" rx="1" /><rect x="14" y="5" width="7" height="7" rx="1" /><path d="M10 15.5H12a4 4 0 0 0 4-4v-6" /></>,
+    ServiceAccount: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round"
+      style={{ flexShrink: 0, verticalAlign: '-0.15em', marginRight: 4 }}>
+      {paths[kind] || null}
+    </svg>
+  )
+}
+
+const KINDS = [
+  { k: 'Deployment', res: 'deployments', desc: '无状态应用' },
+  { k: 'StatefulSet', res: 'statefulsets', desc: '有状态应用' },
+  { k: 'DaemonSet', res: 'daemonsets', desc: '每个节点一个Pod' },
+  { k: 'Service', res: 'services', desc: '服务暴露' },
+  { k: 'Ingress', res: 'ingresses', desc: '七层路由 · host/path → Service' },
+  { k: 'ConfigMap', res: 'configmaps', desc: '配置 k/v' },
+  { k: 'Secret', res: 'secrets', desc: '敏感数据' },
+  { k: 'CronJob', res: 'cronjobs', desc: '定时任务' },
+  { k: 'PVC', res: 'persistentvolumeclaims', desc: '存储申请' },
+  { k: 'PV', res: 'persistentvolumes', desc: '集群存储' },
+  { k: 'StorageClass', res: 'storageclasses', desc: '存储供给(含 CSI / NFS / Ceph)' },
+  { k: 'ServiceAccount', res: 'serviceaccounts', desc: 'Pod 内进程访问 apiserver 的身份' },
+  { k: 'Role', res: 'roles', desc: '命名空间级权限规则' },
+  { k: 'ClusterRole', res: 'clusterroles', desc: '集群级权限规则' },
+  { k: 'RoleBinding', res: 'rolebindings', desc: '命名空间内把角色绑定到主体' },
+  { k: 'ClusterRoleBinding', res: 'clusterrolebindings', desc: '集群级把角色绑定到主体' },
+]
+
+const AM = [['ReadWriteOnce', 'RWO'], ['ReadOnlyMany', 'ROX'], ['ReadWriteMany', 'RWX']] as const
+
+type Model = {
+  kind: string; name: string; ns: string
+  image: string; replicas: string; cpuReq: string; cpuLim: string; memReq: string; memLim: string
+  containerPort: string
+  env: Kv[]; envFrom: EnvFrom[]
+  volumes: Volume[]
+  useProbe: boolean; probePath: string; probePort: string; probeDelay: string; probeInterval: string
+  nodeSelector: Kv[]; antiAffinity: boolean; tolerations: Toleration[]
+  extraLabels: Kv[]; annotations: Kv[]
+  svcType: string; svcSelector: Kv[]; svcPorts: SvcPort[]
+  ingressClass: string; ingressRules: IngressRule[]; tlsSecret: string
+  dataItems: Kv[]; secretType: string
+  schedule: string; suspend?: boolean; command: string
+  storage: string; storageClass: string; accessModes: string[]
+  reclaimPolicy: string; claimRefNs: string; claimRef: string
+  pvMode: string; pvHostPath: string; pvNfsServer: string; pvNfsPath: string
+  scProvisioner: string; scReclaim: string; scBindingMode: string; scAllowExpansion: boolean; scParams: string
+  rbacKind: string
+  rbacRules: RbacRule[]
+  rbacSubjects: RbacSubject[]
+  rbacRoleRefKind: string; rbacRoleRefName: string
+  rbacTo: string
+}
+
+const blank = (kind: string): Model => ({
+  kind, name: '', ns: 'default',
+  image: '', replicas: '1', cpuReq: '', cpuLim: '', memReq: '', memLim: '', containerPort: '',
+  env: [], envFrom: [], volumes: [],
+  useProbe: false, probePath: '/healthz', probePort: '80', probeDelay: '10', probeInterval: '10',
+  nodeSelector: [], antiAffinity: false, tolerations: [],
+  extraLabels: [], annotations: [],
+  svcType: 'ClusterIP', svcSelector: [{ k: 'app', v: '' }], svcPorts: [{ port: '80', targetPort: '80', protocol: 'TCP', nodePort: '' }],
+  ingressClass: '', ingressRules: [{ host: '', paths: [{ path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }], tlsSecret: '',
+  dataItems: [], secretType: 'Opaque',
+  schedule: '*/10 * * * *', command: '',
+  storage: '5Gi', storageClass: '', accessModes: ['ReadWriteOnce'],
+  reclaimPolicy: 'Retain', claimRefNs: 'default', claimRef: '',
+  pvMode: 'hostPath', pvHostPath: '/mnt/data', pvNfsServer: '', pvNfsPath: '/',
+  scProvisioner: '', scReclaim: 'Retain', scBindingMode: 'Immediate', scAllowExpansion: false, scParams: '{}',
+  rbacKind: kind,
+  rbacRules: [{ apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }],
+  rbacSubjects: [{ kind: 'User', name: '', namespace: '' }],
+  rbacRoleRefKind: '', rbacRoleRefName: '',
+  rbacTo: 'namespace',
+})
+
+// ── 集群已有资源选项(严格下拉数据源) ──
+type Opts = { scs: string[]; ics: string[]; nodes: string[]; cms: string[]; secrets: string[]; svcs: string[]; pvcs: string[]; pvs: string[] }
+const EMPTY_OPTS: Opts = { scs: [], ics: [], nodes: [], cms: [], secrets: [], svcs: [], pvcs: [], pvs: [] }
+
+function useClusterOptions(cluster: string, ns: string): Opts {
+  const [o, setO] = useState<Opts>(EMPTY_OPTS)
+  useEffect(() => {
+    if (!cluster) return
+    const names = (d: any) => (d.rows || []).map((r: any) => String(r.name)).filter(Boolean)
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=storageclasses`).then((d) => setO((x) => ({ ...x, scs: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=ingressclasses`).then((d) => setO((x) => ({ ...x, ics: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=nodes`).then((d) => setO((x) => ({ ...x, nodes: names(d) }))).catch(() => {})
+  }, [cluster])
+  useEffect(() => {
+    if (!cluster) return
+    const names = (d: any) => (d.rows || []).map((r: any) => String(r.name)).filter(Boolean)
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=configmaps&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, cms: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=secrets&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, secrets: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=services&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, svcs: names(d) }))).catch(() => {})
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=persistentvolumeclaims&ns=${encodeURIComponent(ns)}`).then((d) => setO((x) => ({ ...x, pvcs: names(d) }))).catch(() => {})
+  }, [cluster, ns])
+  useEffect(() => {
+    if (!cluster) return
+    const names = (d: any) => (d.rows || []).map((r: any) => String(r.name)).filter(Boolean)
+    getJSON(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=persistentvolumes`).then((d) => setO((x) => ({ ...x, pvs: names(d) }))).catch(() => {})
+  }, [cluster])
+  return o
+}
+
+// ── 表单 → K8s 对象 ──
+function buildManifest(m: Model): Record<string, any> | null {
+  if (!m.name.trim()) return null
+  const name = m.name.trim()
+  const extra = Object.fromEntries(m.extraLabels.filter((x) => x.k).map((x) => [x.k, x.v]))
+  const annos = Object.fromEntries(m.annotations.filter((x) => x.k).map((x) => [x.k, x.v]))
+  const meta: any = { name, namespace: m.ns || 'default' }
+  if (Object.keys(extra).length) meta.labels = extra
+  if (Object.keys(annos).length) meta.annotations = annos
+
+  const podSpec = (): any => {
+    const c: any = { name: 'main', image: m.image || 'nginx:alpine', imagePullPolicy: 'IfNotPresent' }
+    if (m.containerPort) c.ports = [{ containerPort: Number(m.containerPort), protocol: 'TCP' }]
+    if (m.env.length) c.env = m.env.filter((e) => e.k).map((e) => ({ name: e.k, value: e.v }))
+    if (m.envFrom.length) c.envFrom = m.envFrom.filter((e) => e.name).map((e) =>
+      e.type === 'secret' ? { secretRef: { name: e.name } } : { configMapRef: { name: e.name } })
+    const req: any = {}, lim: any = {}
+    if (m.cpuReq) req.cpu = m.cpuReq
+    if (m.memReq) req.memory = m.memReq
+    if (m.cpuLim) lim.cpu = m.cpuLim
+    if (m.memLim) lim.memory = m.memLim
+    if (Object.keys(req).length || Object.keys(lim).length)
+      c.resources = { ...(Object.keys(req).length ? { requests: req } : {}), ...(Object.keys(lim).length ? { limits: lim } : {}) }
+    if (m.useProbe) {
+      const probe = {
+        httpGet: { path: m.probePath || '/healthz', port: Number(m.probePort) || 80, scheme: 'HTTP' },
+        periodSeconds: Number(m.probeInterval) || 10,
+      }
+      c.readinessProbe = { ...probe, initialDelaySeconds: 5 }
+      c.livenessProbe = { ...probe, initialDelaySeconds: Number(m.probeDelay) || 10 }
+    }
+    if (m.volumes.length) {
+      c.volumeMounts = m.volumes.filter((v) => v.mountPath).map((v, i) => ({
+        name: `vol-${i + 1}`, mountPath: v.mountPath, readOnly: v.readOnly || undefined,
+        ...(v.subPath ? { subPath: v.subPath } : {}),
+      }))
+    }
+    const ps: any = { containers: [c] }
+    if (m.volumes.length) {
+      ps.volumes = m.volumes.map((v, i) => ({
+        name: `vol-${i + 1}`,
+        ...(v.type === 'configmap' ? { configMap: { name: v.name } } :
+          v.type === 'secret' ? { secret: { secretName: v.name } } :
+            { persistentVolumeClaim: { claimName: v.name } }),
+      }))
+    }
+    if (m.nodeSelector.length) ps.nodeSelector = Object.fromEntries(m.nodeSelector.filter((x) => x.k).map((x) => [x.k, x.v]))
+    if (m.antiAffinity) {
+      ps.affinity = {
+        podAntiAffinity: {
+          preferredDuringSchedulingIgnoredDuringExecution: [{
+            weight: 100,
+            podAffinityTerm: { topologyKey: 'kubernetes.io/hostname', labelSelector: { matchLabels: { app: name } } },
+          }],
+        },
+      }
+    }
+    if (m.tolerations.length) {
+      ps.tolerations = m.tolerations.filter((t) => t.key).map((t) => ({
+        key: t.key, operator: t.op || 'Equal',
+        ...(t.effect ? { effect: t.effect } : {}),
+        ...(t.seconds ? { tolerationSeconds: Number(t.seconds) } : {}),
+      }))
+    }
+    return ps
+  }
+
+  const podTemplate = { metadata: { labels: { app: name, ...(Object.keys(extra).length ? extra : {}) } }, spec: podSpec() }
+  const out: any = { apiVersion: 'v1', kind: m.kind, metadata: meta }
+  switch (m.kind) {
+    case 'Deployment':
+      out.apiVersion = 'apps/v1'
+      out.spec = { replicas: Number(m.replicas) || 1, selector: { matchLabels: { app: name } }, template: podTemplate }
+      break
+    case 'StatefulSet':
+      out.apiVersion = 'apps/v1'
+      out.spec = { serviceName: `${name}-headless`, replicas: Number(m.replicas) || 1, selector: { matchLabels: { app: name } }, template: podTemplate }
+      break
+    case 'DaemonSet':
+      out.apiVersion = 'apps/v1'
+      out.spec = { selector: { matchLabels: { app: name } }, template: podTemplate }
+      break
+    case 'Service':
+      out.spec = {
+        type: m.svcType,
+        selector: Object.fromEntries(m.svcSelector.filter((x) => x.k).map((x) => [x.k, x.v])),
+        ports: m.svcPorts.filter((p) => p.port).map((p) => ({
+          port: Number(p.port), targetPort: Number(p.targetPort) || Number(p.port), protocol: p.protocol || 'TCP',
+          ...(m.svcType === 'NodePort' && p.nodePort ? { nodePort: Number(p.nodePort) } : {}),
+        })),
+      }
+      if (!out.spec.ports.length) out.spec.ports = [{ port: 80, targetPort: 80, protocol: 'TCP' }]
+      break
+    case 'Ingress': {
+      out.apiVersion = 'networking.k8s.io/v1'
+      const rules = m.ingressRules
+        .filter((r) => r.host || r.paths.some((p) => p.svc))
+        .map((r) => ({
+          ...(r.host ? { host: r.host } : {}),
+          http: {
+            paths: r.paths.filter((p) => p.svc).map((p) => ({
+              path: p.path || '/', pathType: p.pathType || 'Prefix',
+              backend: { service: { name: p.svc, port: { number: Number(p.svcPort) || 80 } } },
+            })),
+          },
+        }))
+      const spec: any = {}
+      if (m.ingressClass) spec.ingressClassName = m.ingressClass
+      if (m.tlsSecret) spec.tls = [{ ...(m.ingressRules[0]?.host ? { hosts: [m.ingressRules[0].host] } : {}), secretName: m.tlsSecret }]
+      if (rules.length) spec.rules = rules
+      out.spec = spec
+      break
+    }
+    case 'ConfigMap':
+      delete out.spec
+      out.data = Object.fromEntries(m.dataItems.filter((x) => x.k).map((x) => [x.k, x.v]))
+      break
+    case 'Secret':
+      delete out.spec
+      out.type = m.secretType || 'Opaque'
+      out[!m.secretType || m.secretType === 'Opaque' ? 'stringData' : 'data'] =
+        Object.fromEntries(m.dataItems.filter((x) => x.k).map((x) => [x.k, x.v]))
+      break
+    case 'CronJob':
+      out.apiVersion = 'batch/v1'
+      out.spec = {
+        schedule: m.schedule || '*/10 * * * *',
+        ...(m.suspend ? { suspend: true } : {}),
+        jobTemplate: { spec: { template: { spec: {
+          restartPolicy: 'OnFailure',
+          containers: [{ name: 'main', image: m.image || 'busybox:1.36', ...(m.command ? { args: ['/bin/sh', '-c', m.command] } : {}) }],
+        } } } } }
+      break
+    case 'PVC':
+      out.spec = {
+        accessModes: m.accessModes.length ? m.accessModes : ['ReadWriteOnce'],
+        ...(m.storageClass ? { storageClassName: m.storageClass } : {}),
+        resources: { requests: { storage: m.storage || '5Gi' } },
+      }
+      break
+    case 'PV':
+      delete meta.namespace
+      out.spec = {
+        capacity: { storage: m.storage || '5Gi' },
+        accessModes: m.accessModes.length ? m.accessModes : ['ReadWriteOnce'],
+      }
+      if (m.reclaimPolicy) out.spec.persistentVolumeReclaimPolicy = m.reclaimPolicy
+      if (m.storageClass) out.spec.storageClassName = m.storageClass
+      if (m.claimRef) out.spec.claimRef = { namespace: m.claimRefNs || 'default', name: m.claimRef }
+      if (m.pvMode === 'nfs') {
+        out.spec.nfs = { server: m.pvNfsServer, path: m.pvNfsPath || '/' }
+      } else if (m.pvMode === 'local') {
+        out.spec.local = { path: m.pvHostPath || '/mnt/data' }
+        out.spec.nodeAffinity = {
+          required: { nodeSelectorTerms: [{ matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['<节点名>'] }] }] },
+        }
+      } else {
+        out.spec.hostPath = { path: m.pvHostPath || '/mnt/data' }
+      }
+      break
+    case 'StorageClass':
+      delete meta.namespace
+      out.apiVersion = 'storage.k8s.io/v1'
+      out.provisioner = m.scProvisioner || ''
+      if (m.scReclaim) out.reclaimPolicy = m.scReclaim
+      if (m.scBindingMode) out.volumeBindingMode = m.scBindingMode
+      if (m.scAllowExpansion) out.allowVolumeExpansion = true
+      if (m.scParams && m.scParams.trim() && m.scParams.trim() !== '{}') {
+        try { out.parameters = JSON.parse(m.scParams) } catch { /* 非法 JSON 留给用户检查 */ }
+      }
+      break
+    case 'ServiceAccount':
+      delete out.spec
+      break
+    case 'Role':
+    case 'ClusterRole': {
+      out.apiVersion = 'rbac.authorization.k8s.io/v1'
+      // ClusterRole 为集群级资源, 不应携带 namespace
+      if (m.kind === 'ClusterRole') delete meta.namespace
+      else meta.namespace = m.ns || 'default'
+      const rules = m.rbacRules.filter((r) => r.resources.trim() || r.nonResourceURLs.trim())
+      out.rules = rules.map((r) => {
+        const rule: any = {}
+        if (r.nonResourceURLs.trim()) {
+          rule.nonResourceURLs = r.nonResourceURLs.split(',').map((s) => s.trim()).filter(Boolean)
+          rule.verbs = (r.verbs || 'get').split(',').map((s) => s.trim()).filter(Boolean)
+          return rule
+        }
+        rule.apiGroups = r.apiGroups.trim() ? r.apiGroups.split(',').map((s) => s.trim()).filter(Boolean).map((s) => s === '""' ? '' : s) : ['']
+        rule.resources = r.resources.split(',').map((s) => s.trim()).filter(Boolean)
+        rule.verbs = r.verbs.split(',').map((s) => s.trim()).filter(Boolean)
+        if (r.resourceNames.trim()) rule.resourceNames = r.resourceNames.split(',').map((s) => s.trim()).filter(Boolean)
+        return rule
+      })
+      break
+    }
+    case 'RoleBinding':
+    case 'ClusterRoleBinding': {
+      out.apiVersion = 'rbac.authorization.k8s.io/v1'
+      if (m.kind === 'RoleBinding') out.roleRef = { apiGroup: 'rbac.authorization.k8s.io', kind: m.rbacRoleRefKind || 'Role', name: m.rbacRoleRefName }
+      else out.roleRef = { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: m.rbacRoleRefName }
+      const subs = m.rbacSubjects.filter((s) => s.name.trim())
+      out.subjects = subs.map((s) => {
+        const sub: any = { kind: s.kind, name: s.name.trim() }
+        if (s.kind === 'ServiceAccount') {
+          const [nsName, saName] = s.name.trim().split('/')
+          if (nsName && saName) { sub.namespace = nsName; sub.name = saName }
+          else if (m.ns && s.kind === 'ServiceAccount') sub.namespace = m.ns
+        } else sub.apiGroup = 'rbac.authorization.k8s.io'
+        return sub
+      })
+      if (!out.subjects.length) return null
+      break
+    }
+  }
+  return out
+}
+
+// ── 控件 ──
+const IN = 'input'
+
+function F({ label, children, hint, wide }: { label: string; children: any; hint?: string; wide?: boolean }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', minWidth: 0, ...(wide ? { gridColumn: '1 / -1' } : {}) }}>
+      <span>{label}{hint && <i style={{ fontStyle: 'normal', opacity: 0.7 }}> · {hint}</i>}</span>
+      {children}
+    </div>
+  )
+}
+
+function Grid({ cols = 3, children }: { cols?: number; children: any }) {
+  return <div className={`cr-grid cr-grid-${cols}`}>{children}</div>
+}
+
+function KvRows({ items, onChange, kHint, vHint, vOptions }: { items: Kv[]; onChange: (x: Kv[]) => void; kHint: string; vHint: string; vOptions?: string[] }) {
+  const lid = useMemo(() => 'dl' + Math.random().toString(36).slice(2, 8), [])
+  return (
+    <RowList rows={items} onDelete={(i) => onChange(items.filter((_, j) => j !== i))}
+      onAdd={() => onChange([...items, { k: '', v: '' }])}>
+      {(it, i) => (<>
+        <input className={IN} value={it.k} placeholder={kHint} onChange={(e) => { const n = [...items]; n[i] = { ...it, k: e.target.value }; onChange(n) }} />
+        <>
+          <input className={IN} list={vOptions ? lid : undefined} value={it.v} placeholder={vHint}
+            onChange={(e) => { const n = [...items]; n[i] = { ...it, v: e.target.value }; onChange(n) }} />
+          {vOptions && <datalist id={lid}>{vOptions.map((v) => <option key={v} value={v} />)}</datalist>}
+        </>
+      </>)}
+    </RowList>
+  )
+}
+
+// 统一删除按钮(所有列表行共用, 避免每个字段重复写一样的 ✕)。
+// 用 Lucide circle-x 线性 SVG, 与 KindIcon(Feather 系)视觉一致; 内联样式刻意覆盖 btn-glass-soft-sm 的 padding/line-height, 使图标在固定 2rem 块内居中。
+function Del({ onClick, title }: { onClick: () => void; title?: string }) {
+  return (
+    <button type="button" className="btn-glass-soft btn-glass-soft-sm k8s-del-cluster cr-del"
+      style={{ width: '2rem', height: '2rem', padding: 0, margin: 0, lineHeight: 1, opacity: 1,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClick} title={title}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+        strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <circle cx="12" cy="12" r="10" />
+        <path d="m15 9-6 6" />
+        <path d="m9 9 6 6" />
+      </svg>
+    </button>
+  )
+}
+
+// 通用列表编辑器: rows 渲染成若干行(每行 = children 字段 + 删除按钮), 底部添加按钮。
+// 行的响应式换行由共享的 .cr-row / .cr-rowlist 规则统一处理(flex-wrap), 与字段数量无关。
+function RowList({ rows, onDelete, onAdd, addLabel, children }: {
+  rows: any[]
+  onDelete?: (i: number) => void
+  onAdd?: () => void
+  addLabel?: string
+  children: (item: any, i: number) => any
+}) {
+  return (
+    <div className="cr-rowlist">
+      {rows.map((r, i) => (
+        <div key={i} className="cr-row">
+          <div className="cr-row-fields">
+            {children(r, i)}
+          </div>
+          {onDelete && <Del onClick={() => onDelete(i)} title="删除" />}
+        </div>
+      ))}
+      {(onAdd != null) && (
+        <button type="button" className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={onAdd}>{addLabel || '+ 添加'}</button>
+      )}
+    </div>
+  )
+}
+
+// 严格下拉: 只能从集群已有资源中选
+function Strict({ label, value, onChange, options, emptyHint, allowEmpty, emptyText }: {
+  label: string; value: string; onChange: (v: string) => void; options: string[]
+  emptyHint?: string; allowEmpty?: boolean; emptyText?: string
+}) {
+  return (
+    <F label={label}>
+      <select className={`${IN} sel`} value={value} onChange={(e) => onChange(e.target.value)}>
+        {(allowEmpty ?? true) && <option value="">{emptyText ?? '(不指定)'}</option>}
+        {options.length === 0 && <option value="" disabled>{emptyHint ?? '集群中暂无可选项'}</option>}
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </F>
+  )
+}
+
+function Section({ title, children, defaultOpen, badge }: { title: string; children: any; defaultOpen?: boolean; badge?: string }) {
+  const [open, setOpen] = useState(!!defaultOpen)
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.5rem 0.75rem' }}>
+      <div onClick={() => setOpen(!open)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem', fontWeight: 600, userSelect: 'none' }}>
+        <span>{open ? '▾' : '▸'} {title}</span>
+        {badge && <span className="dim" style={{ fontSize: '0.6875rem' }}>{badge}</span>}
+      </div>
+      {open && <div className="cr-sec-grid">{children}</div>}
+    </div>
+  )
+}
+
+const imgKey = 'cr-recent-images'
+function loadRecentImages(): string[] {
+  try { return JSON.parse(localStorage.getItem(imgKey) || '[]') } catch { return [] }
+}
+
+export default function CreateResource({ cluster, namespaces, initialKind, onCreated, onMsg }: {
+  cluster: string
+  namespaces: string[]
+  initialKind?: string
+  onCreated: (res: string, name: string) => void
+  onMsg: (m: string) => void
+}) {
+  const [m, setM] = useState<Model>(blank(initialKind && KINDS.some((x) => x.k === initialKind) ? initialKind : 'Deployment'))
+  const [mode, setMode] = useState<'form' | 'yaml'>('form')
+  const [yamlText, setYamlText] = useState('')
+  const [overwrite, setOverwrite] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [nsManual, setNsManual] = useState(false)
+  const [nsFallback, setNsFallback] = useState<string[]>([])
+  const opts = useClusterOptions(cluster, m.ns)
+  useEffect(() => {
+    if (!cluster || namespaces.length || nsFallback.length) return
+    getJSON<{ rows: any[] }>(`/api/plugins/containers/k8s/resources?cluster=${cluster}&res=namespaces`)
+      .then((d) => setNsFallback((d.rows || []).map((r: any) => r.name)))
+      .catch(() => {})
+  }, [cluster, namespaces.length, nsFallback.length])
+  const nsList = namespaces.length ? namespaces : nsFallback
+  const set = (patch: Partial<Model>) => setM((x) => ({ ...x, ...patch }))
+  const recentImages = loadRecentImages()
+
+  const generated = useMemo(() => {
+    const obj = buildManifest(m)
+    if (!obj) return ''
+    try { return yaml.dump(obj, { lineWidth: -1, noRefs: true }) } catch { return '' }
+  }, [m])
+
+  useEffect(() => { if (mode === 'yaml' && !yamlText) setYamlText(generated) }, [mode])
+
+  const submit = () => {
+    const finalYaml = (mode === 'yaml' ? yamlText : generated).trim()
+    if (!finalYaml) return
+    setBusy(true)
+    postJSON('/api/plugins/containers/k8s/apply', { cluster, yaml: finalYaml, overwrite })
+      .then((d: any) => {
+        setBusy(false)
+        if (d.ok) {
+          try {
+            const arr = loadRecentImages().filter((x) => x !== m.image)
+            if (m.image) { arr.unshift(m.image); localStorage.setItem(imgKey, JSON.stringify(arr.slice(0, 8))) }
+          } catch { /* ignore */ }
+          const res = KINDS.find((x) => x.k === d.kind)?.res
+          onMsg(`✓ ${d.kind} ${d.name} ${d.created ? '创建成功' : '更新成功'}`)
+          if (res) onCreated(res, String(d.name || ''))
+        } else onMsg('✗ ' + (d.error || '创建失败'))
+      })
+      .catch((e) => { setBusy(false); onMsg('✗ ' + String(e)) })
+  }
+
+  const isWl = m.kind === 'Deployment' || m.kind === 'StatefulSet' || m.kind === 'DaemonSet'
+  const kindMeta = KINDS.find((x) => x.k === m.kind)
+
+  return (
+    <div className="cr-page">
+      <div className="module-head" style={{ gridColumn: '1 / -1', flexWrap: 'wrap' }}>
+        <h2 style={{ marginRight: 0 }}>创建资源</h2>
+        <span className="pill pill-sub">骨架自动生成 · 引用类从集群已有选择</span>
+      </div>
+
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        {KINDS.map((x) => (
+          <button key={x.k} className={`btn-glass-soft btn-glass-soft-sm ${m.kind === x.k ? 'btn-accent' : ''}`} title={x.desc}
+            onClick={() => { setM(blank(x.k)); setYamlText(''); setMode('form') }}>
+            <KindIcon kind={x.k} /> {x.k}
+          </button>
+        ))}
+      </div>
+
+      {/* 左: 表单 */}
+      <div className="card" style={{ minWidth: 0 }}>
+        <div className="card-head"><h3><KindIcon kind={m.kind} size={15} />{m.kind}</h3><span className="card-sub">{kindMeta?.desc}</span></div>
+        <div className="card-body cr-form-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+          <Grid cols={2}>
+            <F label="名称 *"><input className={IN} value={m.name} placeholder="如 my-nginx" onChange={(e) => set({ name: e.target.value })} /></F>
+            {m.kind !== 'PV' && m.kind !== 'StorageClass' && (
+              <F label="命名空间 *" hint="从已有选择或手动输入">
+                {!nsManual ? (
+                  <select className={`${IN} sel`} value={nsList.includes(m.ns) ? m.ns : '__manual__'}
+                    onChange={(e) => { if (e.target.value === '__manual__') setNsManual(true); else set({ ns: e.target.value }) }}>
+                    {nsList.length === 0 && <option value={m.ns || 'default'}>{m.ns || 'default'}</option>}
+                    {!nsList.includes(m.ns) && <option value="__manual__">{m.ns || '(未设置)'} ✎ 改为手动输入</option>}
+                    {nsList.map((n) => <option key={n} value={n}>{n}</option>)}
+                    <option value="__manual__">✎ 手动输入新命名空间…</option>
+                  </select>
+                ) : (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input className={IN} autoFocus value={m.ns} placeholder="新命名空间(需已存在, 否则创建时报错)"
+                      onChange={(e) => set({ ns: e.target.value })} />
+                    <button className="btn-glass-soft btn-glass-soft-sm" title="返回选择列表" onClick={() => setNsManual(false)}>↺</button>
+                  </div>
+                )}
+              </F>
+            )}
+          </Grid>
+
+          {isWl && (
+            <>
+              <Grid cols={2}>
+                <F label="镜像 *">
+                  <>
+                    <input className={IN} list="cr-img" value={m.image} placeholder="nginx:1.27-alpine" onChange={(e) => set({ image: e.target.value })} />
+                    <datalist id="cr-img">{recentImages.map((i) => <option key={i} value={i} />)}</datalist>
+                  </>
+                </F>
+                {m.kind !== 'DaemonSet' && (
+                  <F label="副本数"><input className={IN} type="number" min={0} value={m.replicas} onChange={(e) => set({ replicas: e.target.value })} /></F>
+                )}
+              </Grid>
+              <Grid cols={5}>
+                <F label="容器端口"><input className={IN} type="number" value={m.containerPort} placeholder="80" onChange={(e) => set({ containerPort: e.target.value })} /></F>
+                <F label="CPU 请求"><input className={IN} value={m.cpuReq} placeholder="100m" onChange={(e) => set({ cpuReq: e.target.value })} /></F>
+                <F label="CPU 上限"><input className={IN} value={m.cpuLim} placeholder="500m" onChange={(e) => set({ cpuLim: e.target.value })} /></F>
+                <F label="内存 请求"><input className={IN} value={m.memReq} placeholder="64Mi" onChange={(e) => set({ memReq: e.target.value })} /></F>
+                <F label="内存 上限"><input className={IN} value={m.memLim} placeholder="128Mi" onChange={(e) => set({ memLim: e.target.value })} /></F>
+              </Grid>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>资源限制留空即不生成该字段</span>
+            </>
+          )}
+
+          {m.kind === 'Service' && (
+            <>
+              <Grid cols={2}>
+                <F label="类型">
+                  <select className={`${IN} sel`} value={m.svcType} onChange={(e) => set({ svcType: e.target.value })}>
+                    {['ClusterIP', 'NodePort', 'LoadBalancer'].map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </F>
+              </Grid>
+              <F label="Selector(匹配 Pod 标签)"><KvRows items={m.svcSelector} onChange={(x) => set({ svcSelector: x })} kHint="app" vHint="名称" /></F>
+              <F label="端口映射">
+                <RowList rows={m.svcPorts}
+                  onDelete={(i) => set({ svcPorts: m.svcPorts.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ svcPorts: [...m.svcPorts, { port: '', targetPort: '', protocol: 'TCP', nodePort: '' }] })} addLabel="+ 端口">
+                  {(p, i) => (<>
+                    <input className={IN} value={p.port} placeholder="port" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, port: e.target.value }; set({ svcPorts: n }) }} />
+                    <input className={IN} value={p.targetPort} placeholder="targetPort" onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, targetPort: e.target.value }; set({ svcPorts: n }) }} />
+                    <select className={IN} value={p.protocol} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, protocol: e.target.value }; set({ svcPorts: n }) }}><option>TCP</option><option>UDP</option></select>
+                    <input className={IN} value={p.nodePort} placeholder="nodePort" disabled={m.svcType !== 'NodePort'} onChange={(e) => { const n = [...m.svcPorts]; n[i] = { ...p, nodePort: e.target.value }; set({ svcPorts: n }) }} />
+                  </>)}
+                </RowList>
+              </F>
+            </>
+          )}
+
+          {m.kind === 'Ingress' && (
+            <>
+              <Strict label="IngressClass(网关控制器)" value={m.ingressClass} onChange={(v) => set({ ingressClass: v })}
+                options={opts.ics} emptyHint="集群中暂无 IngressClass, 请先部署 Ingress Controller" />
+              <F label="路由规则 (host + path → Service)">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {m.ingressRules.map((r, ri) => (
+                    <div key={ri} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input className={IN} value={r.host} placeholder="域名, 如 app.example.com (留空=全host)" style={{ flex: '1 1 auto', minWidth: 0 }}
+                          onChange={(e) => { const n = [...m.ingressRules]; n[ri] = { ...r, host: e.target.value }; set({ ingressRules: n }) }} />
+                        {m.ingressRules.length > 1 && <Del onClick={() => set({ ingressRules: m.ingressRules.filter((_, j) => j !== ri) })} title="删除规则" />}
+                      </div>
+                      <RowList rows={r.paths}
+                        onDelete={(pi) => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: r.paths.filter((_, j) => j !== pi) }; set({ ingressRules: n }) }}
+                        onAdd={() => { const n = [...m.ingressRules]; n[ri] = { ...r, paths: [...r.paths, { path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }; set({ ingressRules: n }) }} addLabel="+ path">
+                        {(p, pi) => (<>
+                          <input className={IN} value={p.path} placeholder="/api" onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, path: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }} />
+                          <select className={IN} value={p.pathType} onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, pathType: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }}>
+                            <option>Prefix</option><option>Exact</option><option>ImplementationSpecific</option>
+                          </select>
+                          <select className={IN} value={p.svc} onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, svc: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }}>
+                            <option value="" disabled>{opts.svcs.length ? '选择 Service' : '命名空间暂无 Service'}</option>
+                            {opts.svcs.map((s) => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <input className={IN} value={p.svcPort} placeholder="端口" onChange={(e) => { const n = [...m.ingressRules]; const ps = [...r.paths]; ps[pi] = { ...p, svcPort: e.target.value }; n[ri] = { ...r, paths: ps }; set({ ingressRules: n }) }} />
+                        </>)}
+                      </RowList>
+                    </div>
+                  ))}
+                  <button className="btn-glass-soft btn-glass-soft-sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ ingressRules: [...m.ingressRules, { host: '', paths: [{ path: '/', pathType: 'Prefix', svc: '', svcPort: '80' }] }] })}>+ 路由规则</button>
+                </div>
+              </F>
+              <Strict label="TLS 证书 Secret(引用已有)" value={m.tlsSecret} onChange={(v) => set({ tlsSecret: v })}
+                options={opts.secrets} emptyText="(无 TLS)" emptyHint="命名空间中暂无 Secret" />
+            </>
+          )}
+
+          {(m.kind === 'ConfigMap' || m.kind === 'Secret') && (
+            <>
+              {m.kind === 'Secret' && (
+                <F label="类型">
+                  <select className={`${IN} sel`} value={m.secretType} onChange={(e) => set({ secretType: e.target.value })}>
+                    <option value="Opaque">Opaque(通用 k/v)</option>
+                    <option value="kubernetes.io/tls">tls</option>
+                    <option value="kubernetes.io/dockerconfigjson">dockerconfigjson</option>
+                  </select>
+                </F>
+              )}
+              <F label={m.kind === 'Secret' ? '数据(明文 → stringData)' : '数据 k/v'}>
+                <KvRows items={m.dataItems} onChange={(x) => set({ dataItems: x })} kHint="key" vHint="value" />
+              </F>
+            </>
+          )}
+
+          {m.kind === 'CronJob' && (
+            <>
+              <Grid cols={2}>
+                <F label="Schedule *"><input className={IN} value={m.schedule} onChange={(e) => set({ schedule: e.target.value })} /></F>
+                <F label="镜像 *">
+                  <>
+                    <input className={IN} list="cr-img" value={m.image} placeholder="busybox:1.36" onChange={(e) => set({ image: e.target.value })} />
+                    <datalist id="cr-img">{recentImages.map((i) => <option key={i} value={i} />)}</datalist>
+                  </>
+                </F>
+              </Grid>
+              <F label="Shell 命令"><input className={IN} value={m.command} placeholder="echo hello" onChange={(e) => set({ command: e.target.value })} /></F>
+            </>
+          )}
+
+          {m.kind === 'PVC' && (
+            <Grid cols={2}>
+              <F label="容量 *"><input className={IN} value={m.storage} placeholder="5Gi" onChange={(e) => set({ storage: e.target.value })} /></F>
+              <Strict label="StorageClass(存储类)" value={m.storageClass} onChange={(v) => set({ storageClass: v })}
+                options={opts.scs} emptyText="(集群默认 SC)" emptyHint="集群中暂无 StorageClass" />
+              <F label="访问模式">
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', height: '2.2rem' }}>
+                  {AM.map(([full, short]) => (
+                    <label key={full} style={{ display: 'flex', gap: 2, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text)' }}>
+                      <input type="checkbox" checked={m.accessModes.includes(full)}
+                        onChange={(e) => set({ accessModes: e.target.checked ? [...m.accessModes, full] : m.accessModes.filter((x) => x !== full) })} />
+                      {short}
+                    </label>
+                  ))}
+                </div>
+              </F>
+            </Grid>
+          )}
+
+          {m.kind === 'PV' && (
+            <>
+              <Grid cols={2}>
+                <F label="容量 *"><input className={IN} value={m.storage} placeholder="5Gi" onChange={(e) => set({ storage: e.target.value })} /></F>
+                <Strict label="StorageClass(存储类)" value={m.storageClass} onChange={(v) => set({ storageClass: v })}
+                  options={opts.scs} emptyText="(不指定)" emptyHint="集群中暂无 StorageClass" />
+                <F label="访问模式">
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', height: '2.2rem' }}>
+                    {AM.map(([full, short]) => (
+                      <label key={full} style={{ display: 'flex', gap: 2, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text)' }}>
+                        <input type="checkbox" checked={m.accessModes.includes(full)}
+                          onChange={(e) => set({ accessModes: e.target.checked ? [...m.accessModes, full] : m.accessModes.filter((x) => x !== full) })} />
+                        {short}
+                      </label>
+                    ))}
+                  </div>
+                </F>
+                <F label="回收策略">
+                  <select className={`${IN} sel`} value={m.reclaimPolicy} onChange={(e) => set({ reclaimPolicy: e.target.value })}>
+                    <option value="Retain">Retain (保留)</option>
+                    <option value="Recycle">Recycle (回收)</option>
+                    <option value="Delete">Delete (删除)</option>
+                  </select>
+                </F>
+              </Grid>
+
+              <F label="绑定已有 PVC(可选)" hint="PV 创建后自动预绑定该 PVC">
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <input className={IN} value={m.claimRefNs} placeholder="命名空间" style={{ flex: '0 1 160px' }}
+                    onChange={(e) => set({ claimRefNs: e.target.value || 'default' })} />
+                  <select className={`${IN} sel`} value={m.claimRef} onChange={(e) => set({ claimRef: e.target.value })} style={{ flex: '1 1 auto' }}>
+                    <option value="">(不绑定 PVC)</option>
+                    {opts.pvcs.length === 0 && <option value="" disabled>该命名空间暂无 PVC</option>}
+                    {opts.pvcs.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              </F>
+
+              <Section title="存储后端详情" badge="hostPath / local / nfs">
+                <F label="类型">
+                  <select className={`${IN} sel`} value={m.pvMode} onChange={(e) => set({ pvMode: e.target.value })}>
+                    <option value="hostPath">hostPath (本机目录)</option>
+                    <option value="local">local (本地设备)</option>
+                    <option value="nfs">nfs (NFS 共享)</option>
+                  </select>
+                </F>
+                {m.pvMode === 'nfs' ? (
+                  <>
+                    <F label="NFS 服务器地址 *"><input className={IN} value={m.pvNfsServer} placeholder="192.168.1.10" onChange={(e) => set({ pvNfsServer: e.target.value })} /></F>
+                    <F label="NFS 路径 *"><input className={IN} value={m.pvNfsPath} placeholder="/export/data" onChange={(e) => set({ pvNfsPath: e.target.value })} /></F>
+                  </>
+                ) : (
+                  <F label={m.pvMode === 'local' ? '本地路径 *' : '主机路径 *'}>
+                    <input className={IN} value={m.pvHostPath} placeholder="/mnt/data" onChange={(e) => set({ pvHostPath: e.target.value })} />
+                  </F>
+                )}
+                {m.pvMode === 'local' && (
+                  <span className="dim" style={{ fontSize: '0.6875rem' }}>local 类型需填写 Kubernetes 节点名(nodeAffinity), 保存后请在 YAML 模式中替换 &lt;节点名&gt;。</span>
+                )}
+              </Section>
+            </>
+          )}
+
+          {m.kind === 'StorageClass' && (
+            <>
+              <Grid cols={2}>
+                <F label="Provisioner *" hint="存储插件, 如 nfs / ceph.com/cephfs / ebs.csi.aws.com">
+                  <input className={IN} value={m.scProvisioner} placeholder="kubernetes.io/no-provisioner" onChange={(e) => set({ scProvisioner: e.target.value })} />
+                </F>
+                <F label="回收策略">
+                  <select className={`${IN} sel`} value={m.scReclaim} onChange={(e) => set({ scReclaim: e.target.value })}>
+                    <option value="Retain">Retain (保留)</option>
+                    <option value="Delete">Delete (删除 PVC 时删 PV)</option>
+                  </select>
+                </F>
+                <F label="绑定模式">
+                  <select className={`${IN} sel`} value={m.scBindingMode} onChange={(e) => set({ scBindingMode: e.target.value })}>
+                    <option value="Immediate">Immediate (立即绑定)</option>
+                    <option value="WaitForFirstConsumer">WaitForFirstConsumer (等待调度)</option>
+                  </select>
+                </F>
+              </Grid>
+              <label style={{ display: 'flex', gap: 4, fontSize: '0.75rem', alignItems: 'center', color: 'var(--text)' }}>
+                <input type="checkbox" checked={m.scAllowExpansion} onChange={(e) => set({ scAllowExpansion: e.target.checked })} />
+                允许 PVC 扩容(allowVolumeExpansion)
+              </label>
+              <F label="参数 params(JSON, 可选)" hint={'如 {"type":"ext4"} 或 {"pathPattern":"$(PV)-$(PVC)"}'}>
+                <input className={IN} value={m.scParams} placeholder='{"type":"ext4"}' onChange={(e) => set({ scParams: e.target.value })} />
+              </F>
+            </>
+          )}
+
+          {/* ── workload 可选区 ── */}
+          {isWl && (
+            <>
+              <Section title="卷挂载" badge="引用已有 ConfigMap / Secret / PVC">
+                <RowList rows={m.volumes}
+                  onDelete={(i) => set({ volumes: m.volumes.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ volumes: [...m.volumes, { type: 'configmap', name: '', mountPath: '', subPath: '', readOnly: true }] })} addLabel="+ 挂载卷">
+                  {(v, i) => (<>
+                    <select className={IN} value={v.type} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, type: e.target.value, name: '' }; set({ volumes: n }) }}>
+                      <option value="configmap">ConfigMap</option>
+                      <option value="secret">Secret</option>
+                      <option value="pvc">PVC</option>
+                    </select>
+                    <select className={IN} value={v.name}
+                      onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, name: e.target.value }; set({ volumes: n }) }}>
+                      <option value="" disabled>{v.type === 'configmap' ? (opts.cms.length ? '选择 ConfigMap' : '暂无 ConfigMap') : v.type === 'secret' ? (opts.secrets.length ? '选择 Secret' : '暂无 Secret') : (opts.scs.length ? '选择 PVC' : '暂无 PVC')}</option>
+                      {(v.type === 'configmap' ? opts.cms : v.type === 'secret' ? opts.secrets : []).map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <input className={IN} value={v.mountPath} placeholder="挂载路径 /app/conf" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, mountPath: e.target.value }; set({ volumes: n }) }} />
+                    <input className={IN} value={v.subPath} placeholder="subPath(可选)" onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, subPath: e.target.value }; set({ volumes: n }) }} />
+                    <label style={{ display: 'flex', gap: 2, fontSize: '0.7rem', alignItems: 'center', color: 'var(--text)' }}>
+                      <input type="checkbox" checked={v.readOnly} onChange={(e) => { const n = [...m.volumes]; n[i] = { ...v, readOnly: e.target.checked }; set({ volumes: n }) }} />只读
+                    </label>
+                  </>)}
+                </RowList>
+              </Section>
+              <Section title="环境变量">
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <F label="envFrom(整批注入)" hint="从已有 ConfigMap/Secret">
+                    <RowList rows={m.envFrom}
+                      onDelete={(i) => set({ envFrom: m.envFrom.filter((_, j) => j !== i) })}
+                      onAdd={() => set({ envFrom: [...m.envFrom, { type: 'configmap', name: '' }] })} addLabel="+ 引用">
+                      {(e, i) => (<>
+                        <select className={IN} value={e.type} onChange={(ev) => { const n = [...m.envFrom]; n[i] = { ...e, type: ev.target.value, name: '' }; set({ envFrom: n }) }}>
+                          <option value="configmap">ConfigMap</option><option value="secret">Secret</option>
+                        </select>
+                        <select className={IN} value={e.name} onChange={(ev) => { const n = [...m.envFrom]; n[i] = { ...e, name: ev.target.value }; set({ envFrom: n }) }}>
+                          <option value="" disabled>{e.type === 'configmap' ? (opts.cms.length ? '选择' : '暂无') : (opts.secrets.length ? '选择' : '暂无')}</option>
+                          {(e.type === 'configmap' ? opts.cms : opts.secrets).map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </>)}
+                    </RowList>
+                  </F>
+                </div>
+                <F label="逐条 k/v"><KvRows items={m.env} onChange={(x) => set({ env: x })} kHint="NAME" vHint="value" /></F>
+              </Section>
+              <Section title="健康探针 (HTTP)">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1' }}>
+                  <input type="checkbox" id="cr-probe" checked={m.useProbe} onChange={(e) => set({ useProbe: e.target.checked })} />
+                  <label htmlFor="cr-probe" className="dim" style={{ fontSize: '0.75rem', cursor: 'pointer' }}>生成 readiness + liveness</label>
+                </div>
+                {m.useProbe && (
+                  <>
+                    <F label="路径"><input className={IN} value={m.probePath} onChange={(e) => set({ probePath: e.target.value })} /></F>
+                    <F label="端口"><input className={IN} value={m.probePort} onChange={(e) => set({ probePort: e.target.value })} /></F>
+                    <F label="启动延迟(s)"><input className={IN} value={m.probeDelay} onChange={(e) => set({ probeDelay: e.target.value })} /></F>
+                    <F label="间隔(s)"><input className={IN} value={m.probeInterval} onChange={(e) => set({ probeInterval: e.target.value })} /></F>
+                  </>
+                )}
+              </Section>
+              <Section title="调度 (亲和 / 污点)">
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', gap: 4, fontSize: '0.75rem', alignItems: 'center', color: 'var(--text)' }}>
+                    <input type="checkbox" checked={m.antiAffinity} onChange={(e) => set({ antiAffinity: e.target.checked })} />
+                    副本尽量分散到不同节点(podAntiAffinity)
+                  </label>
+                </div>
+                <F label="nodeSelector" hint="value 可选已有节点" wide>
+                  <KvRows items={m.nodeSelector} onChange={(x) => set({ nodeSelector: x })} kHint="kubernetes.io/hostname" vHint="节点名" vOptions={opts.nodes} />
+                </F>
+                <F label="污点容忍" wide>
+                  <RowList rows={m.tolerations}
+                    onDelete={(i) => set({ tolerations: m.tolerations.filter((_, j) => j !== i) })}
+                    onAdd={() => set({ tolerations: [...m.tolerations, { key: '', op: 'Equal', effect: 'NoSchedule', seconds: '' }] })} addLabel="+ 容忍规则">
+                    {(t, i) => (<>
+                      <input className={IN} value={t.key} placeholder="key" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, key: e.target.value }; set({ tolerations: n }) }} />
+                      <select className={IN} value={t.op} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, op: e.target.value }; set({ tolerations: n }) }}><option>Equal</option><option>Exists</option></select>
+                      <select className={IN} value={t.effect} onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, effect: e.target.value }; set({ tolerations: n }) }}>
+                        <option value="">任意</option><option>NoSchedule</option><option>PreferNoSchedule</option><option>NoExecute</option>
+                      </select>
+                      <input className={IN} value={t.seconds} placeholder="秒" onChange={(e) => { const n = [...m.tolerations]; n[i] = { ...t, seconds: e.target.value }; set({ tolerations: n }) }} />
+                    </>)}
+                  </RowList>
+                </F>
+              </Section>
+              <Section title="标签与注解">
+                <F label="labels"><KvRows items={m.extraLabels} onChange={(x) => set({ extraLabels: x })} kHint="key" vHint="value" /></F>
+                <F label="annotations"><KvRows items={m.annotations} onChange={(x) => set({ annotations: x })} kHint="key" vHint="value" /></F>
+              </Section>
+            </>
+          )}
+
+          {/* ── RBAC ── */}
+          {m.kind === 'ServiceAccount' && (
+            <span className="dim" style={{ fontSize: '0.6875rem' }}>ServiceAccount 仅需名称与命名空间, 创建后会自动生成关联 token Secret, 权限由绑定(RoleBinding/ClusterRoleBinding)授予。</span>
+          )}
+
+          {(m.kind === 'Role' || m.kind === 'ClusterRole') && (
+            <>
+              <Section title="权限规则(Rules)" defaultOpen badge={'apiGroups 留空或写 "" 表示核心组'}>
+                <RowList rows={m.rbacRules}
+                  onDelete={(i) => set({ rbacRules: m.rbacRules.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ rbacRules: [...m.rbacRules, { apiGroups: '""', resources: '', verbs: 'get,list,watch', resourceNames: '', nonResourceURLs: '' }] })} addLabel="+ 规则">
+                  {(r, i) => {
+                    const upd = (patch: Partial<RbacRule>) => { const n = [...m.rbacRules]; n[i] = { ...r, ...patch }; set({ rbacRules: n }) }
+                    return (<>
+                      {r.nonResourceURLs.trim() ? (
+                        <input className={IN} value={r.nonResourceURLs} placeholder="非资源路径 /healthz,/healthz/*" style={{ minWidth: 260 }} onChange={(e) => upd({ nonResourceURLs: e.target.value })} />
+                      ) : (
+                        <>
+                          <input className={IN} value={r.apiGroups} placeholder='apiGroups(逗号分隔, ""=核心组)' style={{ minWidth: 200 }} onChange={(e) => upd({ apiGroups: e.target.value })} />
+                          <input className={IN} value={r.resources} placeholder="resources: pods,pods/log" style={{ minWidth: 220 }} onChange={(e) => upd({ resources: e.target.value })} />
+                          <input className={IN} value={r.resourceNames} placeholder="resourceNames(可选)" style={{ minWidth: 160 }} onChange={(e) => upd({ resourceNames: e.target.value })} />
+                        </>
+                      )}
+                      <input className={IN} value={r.verbs} placeholder="verbs: get,list,watch" style={{ minWidth: 180 }} onChange={(e) => upd({ verbs: e.target.value })} />
+                      <label style={{ display: 'flex', gap: 2, fontSize: '0.7rem', alignItems: 'center', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={!!r.nonResourceURLs.trim()}
+                          onChange={(e) => { if (e.target.checked) upd({ nonResourceURLs: '/healthz', resources: '', resourceNames: '' }) ; else upd({ nonResourceURLs: '', verbs: 'get,list,watch' }) }} />
+                        非资源路径
+                      </label>
+                    </>)
+                  }}
+                </RowList>
+              </Section>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                {m.kind === 'ClusterRole'
+                  ? 'ClusterRole 为集群级角色(可授权 Node/非资源路径/全部命名空间等), 不含命名空间。'
+                  : 'Role 仅在该命名空间内生效。'}
+              </span>
+            </>
+          )}
+
+          {(m.kind === 'RoleBinding' || m.kind === 'ClusterRoleBinding') && (
+            <>
+              <Grid cols={2}>
+                <F label="绑定角色(roleRef) *">
+                  {m.kind === 'RoleBinding' ? (
+                    <>
+                      <input className={IN} value={m.rbacRoleRefName} placeholder="角色名, 如 pod-read" onChange={(e) => set({ rbacRoleRefName: e.target.value })} />
+                      <span className="dim" style={{ fontSize: '0.6875rem' }}>可绑定本命名空间的 Role 或任意 ClusterRole</span>
+                    </>
+                  ) : (
+                    <input className={IN} value={m.rbacRoleRefName} placeholder="ClusterRole 名, 如 cluster-admin" onChange={(e) => set({ rbacRoleRefName: e.target.value })} />
+                  )}
+                </F>
+                {m.kind === 'RoleBinding' && (
+                  <F label="角色类型">
+                    <select className={`${IN} sel`} value={m.rbacRoleRefKind} onChange={(e) => set({ rbacRoleRefKind: e.target.value })}>
+                      <option value="Role">Role(命名空间)</option>
+                      <option value="ClusterRole">ClusterRole(集群)</option>
+                    </select>
+                  </F>
+                )}
+              </Grid>
+              <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                {m.kind === 'RoleBinding' ? 'RoleBinding 仅在当前命名空间生效。' : 'ClusterRoleBinding 全局生效。'}
+              </span>
+              <Section title="主体(Subjects)" defaultOpen>
+                <RowList rows={m.rbacSubjects}
+                  onDelete={(i) => set({ rbacSubjects: m.rbacSubjects.filter((_, j) => j !== i) })}
+                  onAdd={() => set({ rbacSubjects: [...m.rbacSubjects, { kind: 'User', name: '', namespace: '' }] })} addLabel="+ 主体">
+                  {(s, i) => {
+                    const upd = (patch: Partial<RbacSubject>) => { const n = [...m.rbacSubjects]; n[i] = { ...s, ...patch }; set({ rbacSubjects: n }) }
+                    return (<>
+                      <select className={IN} value={s.kind} onChange={(e) => { upd({ kind: e.target.value, namespace: e.target.value === 'ServiceAccount' ? m.ns : '' }) }}>
+                        <option value="User">User(用户)</option>
+                        <option value="Group">Group(组)</option>
+                        <option value="ServiceAccount">ServiceAccount</option>
+                      </select>
+                      {s.kind === 'ServiceAccount' ? (
+                        <input className={IN} value={s.name} placeholder="ns/名称, 如 default/my-sa" style={{ minWidth: 200 }} onChange={(e) => upd({ name: e.target.value })} />
+                      ) : (
+                        <input className={IN} value={s.name} placeholder={s.kind === 'Group' ? '组名, 如 system:serviceaccounts' : '用户名, 如 alice'} style={{ minWidth: 200 }} onChange={(e) => upd({ name: e.target.value })} />
+                      )}
+                      <span className="dim" style={{ fontSize: '0.6875rem', whiteSpace: 'nowrap', alignSelf: 'center' }}>
+                        {s.kind === 'ServiceAccount' ? '格式 ns/name' : 'apiGroup: rbac.authorization.k8s.io'}
+                      </span>
+                    </>)
+                  }}
+                 </RowList>
+               </Section>
+             </>
+           )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 'auto', paddingTop: '0.5rem' }}>
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+          同名资源存在时覆盖更新
+        </div>
+      </div>
+
+      {/* 右: YAML 预览/编辑 */}
+      <div className="card" style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div className="card-head">
+          <h3>YAML</h3>
+          <div style={{ display: 'flex', gap: '0.375rem' }}>
+            <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'form' ? 'btn-accent' : ''}`} onClick={() => { setMode('form'); setYamlText('') }}>表单生成</button>
+            <button className={`btn-glass-soft btn-glass-soft-sm ${mode === 'yaml' ? 'btn-accent' : ''}`} onClick={() => setMode('yaml')}>手改模式</button>
+          </div>
+        </div>
+        <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <textarea className="input mono" value={mode === 'yaml' ? yamlText : (generated || '# 填写名称后自动生成骨架')}
+            readOnly={mode === 'form'}
+            onChange={(e) => setYamlText(e.target.value)}
+            style={{ flex: 1, resize: 'none', fontSize: '0.6875rem', lineHeight: 1.55, minHeight: 380, fontFamily: 'ui-monospace, monospace' }} />
+          <span className="dim" style={{ fontSize: '0.6875rem', marginTop: 6 }}>
+            {mode === 'form' ? '右侧随表单实时生成' : '以当前内容为最终提交'}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.625rem', alignItems: 'center' }}>
+        <button className="btn-glass-soft btn-glass-soft-accent" disabled={busy || (!generated && !yamlText.trim())} onClick={submit}>
+          {busy ? '提交中…' : `创建 ${m.kind}`}
+        </button>
+      </div>
+    </div>
+  )
+}

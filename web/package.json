@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "build": "tsc --noEmit && node scripts/build-spa.mjs",
+    "preview": "vite preview",
+    "test:format": "node --experimental-strip-types scripts/format-selftest.mts"
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",

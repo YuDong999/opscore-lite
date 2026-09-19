@@ -1,7 +1,16 @@
 # 下一批 CI/CD 功能实施蓝图
 
-> 状态：已评审，待实施。本文档是唯一规格来源；实现按此逐步落地，每步独立提交 + E2E 验证。
-> 会话续接：直接按本蓝图开工，无需追溯对话历史。
+> 状态：**部分已实施**（2026-09-18 更新，以代码为准）。本蓝图曾标注"待实施"，实际进度已超前，**读代码才算数**——动作注册表见 `internal/cicd/actions.go`。
+>
+> **已实现并 E2E 通过（2026-09-18 实测）**：
+> - 阶段 1 质量动作 `test.junit`（JUnit XML 收集 + failOn 门槛）—— 已在注册表
+> - `nginx.bgswitch`（蓝绿，切 root 目录）—— pipeline run 实测 blue↔green 100% 切换 ✓（日志 `_probe/bgswitch-e2e.log`）
+> - `nginx.canary`（金丝雀，upstream weight）—— 实测 20%/50%/100% 三档精确分流 ✓（日志 `_probe/cicd-canary-e2e.log`）
+> - 流量分发 UI（probe→edit→apply）—— `nginx.go` probe 尾冒号 bug 已修复，probe 返回路径已验证无冒号，UI apply 路径恢复可用
+>
+> **仍未实现**：`rolling`（滚动发布）动作、阶段 2/3（coverage 门槛、概览质量趋势线）。
+>
+> 会话续接：未实现项按本蓝图继续；已实现项以代码为规格来源。
 
 ## 一、质量检查动作（Quality Action）—— 阶段 1
 

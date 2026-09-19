@@ -93,6 +93,10 @@ select:focus-visible {
   --ok: #34c759;
   --warn: #ff9f0a;
   --danger: #ff453a;
+  --syn-keyword: #7c3aed;
+  --syn-number: #9a3412;
+  --syn-string: #166534;
+  --syn-comment: #4b5563;
   --lvl-error: #c1271d;
   --lvl-fatal: #9c0715;
   --lvl-warn: #8f5200;
@@ -127,6 +131,10 @@ select:focus-visible {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --syn-keyword: #c4b5fd;
+  --syn-number: #fdba74;
+  --syn-string: #86efac;
+  --syn-comment: #94a3b8;
   --lvl-error: #ff6b63;
   --lvl-fatal: #ff8a80;
   --lvl-warn: #ffc53d;
@@ -157,6 +165,10 @@ select:focus-visible {
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #fb7185;
+  --syn-keyword: #c4b5fd;
+  --syn-number: #fdba74;
+  --syn-string: #86efac;
+  --syn-comment: #94a3b8;
   --lvl-error: #ff6b63;
   --lvl-fatal: #ff8a80;
   --lvl-warn: #ffc53d;
@@ -195,6 +207,10 @@ select:focus-visible {
   --ok: #30d158;
   --warn: #ff9f0a;
   --danger: #ff453a;
+  --syn-keyword: #7c3aed;
+  --syn-number: #9a3412;
+  --syn-string: #166534;
+  --syn-comment: #4b5563;
   --shadow: 0 0.5rem 2.5rem rgba(5, 150, 105, 0.12);
   --blur: blur(1.875rem);
 }
@@ -227,6 +243,10 @@ select:focus-visible {
   --ok: #34c759;
   --warn: #ff9f0a;
   --danger: #ff453a;
+  --syn-keyword: #7c3aed;
+  --syn-number: #9a3412;
+  --syn-string: #166534;
+  --syn-comment: #4b5563;
   --shadow: 0 0.5rem 2.5rem rgba(217, 119, 6, 0.12);
   --blur: blur(1.875rem);
 }
@@ -562,11 +582,11 @@ body {
   letter-spacing: 0.0125rem;
 }
 
-.badge-ok { background: rgba(48, 209, 88, 0.15); color: #30d158; }
-.badge-on { background: rgba(48, 209, 88, 0.15); color: #30d158; }
+.badge-ok { background: rgba(48, 209, 88, 0.15); color: var(--ok); }
+.badge-on { background: rgba(48, 209, 88, 0.15); color: var(--ok); }
 .badge-off { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
-.badge-warn { background: rgba(255, 159, 10, 0.15); color: #ff9f0a; }
-.badge-danger { background: rgba(255, 69, 58, 0.15); color: #ff453a; }
+.badge-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.badge-danger { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
 .badge-info { background: rgba(10, 132, 255, 0.15); color: #0a84ff; }
 /* ── Theme picker ── */
 .theme-picker {
@@ -641,8 +661,8 @@ body {
 .btn-accent:hover:not(:disabled) { background: #0071e3; border: none; }
 .btn-danger { background: var(--danger); color: #fff; border-color: transparent; }
 .btn-danger:hover:not(:disabled) { background: #d63a30; border-color: transparent; }
-.btn-log { border-color: #ff9f0a; color: #ff9f0a; font-weight: 600; }
-.btn-log:hover:not(:disabled) { background: #ff9f0a; color: #fff; border-color: #ff9f0a; }
+.btn-log { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.btn-log:hover:not(:disabled) { background: var(--warn); color: #fff; border-color: var(--warn); }
 .btn-active {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -741,7 +761,7 @@ body {
 
 .btn-glass-soft-danger {
   color: #fff;
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: linear-gradient(135deg, var(--danger), color-mix(in srgb, var(--danger) 78%, #000));
   border-color: transparent;
   box-shadow: 0px 8px 50px 0px rgba(0, 0, 0, 0.2);
 }
@@ -779,16 +799,16 @@ body {
   border-radius: var(--radius-sm);
   margin-bottom: 1rem;
   font-size: 0.8125rem;
-  background: rgba(255, 159, 10, 0.1);
-  border: 1px solid rgba(255, 159, 10, 0.25);
-  color: #ff9f0a;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  color: var(--warn);
 }
 
-.banner-ok { background: rgba(48, 209, 88, 0.1); border-color: rgba(48, 209, 88, 0.25); color: #30d158; }
-.banner-err { background: rgba(255, 69, 58, 0.1); border-color: rgba(255, 69, 58, 0.25); color: #ff453a; }
+.banner-ok { background: rgba(48, 209, 88, 0.1); border-color: rgba(48, 209, 88, 0.25); color: var(--ok); }
+.banner-err { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); }
 .banner-info { background: rgba(10, 132, 255, 0.1); border-color: rgba(10, 132, 255, 0.25); color: #0a84ff; }
-.alert-ok { padding: 0.5rem 1rem; border-radius: 0.5rem; background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); color: #30d158; font-size: 0.8125rem; margin-bottom: 0.75rem; }
-.alert-err { padding: 0.5rem 1rem; border-radius: 0.5rem; background: rgba(255, 69, 58, 0.1); border: 1px solid rgba(255, 69, 58, 0.25); color: #ff453a; font-size: 0.8125rem; margin-bottom: 0.75rem; }
+.alert-ok { padding: 0.5rem 1rem; border-radius: 0.5rem; background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); color: var(--ok); font-size: 0.8125rem; margin-bottom: 0.75rem; }
+.alert-err { padding: 0.5rem 1rem; border-radius: 0.5rem; background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); font-size: 0.8125rem; margin-bottom: 0.75rem; }
 
 /* ── Misc ── */
 .svc-icon { margin-right: 0.375rem; }
@@ -805,7 +825,6 @@ body {
 .data-table tr.row-mounted { background: rgba(48, 209, 88, 0.06); }
 .data-table tr.row-highlight { background: rgba(10, 132, 255, 0.12); animation: device-flash 1.2s ease; }
 .input-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
-.pill-ok { border-color: rgba(48,209,88,0.3); background: rgba(48,209,88,0.08); }
 .svc-badge { display: inline-flex; align-items: center; gap: 0.25rem; font-weight: 600; }
 .verified { display: inline-grid; place-items: center; width: 1rem; height: 1rem; border-radius: 50%; background: var(--ok); color: #fff; font-size: 0.625rem; margin-left: 0.125rem; }
 
@@ -940,7 +959,7 @@ body {
 .modal h3 { margin: 0 0 0.875rem; font-size: 1.125rem; font-weight: 600; }
 .field-label { font-size: 0.75rem; color: var(--text-dim); margin: 1rem 0 0.375rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
 .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.25rem; }
-.lockout-warn { background: rgba(255, 69, 58, 0.1); border: 1px solid rgba(255, 69, 58, 0.3); color: #ff453a; border-radius: var(--radius-sm); padding: 0.75rem 1rem; font-size: 0.8125rem; margin-bottom: 0.75rem; }
+.lockout-warn { background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); color: var(--danger); border-radius: var(--radius-sm); padding: 0.75rem 1rem; font-size: 0.8125rem; margin-bottom: 0.75rem; }
 
 /* ── Log modal ── */
 .modal-mask {
@@ -1009,7 +1028,7 @@ body {
 .sel:focus, .ipt:focus { border-color: var(--accent); }
 .chk { display: inline-flex; align-items: center; gap: 0.3125rem; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; }
 
-.log-warn { padding: 0.5rem 1.25rem; font-size: 0.75rem; color: #ff453a; background: rgba(255, 69, 58, 0.08); }
+.log-warn { padding: 0.5rem 1.25rem; font-size: 0.75rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .toast-copy { position: fixed; bottom: 1.75rem; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 0.5rem 1.375rem; border-radius: var(--radius-sm); font-size: 0.8125rem; z-index: 100; animation: toast-in .2s ease; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(0.75rem); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
@@ -1019,12 +1038,13 @@ body {
 @keyframes toast-drop { from { opacity: 0; transform: translateY(-100%); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toast-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-120%); } }
 
-.toast-success { background: rgba(48, 209, 88, 0.14); border-color: rgba(48, 209, 88, 0.28); color: #30d158; }
-.toast-error { background: rgba(255, 69, 58, 0.14); border-color: rgba(255, 69, 58, 0.28); color: #ff453a; }
-.toast-warn { background: rgba(255, 159, 10, 0.14); border-color: rgba(255, 159, 10, 0.28); color: #ff9f0a; }
+.toast-success { background: rgba(48, 209, 88, 0.14); border-color: rgba(48, 209, 88, 0.28); color: var(--ok); }
+.toast-error { background: color-mix(in srgb, var(--danger) 14%, transparent); border-color: color-mix(in srgb, var(--danger) 28%, transparent); color: var(--danger); }
+.toast-warn { background: color-mix(in srgb, var(--warn) 14%, transparent); border-color: color-mix(in srgb, var(--warn) 28%, transparent); color: var(--warn); }
 .toast-info { background: rgba(10, 132, 255, 0.14); border-color: rgba(10, 132, 255, 0.28); color: #0a84ff; }
 
-.toast-ico { display: inline-grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; }  // 无底色: 彩色 SVG 图标直接示态, 不再套实心圆
+/* 无底色: 彩色 SVG 图标直接示态, 不再套实心圆 */
+.toast-ico { display: inline-grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; }
 .toast-msg { flex: 1; line-height: 1.4; word-break: break-word; }
 
 .log-body { flex: 1; overflow-y: auto; padding: 0.75rem 1rem 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; line-height: 1.7; background: rgba(0,0,0,0.2); }
@@ -1037,8 +1057,8 @@ body {
 .log-line:hover { background: var(--row-hover); }
 .log-num { flex: 0 0 2rem; text-align: right; color: var(--text-dim); user-select: none; }
 .log-text { flex: 1; }
-.lvl-err { color: #ff453a; background: rgba(255, 69, 58, 0.07); }
-.lvl-warn { color: #ff9f0a; }
+.lvl-err { color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, transparent); }
+.lvl-warn { color: var(--warn); }
 .lvl-info { color: #64d2ff; }
 .lvl-default { color: var(--text); }
 
@@ -1061,6 +1081,12 @@ body {
 .sortable:hover { color: var(--accent); }
 .sel-xs { font-size: 0.75rem; padding: 0.125rem 0.375rem; margin-left: 0.375rem; border-radius: 0.5rem; }
 .pill { font-size: 0.75rem; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); padding: 0.25rem 0.625rem; border-radius: 999px; }
+/* pill 语义变体 —— 必须在 .pill 之后：同特异性下由源序决定胜负。
+   原 .pill-ok/.pill-warn/.pill-err 定义在 .pill 之前（或被 .pill 的 background/border 简写覆盖、
+   或根本没定义），导致「生产/只读/失败」等语义标识与中性标签完全同色 → 警示失效。 */
+.pill-ok   { color: var(--ok, #30d158); border-color: rgba(48, 209, 88, 0.3); background: rgba(48, 209, 88, 0.08); }
+.pill-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.pill-err  { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .pill-sub { margin-left: 0.625rem; font-weight: 500; vertical-align: middle; }
 .loading { color: var(--text-dim); padding: 2.5rem; text-align: center; }
 
@@ -1088,9 +1114,9 @@ body {
 .flex-1 { flex: 1; }
 
 .error-box {
-  background: rgba(255, 69, 58, 0.1);
-  border: 1px solid rgba(255, 69, 58, 0.25);
-  color: #ff453a;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  color: var(--danger);
   border-radius: var(--radius-sm);
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
@@ -1423,8 +1449,8 @@ body {
 }
 .k8s-add-cluster { margin: 0.5rem 0.25rem 0; justify-content: center; }
 .k8s-dot { width: 0.4375rem; height: 0.4375rem; border-radius: 50%; flex-shrink: 0; }
-.k8s-dot-ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.6); }
-.k8s-dot-bad { background: #ef4444; }
+.k8s-dot-ok { background: var(--ok); box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 60%, transparent); }
+.k8s-dot-bad { background: var(--danger); }
 
 /* 表格行内操作: 允许换行防重叠 */
 .k8s-row-actions { flex-wrap: nowrap; gap: 0.25rem !important; row-gap: 0.25rem; }
@@ -1433,8 +1459,8 @@ body {
 /* K8S 概览仪表盘卡片 */
 .k8s-ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.75rem; }
 .k8s-ov-card { padding: 0.75rem 1rem; border-left-width: 3px; }
-.k8s-ov-ok { border-left-color: #22c55e; }
-.k8s-ov-warn { border-left-color: #f59e0b; }
+.k8s-ov-ok { border-left-color: var(--ok); }
+.k8s-ov-warn { border-left-color: var(--warn); }
 .k8s-ov-info { border-left-color: var(--accent, #7c6cf6); }
 
 /* 概览迷你统计卡(与系统资源页 stat-row 风格一致) */
@@ -1544,7 +1570,7 @@ body {
   display: flex; align-items: center; gap: 0.375rem;
 }
 .k8s-ctx-item:hover { background: var(--row-hover); }
-.k8s-ctx-item.k8s-ctx-danger:hover { background: rgba(255, 69, 58, 0.12); color: var(--danger); }
+.k8s-ctx-item.k8s-ctx-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .k8s-ctx-divider {
   height: 1px; background: var(--border);
   margin: 0.25rem 0.25rem;
@@ -1649,28 +1675,31 @@ body {
 /* ═══════ 数据库管理模块 (DatabaseManager) ═══════ */
 
 .db-module { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.db-layout { display: flex; flex: 1; min-height: 0; gap: 0.75rem; }
+.db-layout { display: flex; flex: 1; min-height: 0; gap: 0; }
 .db-side {
-  width: 340px; flex-shrink: 0;
-  display: flex; flex-direction: column; gap: 0.5rem;
-  background: var(--surface);
-  backdrop-filter: var(--blur);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 0.625rem;
-  overflow: auto;
+  width: 21rem; min-width: 16rem; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 0.75rem;
   min-height: 0;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0.5rem 0.625rem 0.5rem 0;
 }
-.db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+/* .db-main 统一定义(合并为一处): flex 列布局 + 可滚动 + 允许收缩; 保留原三处全部生效属性 */
+.db-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+/* 工作区标签(唯一使用点: DatabaseManagerModule 的 db-worktabs; button 系规则实际命中其内 .db-worktab-close,
+   特异性 0,1,1 高于 .db-worktab-close 自身 0,1,0 —— 合并 3 处定义为 1 处(并集), 计算样式零变化) */
 .db-main-tabs { display: flex; gap: 0.25rem; }
 .db-main-tabs button {
-  background: transparent; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 0.375rem 0.75rem;
-  color: var(--text); cursor: pointer; font-size: 0.8125rem;
+  background: transparent; border: none; padding: 0.375rem 1rem;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-dim);
+  cursor: pointer; font-size: 0.8125rem;
   transition: background-color 90ms ease-out;
 }
 .db-main-tabs button:hover:not(:disabled) { background: var(--row-hover); }
-.db-main-tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+.db-main-tabs button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
 .db-main-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
 .db-main-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 
@@ -1706,14 +1735,8 @@ body {
 .db-engine-mysql { background: rgba(255,153,0,0.12); color: #c2691c; }
 .db-engine-postgres { background: rgba(0,102,204,0.12); color: #0050a0; }
 
-.db-empty {
-  text-align: center; padding: 1.5rem 1rem; color: var(--text-dim);
-  background: var(--surface); border: 1px dashed var(--border);
-  border-radius: var(--radius-md); font-size: 0.8125rem;
-}
-.db-empty-sm { color: var(--text-dim); font-size: 0.75rem; padding: 0.5rem; }
+/* 注：此处原有另一份 .db-empty（含虚线边框/底色）从未生效——被更晚的同特异性定义覆盖，已删除以消除误导。若要恢复虚线框设计，请在此处显式覆盖并验证。 */
 .db-empty-lg { padding: 3rem 1rem; font-size: 1rem; }
-  margin-bottom: 1rem;
 
 /* 写解锁状态栏 */
 .db-unlock-status {
@@ -1748,7 +1771,6 @@ body {
 .db-form-row { display: flex; gap: 0.5rem; }
 .db-form-grow { flex: 1; }
 .db-form-actions { display: flex; justify-content: flex-end; gap: 0.375rem; margin-top: 0.25rem; }
-  margin-top: 1rem;
 
 /* 连接面板解锁按钮 */
 .db-conn-unlock {
@@ -1789,8 +1811,8 @@ body {
   border-radius: 3px; line-height: 14px; flex-shrink: 0;
   background: var(--surface-tint); color: var(--accent);
 }
-.db-tbl-VIEW { background: rgba(91,106,191,0.12); color: #5b6abf; }
-.db-tbl-BASE_TABLE { background: rgba(0,150,105,0.12); color: #059669; }
+.db-tbl-VIEW { background: rgba(91,106,191,0.12); color: var(--accent); }
+.db-tbl-BASE_TABLE { background: rgba(0,150,105,0.12); color: var(--ok); }
 
 /* SQL 查询区 */
 .db-query { display: flex; flex-direction: column; gap: 0.375rem; }
@@ -1818,10 +1840,11 @@ body {
 }
 .db-sql-editor:focus { outline: none; border-color: var(--accent); }
 
-/* 结果区 */
+/* 结果区(原 2 处定义合并为 1 处并集: v1 的 overflow/flex + v2 的 padding/gap/min-height, 计算样式零变化) */
+/* 去卡片化(09-19 用户要求): 结果区不再套四周圆角的卡片, 表格自身的 .table-wrap 边框即唯一边界 */
+/* 内容区贴边(dbx ContentArea 同款): 网格铺满到分隔线, 文字行各自带内边距 */
+/* 网格上下边直接贴合上下分割线: 无 gap 无 padding */
 .db-result {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-md); overflow: hidden;
   flex: 1; min-height: 0; display: flex; flex-direction: column;
 }
 .db-result-head {
@@ -1868,7 +1891,7 @@ body {
   white-space: pre; overflow: auto;
   background: rgba(0,0,0,0.2);
 }
-.db-edit-controls { margin-top: 8px; display: flex; align-items: center; } .db-edit-input { width: 100%; padding: 4px; border: 1px solid var(--border); border-radius: 4px; font-family: monospace; } .db-edit-input:focus { outline: none; border-color: var(--primary); } .editing { background-color: var(--bg-highlight); }
+.db-edit-controls { margin-top: 8px; display: flex; align-items: center; } .db-edit-input { width: 100%; padding: 4px; border: 1px solid var(--border); border-radius: 4px; font-family: monospace; } .db-edit-input:focus { outline: none; border-color: var(--accent); } .editing { background-color: var(--row-hover); }
 
 /* DB 引擎分组 */
 .db-engine-group { display: flex; flex-direction: column; gap: 0.375rem; }
@@ -1901,10 +1924,10 @@ body {
 .db-engine-mysql, .db-engine-card.db-engine-mysql { color: #c2691c; }
 .db-engine-postgres, .db-engine-card.db-engine-postgres { color: #0050a0; }
 .db-engine-oracle { color: #c74634; }
-.db-engine-goldendb { color: #d97706; }
+.db-engine-goldendb { color: var(--warn); }
 .db-engine-chroma { color: #7c3aed; }
-.db-engine-qdrant { color: #dc2626; }
-.db-engine-milvus { color: #059669; }
+.db-engine-qdrant { color: var(--danger); }
+.db-engine-milvus { color: var(--ok); }
 .db-engine-rocketmq { color: #2563eb; }
 .db-engine-mqtt { color: #0891b2; }
 .db-engine-kafka { color: #1e40af; }
@@ -2077,13 +2100,7 @@ body {
 .db-module-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .db-head-info { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .db-head-actions { margin-left: auto; }
-.db-layout { display: flex; flex: 1; min-height: 0; gap: 0.75rem; }
-.db-side { width: 21rem; min-width: 16rem; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; padding-right: 0.125rem; }
-.db-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
-.db-main-tabs { display: flex; gap: 0.25rem; }
-.db-main-tabs button { background: transparent; border: none; padding: 0.375rem 1rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-dim); cursor: pointer; font-size: 0.8125rem; }
-.db-main-tabs button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
-.db-main-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* .db-main 统一定义见文件上方(已合并为一处, 含 overflow-y + min-height); .db-main-tabs 统一定义亦在上方 */
 
 /* ── 连接列表 ── */
 .db-conn-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
@@ -2160,13 +2177,7 @@ body {
 .db-module-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .db-head-info { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .db-head-actions { margin-left: auto; }
-.db-layout { display: flex; flex: 1; min-height: 0; gap: 0.75rem; }
-.db-side { width: 21rem; min-width: 16rem; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; padding-right: 0.125rem; }
-.db-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
-.db-main-tabs { display: flex; gap: 0.25rem; }
-.db-main-tabs button { background: transparent; border: none; padding: 0.375rem 1rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-dim); cursor: pointer; font-size: 0.8125rem; }
-.db-main-tabs button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
-.db-main-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* .db-main 统一定义见文件上方(已合并为一处, 含 overflow-y + min-height); .db-main-tabs 统一定义亦在上方 */
 
 /* ── 连接列表 ── */
 .db-conn-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
@@ -2179,8 +2190,6 @@ body {
 .db-conn-item-name { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .db-conn-item-host { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .db-conn-item-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
-.db-empty { padding: 1.5rem 0.75rem; text-align: center; color: var(--text-dim); font-size: 0.8125rem; word-break: break-word; overflow-wrap: anywhere; }
-.db-empty-sm { padding: 0.75rem 0.5rem; text-align: center; color: var(--text-dim); font-size: 0.75rem; }
 
 /* ── 引擎徽章 ── */
 .db-engine-badge { display: inline-flex; align-items: center; padding: 0.125rem 0.375rem; border-radius: 0.5rem; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.02em; background: var(--surface-tint); border: 1px solid var(--border); color: var(--text-secondary); text-transform: uppercase; }
@@ -2242,11 +2251,20 @@ body {
 .db-query-textarea { width: 100%; box-sizing: border-box; min-height: 8rem; resize: vertical; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8125rem; line-height: 1.5; padding: 0.625rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-solid); color: var(--text); }
 .db-query-textarea:focus { outline: none; border-color: var(--accent); }
 
-/* ── 结果表格 ── */
-.db-result { display: flex; flex-direction: column; gap: 0.375rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; min-height: 0; }
-.db-result-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-dim); }
+/* ── 结果表格(.db-result 定义已合并至上方唯一一处) ── */
+.db-result-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-dim); padding: 0 0.75rem; }
 .db-export-controls { margin-left: auto; display: flex; gap: 0.25rem; }
 .table-wrap { overflow: auto; max-height: 26rem; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+
+/* 数据网格滚动条(09-19 用户要求): 4px 贴边细条, 默认隐形, 悬停/聚焦浮现 —— 与侧栏同语言。
+   用 ::-webkit-scrollbar 定制才能到 4px(标准 scrollbar-width:thin ≈ 11px 且会禁用 webkit 定制);
+   覆盖两处滚动容器: .db-table-grid(数据/查询结果网格) 与 .table-wrap(其他结果容器) */
+.db-table-grid::-webkit-scrollbar, .table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+.db-table-grid::-webkit-scrollbar-track, .table-wrap::-webkit-scrollbar-track { background: transparent; }
+.db-table-grid::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.db-table-grid:hover::-webkit-scrollbar-thumb, .db-table-grid:focus-within::-webkit-scrollbar-thumb,
+.table-wrap:hover::-webkit-scrollbar-thumb, .table-wrap:focus-within::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 30%, transparent); }
+.db-table-grid::-webkit-scrollbar-corner, .table-wrap::-webkit-scrollbar-corner { background: transparent; }
 .db-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
 .db-table th, .db-table td { padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .db-table th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 600; cursor: pointer; user-select: none; z-index: 1; }
@@ -2349,8 +2367,9 @@ body {
 .db-worktabs-fixed { margin-left: auto; display: flex; gap: 0.25rem; }
 
 /* ── 数据浏览面板 ── */
-.db-data-panel { display: flex; flex-direction: column; gap: 0.375rem; min-height: 0; }
-.db-data-toolbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+/* .db-data-panel 统一定义见下方第 2415 行附近(已合并去卡片化, 仅一处) */
+/* 数据工具栏(原 3 处定义合并为 1 处并集: 基础 flex + v2 的 padding/border-bottom + v3 的 gap 0.375rem, 计算样式零变化) */
+.db-data-toolbar { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; padding: 0 1rem 0.5rem; border-bottom: 1px solid var(--border); }
 .db-data-title { font-size: 0.8125rem; font-weight: 600; }
 .db-data-spacer { flex: 1; }
 .db-data-pager { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; justify-content: flex-end; }
@@ -2400,8 +2419,15 @@ body {
 .db-tree-actions button.danger:hover { color: var(--danger); }
 
 /* ── 标签工作台 v2 ── */
-.db-worktabs { display: flex; gap: 0.25rem; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0; }
-.db-worktab { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.5rem 0.375rem 0.75rem; border-radius: 0; cursor: pointer; font-size: 0.75rem; border: 1px solid transparent; border-bottom: none; max-width: 16rem; margin-bottom: -1px; }
+/* 单行标签带(dbx 同款): 超宽不换行, 原生横向滚动 + 隐藏滚动条(滚轮由 onWheel 转横向) */
+.db-worktabs { display: flex; gap: 0.25rem; align-items: center; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--border); padding: 0 1rem; scrollbar-width: none; }
+.db-worktabs::-webkit-scrollbar { display: none; }
+/* 标签带横向滑块(dbx 同款): 溢出时出现的细轨+可拖拽滑块 */
+.db-tab-scrollbar { height: 4px; display: flex; align-items: stretch; touch-action: none; }
+.db-tab-thumb { border-radius: 2px; background: color-mix(in srgb, var(--text) 24%, transparent); cursor: grab; }
+.db-tab-thumb:hover, .db-tab-thumb:active { background: color-mix(in srgb, var(--text) 42%, transparent); }
+.db-tab-thumb:active { cursor: grabbing; }
+.db-worktab { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.5rem 0.375rem 0.75rem; border-radius: 0; cursor: pointer; font-size: 0.75rem; border: 1px solid transparent; border-bottom: none; max-width: 16rem; margin-bottom: -1px; flex-shrink: 0; }
 .db-worktab:hover { background: var(--row-hover); }
 .db-worktab.active { background: var(--surface-solid); border-color: var(--border); font-weight: 600; }
 .db-worktab-kind { font-size: 0.625rem; color: var(--accent); font-weight: 800; letter-spacing: 0.03em; }
@@ -2412,12 +2438,13 @@ body {
 .db-worktabs-fixed { margin-left: auto; display: flex; gap: 0.25rem; padding-bottom: 0.375rem; }
 
 /* ── 数据浏览 v2 ── */
-.db-data-panel { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.625rem; box-shadow: var(--shadow); }
-.db-data-toolbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+/* 数据面板: 透明容器(去卡片化), 只保留一层 flex 布局, 不再套外框/底色/阴影, 与内层表格的一层边界叠加即"去层化" */
+/* 网格上下缘直接贴合上/下分割线(toolbar 边线与 pager 边线): 面板 gap 归零 */
+.db-data-panel { display: flex; flex-direction: column; gap: 0; min-height: 0; flex: 1; }
 .db-data-title { font-size: 0.875rem; font-weight: 650; }
 .db-data-title .db-crumb-db { color: var(--text-dim); font-weight: 500; }
 .db-data-spacer { flex: 1; }
-.db-data-pager { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; justify-content: flex-end; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+.db-data-pager { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; justify-content: flex-end; padding: 0.5rem 1rem 0; border-top: 1px solid var(--border); }
 .db-data-pager .dim { margin-right: auto; }
 
 /* ── 结果网格 v2: 双行列头/斑马纹/行高 ── */
@@ -2452,6 +2479,21 @@ body {
 }
 .db-conn-panel { box-shadow: 0 0 0 200vmax rgba(15, 18, 34, 0.32), var(--shadow); }
 .db-conn-panel .db-engine-grid { grid-template-columns: repeat(auto-fill, minmax(7.6rem, 1fr)); }
+
+/* V6: 向导真背幕(点击空白处 = 返回, 原先背幕只是 200vmax box-shadow 点不到) */
+.db-wizard-backdrop { position: fixed; inset: 0; z-index: 599; background: rgba(15, 18, 34, 0.32); }
+.db-conn-panel { box-shadow: var(--shadow); }
+/* V7: 头部行固定 = 结构分家(面板不滚, 内容区独立滚)。
+   弃用 sticky: 滚动容器自带 padding 时 sticky top:0 相对内容区停靠, 头部上方恒留 1rem 露缝。
+   内容区 flex 取默认 0 1 auto(自然高) + min-height:0: 内容少时面板贴内容, 超过 max-height 时
+   收缩出滚动条 —— 若写 flex-basis:0 会塌成 0 高(面板只剩头部, 命中测试全错)。 */
+.db-conn-panel { padding: 0; gap: 0; }
+.db-conn-panel .db-conn-list-head {
+  margin: 0; padding: 0.75rem 1rem;
+  background: var(--surface-solid); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.db-conn-panel-body { min-height: 0; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
 
 /* V4: 表单布局防冲突 — 主站 .db-form label(column) 会命中向导全部后代 label,
    所有 dbmanager 表单 label 显式声明方向; checkbox 不拉伸 */
@@ -2533,10 +2575,10 @@ body {
 .db-stmt-write  { border-left: 2px solid var(--warn); }
 .db-stmt-ddl    { border-left: 2px solid var(--danger); }
 .db-stmt-other  { border-left: 2px solid var(--text-dim); }
-.db-stmt-type-select { background: rgba(59,130,246,0.15); color: #93c5fd; }
-.db-stmt-type-write  { background: rgba(245,158,11,0.15); color: #fcd34d; }
-.db-stmt-type-ddl    { background: color-mix(in srgb, var(--danger) 15%, transparent); color: #fca5a5; }
-.db-stmt-type-other  { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+.db-stmt-type-select { background: color-mix(in srgb, var(--accent-2) 15%, transparent); color: var(--accent-2); }
+.db-stmt-type-write  { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.db-stmt-type-ddl    { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+.db-stmt-type-other  { background: color-mix(in srgb, var(--text-dim) 15%, transparent); color: var(--text); }
 
 /* 模块头部全局操作区 */
 .db-head-global-actions {
@@ -2778,7 +2820,7 @@ body {
 }
 .db-drv-header h3 { margin: 0; font-size: 1rem; }
 .db-drv-group { display: flex; flex-direction: column; gap: 0.5rem; }
-.db-drv-group h4 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dim); }
+.db-drv-group h4 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
 .db-drv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; }
 .db-drv-card {
   display: flex; flex-direction: column; gap: 0.375rem;
@@ -2802,11 +2844,10 @@ body {
 .db-query-meta { font-size: 0.75rem; }
 .db-query-sql { margin: 0 0.75rem 0.75rem; font-size: 0.75rem; max-height: 240px; overflow: auto; }
 
-/* 数据工具栏视图 */
-.db-data-toolbar { flex-wrap: wrap; gap: 0.375rem; }
-.db-view-toggle { display: flex; gap: 0.25rem; }
+/* 数据工具栏视图(定义已合并至上方唯一一处) */
+/* .db-view-toggle 统一定义见下方(已合并为连体分段控件, 无 gap, active 用底色表达) */
 .db-view-toggle .btn-glass-soft-sm.active {
-  background: var(--surface-tint); border-color: var(--accent); color: var(--accent);
+  background: var(--accent); color: #fff;
 }
 .db-col-filter {
   display: flex; flex-wrap: wrap; gap: 0.375rem 0.75rem;
@@ -2925,9 +2966,9 @@ body {
   font-size: 0.75rem;
   line-height: 1.4;
   border-radius: 4px;
-  background: var(--accent-soft, #eef2ff);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent, #4f6ef7);
-  border: 1px solid var(--accent-border, #d6ddfb);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   white-space: nowrap;
   max-width: 8em;
   overflow: hidden;
@@ -2989,7 +3030,7 @@ body {
 
 /* 源管理 */
 .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.375rem; }
-.dot-ok { background: #30d158; }
+.dot-ok { background: var(--ok); }
 .dot-off { background: var(--text-dim); }
 .dot-err { background: var(--danger); }
 .dot-warn { background: var(--warn); }
@@ -3008,7 +3049,7 @@ body {
 }
 .log-modal {
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   width: 100%;
   max-width: 48rem;
   max-height: 80vh;
@@ -3055,7 +3096,7 @@ body {
 }
 .metric-label {
   font-size: 0.6875rem;
-  color: var(--dim, #999);
+  color: var(--text-dim);
   letter-spacing: 0.03em;
 }
 .metric-val {
@@ -3118,7 +3159,7 @@ body {
 .k8s-action-cmd {
   margin: 0;
   padding: 0.5rem 0.625rem;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--mono);
   font-size: 0.75rem; line-height: 1.5;
   color: var(--text, #cdd6e0);
   background: rgba(0,0,0,0.35);
@@ -3139,7 +3180,7 @@ body {
   font-size: 0.8125rem; padding-top: 0.4375rem;
   text-align: right; color: var(--text-dim, #aaa);
 }
-.dyn-form-req { color: #ef4444; margin-left: 2px; }
+.dyn-form-req { color: var(--danger); margin-left: 2px; }
 .dyn-form-input { min-width: 0; }
 .dyn-form-input .input { width: 100%; }
 .dyn-form-bool {
@@ -3168,7 +3209,7 @@ body {
 }
 .exec-ansi { margin: 0; font: inherit; }
 .exec-terminal .prompt {
-  font-family: ui-monospace, monospace; color: #22c55e;
+  font-family: ui-monospace, monospace; color: var(--ok);
   font-weight: 700; padding: 0.5rem 0.375rem 0 0;
 }
 /* 悬停才显示滚动条: 平时完全隐藏, 鼠标移入浮现细滚动条 */
@@ -3238,7 +3279,6 @@ body {
 
 /* ═══ V10: 侧栏去大框套小框(对齐 dbx) — 侧栏是一个平面, 不再有容器套容器 ═══ */
 /* 层级: .db-side(唯一平面, 以右侧分隔线与主区划界) > 搜索条 + 树(无框) */
-.db-side { border-right: 1px solid var(--border); padding-right: 0.625rem; }
 .db-tree { border: none !important; box-shadow: none !important; background: transparent !important; border-radius: 0 !important; padding: 0.25rem 0.125rem !important; }
 /* 搜索条: 填充式(无边框浅底), 与树同宽融入面板 */
 .db-tree-search { background: var(--surface-tint) !important; border: none !important; box-shadow: none !important; }
@@ -3247,7 +3287,6 @@ body {
 .db-tree-add:hover { background: var(--row-hover) !important; color: var(--accent) !important; }
 /* 树 body 无内衬, 滚动只此一处 */
 .db-tree-body { padding: 0 !important; }
-.db-side { background: transparent !important; border: none !important; border-right: 1px solid var(--border) !important; border-radius: 0 !important; box-shadow: none !important; }
 
 /* ═══ V11: 月牙真因 = '▸'字符字体缺字形 fallback 渲染成弧形 → 改纯 CSS 三角形(零字体依赖) ═══ */
 .db-tree-node, .db-tree-card { height: 2rem !important; min-height: 2rem; }
@@ -3297,19 +3336,8 @@ body {
 .db-tree-label { font-size: 0.8125rem !important; line-height: 1.25 !important; }
 /* 选中: dbx tree-item-active = 浅灰底, 无竖条 */
 .db-tree-node.selected, .db-tree-card.selected { background: rgb(235 235 235) !important; box-shadow: none !important; }
-[data-theme='obsidian'] .db-tree-node.selected, [data-theme='obsidian'] .db-tree-card.selected,
-[data-theme='黑曜石'] .db-tree-node.selected { background: rgb(36 36 36) !important; }
+[data-theme='obsidian'] .db-tree-node.selected, [data-theme='obsidian'] .db-tree-card.selected { background: rgb(36 36 36) !important; }
 
-/* ═══ V14: 数据库侧栏统一到项目侧栏设计语言(同 k8s-side, opencode 审查版) ═══
-   覆盖 V7-V13 的补丁式覆盖, 全部值取自 .k8s-side 体系, 单一来源 */
-/* 容器: 与 k8s-side 同构的卡片(唯一一层框) */
-.db-side {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 0.75rem !important;
-  box-shadow: none !important;
-  padding: 0.625rem 0.375rem !important;
-}
 /* 行: k8s-side-item 值 — 28px、0.4rem 圆角、hover 灰 8% */
 .db-tree-node, .db-tree-card {
   min-height: 1.75rem !important; height: auto !important;
@@ -3392,8 +3420,8 @@ body {
 /* DataPanel 网格工具栏细节(make-interfaces-feel-better: tabular-nums/悬停态完备) */
 .db-toolbar-stat { font-size: 0.75rem; color: var(--text-dim); font-variant-numeric: tabular-nums; padding: 0.125rem 0.5rem; background: var(--surface-tint); border-radius: 0.5rem; }
 .db-data-toolbar .btn-glass-soft { transition: background-color 120ms ease; }
-.db-view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.db-view-toggle button { border: none; border-radius: 0 !important; }
+.db-view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.db-view-toggle button { border: none; border-radius: 0 !important; justify-content: center; min-width: 3.5rem; }
 .db-view-toggle button + button { border-left: 1px solid var(--border); }
 
 /* ── 详情卡片(单元格/行/列) ── */
@@ -3411,7 +3439,8 @@ body {
 .db-detail-field-val { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: 'JetBrains Mono', Consolas, monospace; }
 
 /* 网格化表格: dbx DataGrid 同构 —— 全边框单元 + 粘性表头 + 斑马悬停 */
-.db-table-grid { border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 60vh; }
+/* 表格层减化: 去掉外框与圆角, 只保留上/下各一条 1px 分隔线(单元格自身仍有行列线), 与外层 data-panel 的"单边界"目标一致 */
+.db-table-grid { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow: auto; max-height: 60vh; }
 .db-table-grid table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.75rem; }
 .db-table-grid th, .db-table-grid td { height: 22px; padding: 0.375rem 0.625rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
 .db-table-grid th:last-child, .db-table-grid td:last-child { border-right: none; }
@@ -3427,9 +3456,9 @@ body {
 
 /* 树: 行数徽标 + 对象类型彩色图标(dbx 配色) */
 .dbx-node-icon { flex-shrink: 0; }
-.icon-table { color: #16a34a; }
+.icon-table { color: var(--ok); }
 .icon-view { color: #0ea5e9; }
-.icon-schema { color: #d97706; }
+.icon-schema { color: var(--warn); }
 
 /* V12: 查询/结果工具栏 收紧行高 + 单行不折行 + 结果区不越屏 */
 .db-query-editor { padding: 0.375rem; gap: 0.25rem; }
@@ -3448,8 +3477,17 @@ body {
 @media (max-width: 940px) { .db-query-controls select { display: none; } }
 
 /* V13: 表数据页(无编辑器)表格撑满剩余高度, 内部滚动 — 不再被 calc 限死成矮框 */
-.db-data-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 0.375rem; }
+/* .db-data-panel 统一定义见上方(已合并, 仅一处) */
 .db-data-panel .db-table-grid { max-height: none; flex: 1; min-height: 0; }
+
+/* 常驻筛选状态条(任务2): 不受 showFilterRow 影响, 空结果时也可见, 提供“清除筛选”逃生通道 */
+.db-filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem; padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border); background: var(--surface-tint); font-size: 0.75rem; }
+.db-filter-bar-label { font-size: 0.75rem; }
+.db-filter-chip { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.15rem 0.125rem 0.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.db-filter-chip-text { font-family: ui-monospace, Consolas, monospace; font-size: 0.6875rem; white-space: nowrap; }
+.db-filter-chip-x { border: none; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 0.2rem; line-height: 1; font-size: 0.6875rem; border-radius: var(--radius-sm); }
+.db-filter-chip-x:hover { color: var(--danger); background: var(--row-hover); }
+.db-filter-clear { margin-left: auto; }
 .db-page-size { height: 1.6rem; font-size: 0.75rem; padding: 0 0.3rem; }
 
 /* 表信息抽屉(dbx 表信息抽屉同构): 页签 + 紧凑元数据表 */
@@ -3478,10 +3516,11 @@ body {
 
 /* V16: 查询结果卡片与编辑器卡片同规格贴合(结果 padding/gap 对齐编辑器, 两卡间距一致) */
 .db-query-section { gap: 0.25rem; }
-.db-query-section .db-result { padding: 0.25rem 0.375rem; gap: 0.25rem; }
+/* 查询结果区贴边: 头/表格/底行不再内缩(与数据网格边缘平齐) */
+.db-query-section .db-result { gap: 0.25rem; padding-left: 0; padding-right: 0; }
 
 /* 查询结果分页栏(dbx 同款) */
-.db-result-footer { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; flex-wrap: nowrap; }
+.db-result-footer { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; flex-wrap: nowrap; padding: 0 0.75rem; }
 .db-result-footer .btn-glass-soft-sm { font-size: 0.75rem; padding: 0.125rem 0.5rem; line-height: 1.25; height: auto; }
 
 /* ═══════════ V17: GoNavi 式侧栏头部 — 两层导航: ①搜索+工具按钮 ②类别页签(全部/表/视图/序列/函数/存储包/事件) ═══════════ */
@@ -3555,7 +3594,7 @@ body {
 .db-group-drawer-row:hover { background: var(--row-hover); }
 .db-group-drawer-row.active { background: var(--surface-tint); color: var(--accent); font-weight: 600; }
 .db-group-drawer-row.danger { color: var(--danger); }
-.db-group-drawer-row.danger:hover { background: rgba(var(--danger-rgb), .08); }
+.db-group-drawer-row.danger:hover { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .db-group-drawer-gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-group-drawer-check { font-size: 0.75rem; font-weight: 700; color: var(--accent); }
 .db-group-drawer-sep { height: 1px; background: var(--border); margin: 0.35rem 0; }
@@ -3603,11 +3642,11 @@ body {
 .db-sync-layout { display: grid; grid-template-columns: 1fr 52px 1fr; gap: 10px; align-items: stretch; }
 .db-sync-panel { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 0 0.55rem 0.55rem; display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; overflow: hidden; }
 .db-sync-panel.db-sync-src { border-top: 2.5px solid #3b82f6; }
-.db-sync-panel.db-sync-dst { border-top: 2.5px solid #10b981; }
+.db-sync-panel.db-sync-dst { border-top: 2.5px solid var(--ok); }
 .db-sync-head { display: flex; align-items: baseline; gap: 8px; padding: 0.45rem 0.1rem 0.35rem; border-bottom: 1px dashed var(--border); }
 .db-sync-role { font-weight: 700; font-size: 0.82rem; letter-spacing: 0.02em; }
 .db-sync-head-src .db-sync-role { color: #3b82f6; }
-.db-sync-head-dst .db-sync-role { color: #10b981; }
+.db-sync-head-dst .db-sync-role { color: var(--ok); }
 .db-sync-eng { margin-left: auto; font-size: 0.6875rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
 .db-sync-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .db-sync-lbl { font-size: 0.6875rem; color: var(--text-dim); }
@@ -3650,11 +3689,21 @@ body {
 @media (max-width:1100px){.grid-4,.grid-5{grid-template-columns:repeat(2,1fr)}.grid-2,.grid-3{grid-template-columns:1fr}}
 /* K8s 概览三卡恒定一排: 不随断点折叠, 卡片压缩自适应(EChart 带 ResizeObserver 会跟随重绘) */
 .k8s-overview > .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* 三小卡强制一排的旧锁定曾压过全局断点 → 缩放时卡片挤到 44px, 仪表盘数字穿模; 补齐同款断点(与全局 grid-3 一致) */
+@media (max-width: 1400px) { .k8s-overview > .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .k8s-overview > .grid-3 { grid-template-columns: minmax(0, 1fr); } }
 
+
+/* ── 数据库管理: 连接树滚动条悬停浮现(默认完全隐藏; 不用 gutter:stable —— 它按经典宽度预留常驻空槽, 整条看起来偏宽) ── */
+.db-tree-body { scrollbar-width: none; }
+.db-tree-body:hover, .db-tree-body:focus-within {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 30%, transparent) transparent;
+}
 
 /* ── 磁盘清理 ── */
 .section-title { margin: 0 0 0.5rem; font-size: 0.875rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
-.text-danger { color: #ff453a; }
+.text-danger { color: var(--danger); }
 
 /* —— Docker 操作列右对齐 —— */
 .data-table.ops-right thead th:last-child,

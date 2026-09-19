@@ -881,10 +881,6 @@ func (m *MySQLDB) Connect(config connection.ConnectionConfig) error {
 				} else {
 					errorDetails = append(errorDetails, fmt.Sprintf("%s 验证失败: %v", address, pingErr))
 				}
-				// 拨号级失败(拒绝/超时/网络不可达)与 multiStatements 参数无关, 第二套兼容参数救不了 —— 立即终判, 免得每个变体再等一遍完整超时
-				if mysqlIsDialLevelError(pingErr) {
-					return fmt.Errorf("连接建立后验证失败：%s", strings.Join(errorDetails, "；"))
-				}
 				continue
 			}
 
@@ -903,26 +899,6 @@ func (m *MySQLDB) Connect(config connection.ConnectionConfig) error {
 		return fmt.Errorf("连接建立后验证失败：未找到可用的 MySQL 地址")
 	}
 	return fmt.Errorf("连接建立后验证失败：%s", strings.Join(errorDetails, "；"))
-}
-
-// mysqlIsDialLevelError 判定 ping 错误是否属于拨号阶段失败(端口拒绝/超时/网络不可达/DNS):
-// 此类错误与 multiStatements 等兼容参数无关, 兼容参数变体不需要重试。
-func mysqlIsDialLevelError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	for _, kw := range []string{
-		"actively refused", "connection refused",
-		"i/o timeout", "handshake timeout", "timeout",
-		"no such host", "network is unreachable", "unreachable",
-		"connectex", "getaddrinfo", "enotfound", "eai_again",
-	} {
-		if strings.Contains(msg, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *MySQLDB) SupportsBatchWrites() bool {

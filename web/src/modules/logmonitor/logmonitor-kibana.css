@@ -1,0 +1,803 @@
+/* ── Kibana Discover 三段式 日志检索布局 ──
+   视觉/交互参照 Elastic Kibana Discover:
+   顶栏(查询条+时间范围) / 左字段面板 / 中时间线柱状+文档列表 / 右详情抽屉
+   全部复用项目既有主题变量(--bg/--text/--accent/--border/--surface/--surface-solid/--bg-soft)
+*/
+
+/* 一、整体：全屏自适应三段式 */
+/* 外层页面容器：纵向铺满视口高度，让内部 .kib 的 100% 真正生效 */
+.kib-page {
+  /* 高度交给 .module 的 flex:1 精确填充 .content 剩余空间(与 db-module 同模式),
+     不再用 calc(100vh-7.5rem) 魔法数 —— 估算偏差会造成外层+内层双重滚动 */
+  height: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.kib {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+/* 二、顶部查询条（Kibana Discover 顶栏） */
+.kib-topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+.kib-topbar-soon { font-size: 0.6875rem; color: var(--text-dim); }
+.kib-topbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.kib-topbar input[type="checkbox"] { accent-color: var(--accent); }
+
+/* 数据视图下拉(更像 Kibana 的索引模式选择) */
+.kib-dataview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.kib-dataview svg { flex: none; color: var(--accent); }
+.kib-dataview select {
+  appearance: none;
+  padding: 0.375rem 1.625rem 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.08));
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  max-width: 13.75rem;
+}
+.kib-time {
+  appearance: none;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.08));
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+/* 搜索/查询框 + 建议下拉 */
+.kib-search {
+  position: relative;
+  flex: 1 1 17.5rem;
+  min-width: 13.75rem;
+}
+.kib-search input {
+  width: 100%;
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.06));
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.kib-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.kib-suggest {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.kib-suggest-item {
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.kib-suggest-item:hover, .kib-suggest-item.sel {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.kib-suggest-opt {
+  font-weight: 600;
+  color: var(--accent);
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+/* 三、主体三段 */
+.kib-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 15rem 1fr; /* 左字段栏固定 15rem(N长+堆叠)=解锁 08-25 */
+  gap: 0.625rem;
+}
+/* 右抽屉覆盖在结果区右侧 */
+.kib-body.with-drawer {
+  grid-template-columns: 15rem 1fr 26.25rem;
+}
+
+/* 左侧字段面板（Kibana "可用字段"） */
+.kib-fields {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.kib-fields-head {
+  padding: 0.5rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: color-mix(in srgb, var(--bg-soft, #888) 10%, transparent);
+}
+.kib-fields-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.375rem;
+}
+.kib-field {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text);
+  transition: background 0.15s ease, outline-color 0.15s ease, color 0.15s ease;
+  outline: 1px solid transparent;
+}
+.kib-field:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.kib-field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.kib-field-type {
+  margin-left: auto;
+  font-size: 0.625rem;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+  padding: 1px 0.3125rem;
+  border-radius: 0.25rem;
+}
+.kib-field.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.kib-fields-tip {
+  padding: 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+/* 中间结果区 */
+.kib-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+  min-height: 0;
+  /* 不自带滚动：直方图固定高度 + 文档列表弹性占满并内部滚动 */
+}
+.kib-hist-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  flex: none; /* 直方图固定高度，不参与弹性伸缩 */
+}
+.kib-hist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 0.375rem;
+}
+.kib-hist-total { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 文档列表：占满中间区剩余高度，表格内部滚动 */
+.kib-docs {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kib-docs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.kib-docs-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.kib-docs-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.kib-docs-table th {
+  text-align: left;
+  padding: 0.4375rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kib-docs-table td {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text);
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kib-docs-table tbody tr { cursor: pointer; }
+.kib-docs-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.kib-docs-table tbody tr.row-on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.kib-docs-svc,
+.kib-docs-src { color: var(--text-secondary); font-size: 0.6875rem; }
+.kib-docs-sum {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.kib-hl {
+  color: var(--accent);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 0.25rem;
+  padding: 0 1px;
+}
+
+/* 级别徽标 + 索引徽标 */
+.kib-lvl {
+  display: inline-block;
+  min-width: 2.875rem;
+  padding: 1px 0.375rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 0.25rem;
+  letter-spacing: 0.02em;
+}
+.kib-idx {
+  display: inline-block;
+  padding: 0 0.375rem;
+  font-size: 0.625rem;
+  line-height: 1.5;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  white-space: nowrap;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.kib-idx:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.kib-ts { color: var(--text-secondary); font-size: 0.6875rem; }
+
+/* 分页 */
+.kib-pager {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+
+/* 右侧详情抽屉 */
+.kib-drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  justify-content: flex-end;
+}
+.kib-drawer {
+  width: 26.25rem;
+  max-width: 92vw;
+  height: 100%;
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--border);
+  box-shadow: -0.75rem 0 2rem rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kib-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+.kib-drawer-title { font-weight: 600; color: var(--text); }
+.kib-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.kib-field-card {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.kib-field-card-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.kib-field-card-row:last-child { border-bottom: none; }
+.kib-fc-name { color: var(--text-dim); font-size: 0.6875rem; width: 5.25rem; flex: none; }
+.kib-fc-val {
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--text);
+  word-break: break-all;
+  white-space: pre-wrap;
+  min-height: 1.125rem;
+  flex: 1;
+}
+.kib-raw-pre {
+  background: color-mix(in srgb, var(--bg, #000) 40%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.kib-drawer-actions {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+/* Toast */
+.kib-toast-wrap {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.kib-toast {
+  padding: 0.5625rem 0.875rem;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  box-shadow: 0 0.375rem 1.25rem rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 22.5rem;
+  animation: kib-toast-in 0.2s ease-out;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.kib-toast:hover { border-color: var(--text-dim); }
+.kib-toast-ok { border-left: 3px solid var(--ok); }
+.kib-toast-err { border-left: 3px solid var(--danger); }
+.kib-toast-info { border-left: 3px solid var(--accent-2); }
+@keyframes kib-toast-in {
+  from { transform: translateX(1.25rem); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* 空态 */
+.kib-empty {
+  padding: 1.875rem 1.25rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+/* 通用按钮: 参照 Kibana 扁平按钮 */
+.kib-btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.kib-btn:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.kib-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kib-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kib-btn-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.kib-btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }
+.kib-btn-bare {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.kib-btn-bare:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.kib-btn-bare-danger:hover { color: var(--lvl-error); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+.kib-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--lvl-ok);
+}
+.kib-live.on {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--lvl-error);
+}
+.kib-live-dot {
+  width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.kib-live.on .kib-live-dot { animation: kib-blink 1s steps(2, start) infinite; }
+@keyframes kib-blink { to { visibility: hidden; } }
+
+/* 表单(替换 window.prompt/alert) */
+.kib-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kib-modal {
+  width: 26.25rem;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 1.25rem 3.125rem rgba(0,0,0,0.4);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.kib-modal-wide {
+  width: 47.5rem;
+  max-width: 96vw;
+}
+.kib-modal h3 { margin: 0; font-size: 0.9375rem; color: var(--text); }
+.kib-inline-form { display: flex; flex-direction: column; gap: 0.625rem; }
+.kib-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.kib-form-row label { font-size: 0.75rem; color: var(--text-dim); }
+.kib-form-row input, .kib-form-row select {
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--bg-soft, rgba(127,127,127,0.06));
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.kib-form-row input:focus, .kib-form-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.kib-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+/* 字段过滤 chips(点击字段值快速加过滤) */
+.kib-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.kib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 2px 0.5rem;
+  font-size: 0.6875rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  border-radius: 0.75rem;
+  cursor: pointer;
+}
+.kib-chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.kib-chip .kib-chip-key { color: var(--text-dim); }
+
+/* 响应式: 窄屏时左字段栏折叠 */
+@media (max-width: 56.25rem) {
+  .kib-body, .kib-body.with-drawer { grid-template-columns: 1fr; }
+  .kib-fields { display: none; }
+}
+
+/* 从已连接资源添加(容器/K8S 发现面板) */
+.kib-discover-panel {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-soft, rgba(127,127,127,0.04));
+}
+.kib-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  margin-top: 0.375rem;
+}
+.kib-check-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.8125rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.kib-check-item:hover { background: var(--bg-soft, rgba(127,127,127,0.08)); }
+.kib-check-item:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kib-check-item input { accent-color: var(--accent); }
+.kib-check-item code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.75rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+.kib-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 0.75rem;
+  background: var(--accent, #4c7dff);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  justify-content: center;
+}
+/* 染色徽章: 同系深字+低饱和底, 明暗主题均满足对比度(浅色文字≥4.6:1) */
+.kib-badge.kib-tint-ok { background: color-mix(in srgb, var(--lvl-ok) 15%, transparent); color: var(--lvl-ok); }
+.kib-badge.kib-tint-danger { background: color-mix(in srgb, var(--lvl-error) 15%, transparent); color: var(--lvl-error); }
+.kib-badge.kib-tint-info { background: color-mix(in srgb, var(--lvl-info) 15%, transparent); color: var(--lvl-info); }
+.kib-badge.kib-tint-accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.kib-badge.kib-multi { background: color-mix(in srgb, var(--lvl-ok) 16%, transparent); color: var(--lvl-ok); }
+
+/* 已接入标记（绿✓）: code 列等宽占位(maxName), √ 紧跟即统一对齐 */
+.kib-joined {
+  color: var(--lvl-ok);
+  font-weight: 700;
+  font-size: 0.875rem;
+  line-height: 1;
+  margin-left: 0.375rem;
+  flex-shrink: 0;
+}
+
+/* 启停采集开关 */
+.kib-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  width: 2.125rem;
+  height: 1.125rem;
+  padding: 2px;
+  border-radius: 0.75rem;
+  background: var(--border, rgba(127,127,127,0.35));
+  cursor: pointer;
+  transition: background 0.15s ease;
+  vertical-align: middle;
+  margin-right: 0.5rem;
+}
+/* 视觉不变, 命中区外扩至 ~50×34 */
+.kib-switch::after { content: ''; position: absolute; inset: -0.5rem; }
+.kib-switch:hover { box-shadow: 0 0 0 3px var(--bg-soft, rgba(127,127,127,0.15)); }
+.kib-switch i {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.kib-switch.on { background: var(--lvl-ok); }
+.kib-switch.on i { transform: translateX(1rem); }
+
+/* 已接入但不在当前发现列表的源（历史/已停止）灰显 */
+.kib-check-item.kib-ghost { opacity: 0.55; }
+.kib-check-item.kib-ghost .kib-joined { opacity: 1; }
+
+/* ── 合并工具栏：搜索框 + 查询/重置/Live/刷新 一行 ── */
+.kib-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: nowrap;
+}
+.kib-search-bar .kib-search {
+  flex: 1 1 18.75rem;
+  min-width: 12.5rem;
+  max-width: 21.875rem;
+}
+.kib-search-bar .kib-btn {
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+}
+.kib-search-bar .kib-live {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.6875rem;
+}
+
+/* ── 字段层级树（类似 Kibana） ── */
+.kib-field-tree {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.kib-field-tree:last-child {
+  border-bottom: none;
+}
+.kib-field-icon {
+  font-size: 0.875rem;
+  line-height: 1;
+}
+.kib-field-name {
+  flex: 1;
+  font-weight: 600;
+}
+.kib-field-toggle {
+  font-size: 0.625rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 0.25rem;
+  border-radius: 0.25rem;
+}
+.kib-field-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.kib-field-children {
+  padding: 2px 0 0.25rem 1.375rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kib-field-child {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.kib-field-child:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.kib-field-child.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.kib-field-child.active .kib-field-child-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+.kib-field-child-check {
+  font-size: 0.75rem;
+  width: 1rem;
+  text-align: center;
+}
+.kib-field-child-val {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.6875rem;
+}
+.kib-field-child-count {
+  margin-left: auto;
+  font-size: 0.625rem;
+  color: var(--text-dim);
+  opacity: 0.85;
+  padding: 0 0.375rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
+
+/* ── 错误横幅 ── */
+.kib-err {
+  border-color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
+}

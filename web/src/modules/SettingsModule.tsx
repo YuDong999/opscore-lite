@@ -209,7 +209,7 @@ export default function SettingsModule() {
               <div style={{
                 marginTop:'0.75rem', padding: 12, borderRadius:'0.5rem',
                 background: migrateResult.ok ? 'var(--ok-bg, #0a2e1a)' : 'var(--err-bg, #2e0a0a)',
-                color: migrateResult.ok ? 'var(--ok, #4ade80)' : 'var(--err, #f87171)',
+                color: migrateResult.ok ? 'var(--ok, #4ade80)' : 'var(--danger)',
                 fontSize:'0.8125rem',
               }}>
                 {migrateResult.message}

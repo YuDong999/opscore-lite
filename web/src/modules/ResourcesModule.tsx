@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { getJSON } from '../api/client'
+import { fmtByteRate, fmtSize } from '../lib/format'
+import { cssVar } from '../lib/theme'
 import { useTheme } from '../theme'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
@@ -48,13 +50,6 @@ interface Snapshot {
 
 type TrendMetric = 'combined' | 'cpu' | 'mem' | 'swap' | 'net'
 type TrendWin = 5 | 15 | 60
-
-const fmtBytes = (b: number) => {
-  if (!b) return '0 B'
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(u.length - 1, Math.floor(Math.log(b) / Math.log(1024)))
-  return `${(b / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`
-}
 
 const fmtUptime = (sec: number) => {
   if (!sec) return '—'
@@ -243,7 +238,7 @@ export default function ResourcesModule() {
     series: [
       {
         type: 'bar',
-        data: perCore.map((v) => ({ value: v, itemStyle: { color: v > 80 ? '#ef4444' : '#06b6d4' } })),
+        data: perCore.map((v) => ({ value: v, itemStyle: { color: v > 80 ? cssVar('--danger') : '#06b6d4' } })),
         barWidth: '55%',
         itemStyle: { borderRadius: [4, 4, 0, 0] },
       },
@@ -263,7 +258,7 @@ export default function ResourcesModule() {
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
       yAxis: [
         { type: 'value', max: 100, axisLabel: { color: dim }, splitLine: { lineStyle: { color: axis } } },
-        { type: 'value', axisLabel: { color: dim, formatter: (v: number) => fmtBytes(v) }, splitLine: { show: false } },
+        { type: 'value', axisLabel: { color: dim, formatter: (v: number) => fmtSize(v) }, splitLine: { show: false } },
       ],
       series: [
         { name: 'CPU%', type: 'line', smooth: true, showSymbol: false, data: tail(h.cpu), lineStyle: { width: 2, color: '#6366f1' }, areaStyle: { color: 'rgba(99,102,241,0.15)' } },
@@ -277,7 +272,7 @@ export default function ResourcesModule() {
       legend: { top: 0, textStyle: { color: dim }, data: ['下行', '上行'] },
       tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: xData, axisLabel: { show: false }, axisLine: { lineStyle: { color: axis } } },
-      yAxis: { type: 'value', axisLabel: { color: dim, formatter: (v: number) => fmtBytes(v) }, splitLine: { lineStyle: { color: axis } } },
+      yAxis: { type: 'value', axisLabel: { color: dim, formatter: (v: number) => fmtSize(v) }, splitLine: { lineStyle: { color: axis } } },
       series: [
         { name: '下行', type: 'line', smooth: true, showSymbol: false, data: tail(h.rx), lineStyle: { width: 2, color: '#06b6d4' }, areaStyle: { color: 'rgba(6,182,212,0.12)' } },
         { name: '上行', type: 'line', smooth: true, showSymbol: false, data: tail(h.tx), lineStyle: { width: 2, color: '#f59e0b' } },
@@ -306,7 +301,7 @@ export default function ResourcesModule() {
     xAxis: { type: 'category', show: false, data: h.swap.slice(Math.max(0, h.swap.length - 150)).map((_, i) => i) },
     yAxis: { type: 'value', max: 100, show: false },
     series: [
-      { type: 'line', smooth: true, showSymbol: false, data: h.swap.slice(Math.max(0, h.swap.length - 150)), lineStyle: { width: 2, color: '#f59e0b' }, areaStyle: { color: 'rgba(245,158,11,0.15)' } },
+      { type: 'line', smooth: true, showSymbol: false, data: h.swap.slice(Math.max(0, h.swap.length - 150)), lineStyle: { width: 2, color: cssVar('--warn') }, areaStyle: { color: cssVar('--warn'), opacity: 0.15 } },
     ],
   }
 
@@ -342,16 +337,16 @@ return (
                 <div className="sysinfo-item"><span className="sysinfo-k">系统</span><span className="sysinfo-v">{snap.host.platform || '—'} {snap.host.os || ''}</span></div>
                 <div className="sysinfo-item"><span className="sysinfo-k">运行时长</span><span className="sysinfo-v">{fmtUptime(snap.host.uptime)}</span></div>
                 <div className="sysinfo-item"><span className="sysinfo-k">CPU</span><span className="sysinfo-v">{snap.cpu.cores} 核{snap.cpu.model ? ` · ${snap.cpu.model}` : ''}</span></div>
-                <div className="sysinfo-item"><span className="sysinfo-k">内存</span><span className="sysinfo-v">{fmtBytes(snap.memory.total)}{snap.memory.swapTotal > 0 ? ` · Swap ${fmtBytes(snap.memory.swapTotal)}` : ''}</span></div>
-                <div className="sysinfo-item"><span className="sysinfo-k">磁盘</span><span className="sysinfo-v">{fmtBytes(snap.disks.reduce((a, d) => a + d.total, 0))} · {snap.disks.length} 个挂载点</span></div>
+                <div className="sysinfo-item"><span className="sysinfo-k">内存</span><span className="sysinfo-v">{fmtSize(snap.memory.total)}{snap.memory.swapTotal > 0 ? ` · Swap ${fmtSize(snap.memory.swapTotal)}` : ''}</span></div>
+                <div className="sysinfo-item"><span className="sysinfo-k">磁盘</span><span className="sysinfo-v">{fmtSize(snap.disks.reduce((a, d) => a + d.total, 0))} · {snap.disks.length} 个挂载点</span></div>
               </div>
             </Card>
 
             <Card title="内存占用" subtitle="波浪图">
               <EChart option={memOption} height={240} />
               <div className="stat-row">
-                <span>{fmtBytes(snap.memory.used)}</span>
-                <span className="dim">/ {fmtBytes(snap.memory.total)}</span>
+                <span>{fmtSize(snap.memory.used)}</span>
+                <span className="dim">/ {fmtSize(snap.memory.total)}</span>
               </div>
             </Card>
 
@@ -366,8 +361,8 @@ return (
             <Card title="磁盘空间" subtitle="饼图">
               <EChart option={diskOption} height={240} />
               <div className="stat-row">
-                <span>{fmtBytes(totalUsed)}</span>
-                <span className="dim">/ {fmtBytes(totalUsed + totalFree)}</span>
+                <span>{fmtSize(totalUsed)}</span>
+                <span className="dim">/ {fmtSize(totalUsed + totalFree)}</span>
               </div>
             </Card>
 
@@ -379,7 +374,7 @@ return (
               </div>
               <div className="stat-row">
                 <span>Swap</span>
-                <span className="dim">{snap.memory.swapPercent.toFixed(1)}% ({fmtBytes(snap.memory.swapUsed)})</span>
+                <span className="dim">{snap.memory.swapPercent.toFixed(1)}% ({fmtSize(snap.memory.swapUsed)})</span>
               </div>
               <EChart option={swapSpark} height={56} />
             </Card>
@@ -413,11 +408,11 @@ return (
               <div className="net-stats">
                 <div className="net-stat">
                   <span className="dim">下行</span>
-                  <b>{fmtBytes(totalRxRate)}/s</b>
+                  <b>{fmtByteRate(totalRxRate)}</b>
                 </div>
                 <div className="net-stat">
                   <span className="dim">上行</span>
-                  <b>{fmtBytes(totalTxRate)}/s</b>
+                  <b>{fmtByteRate(totalTxRate)}</b>
                 </div>
               </div>
               <table className="mini-table">
@@ -426,8 +421,8 @@ return (
                   {byNic.slice(0, 6).map((n) => (
                     <tr key={n.name}>
                       <td>{n.name}</td>
-                      <td>{fmtBytes(n.rxRate)}/s</td>
-                      <td>{fmtBytes(n.txRate)}/s</td>
+                      <td>{fmtByteRate(n.rxRate)}</td>
+                      <td>{fmtByteRate(n.txRate)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -453,7 +448,7 @@ return (
                             <span className="mono">{d.mountpoint}</span>
                           </td>
                           <td className="dim">{d.fstype}</td>
-                          <td className="mono">{fmtBytes(d.total)}</td>
+                          <td className="mono">{fmtSize(d.total)}</td>
                           <td>
                             <div className="usage-cell">
                               <div className="usage-bar">
@@ -465,7 +460,7 @@ return (
                               <span className={`badge ${pct > 85 ? 'badge-danger' : pct > 65 ? 'badge-warn' : 'badge-ok'}`}>
                                  {pct.toFixed(2)}%
                               </span>
-                              <span className="dim small"> {fmtBytes(d.used)} / {fmtBytes(d.total)}</span>
+                              <span className="dim small"> {fmtSize(d.used)} / {fmtSize(d.total)}</span>
                             </div>
                           </td>
                         </tr>
@@ -497,7 +492,7 @@ return (
                                             />
                                           </div>
                                            <span className="drill-pct dim small">{cp.toFixed(2)}%</span>
-                                          <span className="drill-size mono small">{fmtBytes(c.size)}</span>
+                                          <span className="drill-size mono small">{fmtSize(c.size)}</span>
                                         </div>
                                       )
                                     })}

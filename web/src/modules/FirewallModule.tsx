@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
 import Card from '../components/Card'
+import { Modal } from '../components/common/Modal'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
 
@@ -336,12 +337,11 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
       </Card>
 
       {confirm.open && (
-        <div className="modal-overlay" onClick={() => !busy && setConfirm({ ...confirm, open: false })}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <Modal onClose={() => !busy && setConfirm({ ...confirm, open: false })} closeOnOverlay={!busy} showClose={false}>
             <h3>确认防火墙操作</h3>
             {confirm.lockoutRisk && (
               <div className="lockout-warn">
-                🔴 高危:此操作可能把自己锁死(关闭 SSH / RDP / 当前端口,或封禁全网)。请确认你有其他接入方式!
+                <b>高危:</b>此操作可能把自己锁死(关闭 SSH / RDP / 当前端口,或封禁全网)。请确认你有其他接入方式!
               </div>
             )}
             <div className="field-label">将执行的命令</div>
@@ -357,8 +357,7 @@ export default function FirewallModule({ embedded = false }: { embedded?: boolea
               </button>
             </div>
             {!status.manageable && <div className="dim small">本环境为只读演示,确认后仅记录审计、不真正改网络。</div>}
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   )

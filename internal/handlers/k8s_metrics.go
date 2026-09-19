@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"opscore/internal/kubernetes"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -75,14 +77,26 @@ func StartK8sMetricsSampler(dataDir string) {
 	log.Println("[K8S-METRICS] 采样器已启动(15s/次, 保留7天)")
 }
 
+var lastSource = map[string]string{}
+
 func sampleOnce() {
 	for _, id := range k8sMgr.ListIDs() {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		nodes, err := k8sMgr.GetNodeMetrics(ctx, id)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		b := collectMetrics(ctx, id)
 		cancel()
-		if err != nil || len(nodes) == 0 {
+		if prev, ok := lastSource[id]; !ok || prev != b.Source {
+			log.Printf("[K8S-METRICS] 集群 %s 数据源: %s%s", id, b.Source, func() string {
+				if b.Degraded {
+					return " (降级: " + b.Reason + ")"
+				}
+				return ""
+			}())
+			lastSource[id] = b.Source
+		}
+		if len(b.Nodes) == 0 {
 			continue
 		}
+		nodes := b.Nodes
 		var cpuMilli, memBytes int64
 		for _, n := range nodes {
 			cpuMilli += n.CPUMilli
@@ -111,6 +125,38 @@ func purgeOldSamples() {
 	db.Close()
 }
 
+// ===== 采集集合点: 谁可用用谁 =====
+
+// MetricsBundle 一次采集的产物。Source:
+//   "metrics-server"  主路径(metrics.k8s.io, 需要 metrics-server add-on; kubectl top/HPA 同源)
+//   "kubelet-summary" 兜底路径(apiserver node proxy → kubelet /stats/summary, 无需任何 add-on; 含磁盘)
+// Degraded=true 表示处于兜底态 —— kubectl top 与基于资源指标的 HPA 此时不可用, 前端应提示。
+type MetricsBundle struct {
+	Nodes    []kubernetes.NodeMetric
+	Pods     []kubernetes.PodMetric
+	Source   string
+	Degraded bool
+	Reason   string
+}
+
+func collectMetrics(ctx context.Context, clusterID string) MetricsBundle {
+	nodes, err := k8sMgr.GetNodeMetrics(ctx, clusterID)
+	if err == nil {
+		pods, perr := k8sMgr.GetPodMetrics(ctx, clusterID, "")
+		if perr != nil {
+			pods = nil
+		}
+		return MetricsBundle{Nodes: nodes, Pods: pods, Source: "metrics-server"}
+	}
+	primaryErr := err.Error()
+	sn, sp, _, serr := k8sMgr.SummaryMetrics(ctx, clusterID)
+	if serr != nil {
+		return MetricsBundle{Degraded: true, Reason: "metrics-server: " + primaryErr + "; kubelet summary: " + serr.Error()}
+	}
+	return MetricsBundle{Nodes: sn, Pods: sp, Source: "kubelet-summary", Degraded: true,
+		Reason: "metrics-server 不可用(" + primaryErr + "), 已降级为 kubelet /stats/summary 直读"}
+}
+
 // ===== HTTP 端点 =====
 
 // K8sNodeMetricsHandler GET ?cluster=
@@ -127,14 +173,15 @@ func K8sNodeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "cluster 参数非法"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	nodes, err := k8sMgr.GetNodeMetrics(ctx, cluster)
-	if err != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+	b := collectMetrics(ctx, cluster)
+	if len(b.Nodes) == 0 {
+		WriteJSON(w, map[string]any{"ok": false, "error": b.Reason, "source": b.Source, "degraded": b.Degraded})
 		return
 	}
-	WriteJSON(w, map[string]any{"ok": true, "nodes": nodes})
+	WriteJSON(w, map[string]any{"ok": true, "nodes": b.Nodes,
+		"source": b.Source, "degraded": b.Degraded, "reason": b.Reason})
 }
 
 // K8sPodMetricsHandler GET ?cluster=&ns=&top=500
@@ -160,17 +207,28 @@ func K8sPodMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	if top < 1 || top > 500 {
 		top = 500
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	pods, err := k8sMgr.GetPodMetrics(ctx, cluster, ns)
-	if err != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
+	b := collectMetrics(ctx, cluster)
+	if len(b.Pods) == 0 {
+		WriteJSON(w, map[string]any{"ok": false, "error": b.Reason, "source": b.Source, "degraded": b.Degraded})
 		return
+	}
+	pods := b.Pods
+	if ns != "" {
+		kept := pods[:0]
+		for _, pd := range pods {
+			if pd.Namespace == ns {
+				kept = append(kept, pd)
+			}
+		}
+		pods = kept
 	}
 	if len(pods) > top {
 		pods = pods[:top]
 	}
-	WriteJSON(w, map[string]any{"ok": true, "pods": pods})
+	WriteJSON(w, map[string]any{"ok": true, "pods": pods,
+		"source": b.Source, "degraded": b.Degraded, "reason": b.Reason})
 }
 
 // K8sMetricsHistoryHandler GET ?cluster=&window=5m|15m|1h|6h → 降采样趋势点

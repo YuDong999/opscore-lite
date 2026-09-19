@@ -276,7 +276,10 @@ func splitNginxTDump(dump string) []NginxConfFile {
 	for _, line := range strings.Split(dump, "\n") {
 		if strings.HasPrefix(line, marker) {
 			flush()
-			cur = &NginxConfFile{Path: strings.TrimSpace(strings.TrimPrefix(line, marker))}
+			// nginx -T 的标记行形如 `# configuration file /etc/nginx/x.conf:`(尾部带冒号),
+			// 必须一并剥离, 否则该路径会被 NginxApply 直接拿去 cp 而报 No such file or directory。
+			// 同样的写法见 internal/handlers/apps.go:437。
+			cur = &NginxConfFile{Path: strings.Trim(strings.TrimPrefix(line, marker), " :")}
 			buf = nil
 			continue
 		}

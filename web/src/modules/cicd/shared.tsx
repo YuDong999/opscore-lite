@@ -2,16 +2,8 @@
 // 审查落地: R1 API 常量单一来源 · R2 列表加载样板收敛为 hook · R3 弹窗统一 Dialog
 //           U1 confirm() 改为 Promise 化 AlertDialog · U3 等宽数字 · 5 主题自动适配
 
-import { useCallback, useEffect, useState } from 'react'
-import * as React from 'react'
-import { getJSON } from '../../api/client'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import { TableHead } from '@/components/ui/table'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 
 // ── API 路径常量(单一来源) ──
 export const API = {
@@ -102,51 +94,10 @@ export interface Repo { id: string; name: string; url: string; credId: string; d
 export interface Registry { id: string; name: string; server: string; credId: string; note?: string }
 export interface Script { id: string; name: string; description: string; content: string; updatedAt: string }
 
-// ── 列表加载样板收敛(R2): 数据 + 错误 + 手动刷新 ──
-export function useResource<T>(url: string) {
-  const [data, setData] = useState<T | null>(null)
-  const [err, setErr] = useState('')
-  const load = useCallback(() => {
-    if (!url) return
-    getJSON<T>(url).then(d => { setData(d); setErr('') }).catch(e => setErr(e.message))
-  }, [url])
-  useEffect(load, [load])
-  return { data, err, setErr, reload: load }
-}
-
-// ── confirm() 的 Promise 化替代(U1): 与原生调用形态一致 ──
-interface ConfirmState {
-  title: string
-  desc?: string
-  okText?: string
-  danger?: boolean
-  resolve: (ok: boolean) => void
-}
-
-export function useConfirm() {
-  const [state, setState] = useState<ConfirmState | null>(null)
-  const confirm = useCallback((title: string, opts?: { desc?: string; okText?: string; danger?: boolean }) =>
-    new Promise<boolean>(resolve => setState({ title, ...opts, resolve })), [])
-  const element = (
-    <AlertDialog open={!!state}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{state?.title}</AlertDialogTitle>
-          {state?.desc && <AlertDialogDescription>{state.desc}</AlertDialogDescription>}
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => { state?.resolve(false); setState(null) }}>取消</AlertDialogCancel>
-          <AlertDialogAction
-            className={cn(state?.danger && 'bg-destructive text-destructive-foreground hover:bg-destructive/90')}
-            onClick={() => { state?.resolve(true); setState(null) }}
-          >{state?.okText ?? '确定'}</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-  return { confirm, confirmEl: element }
-}
-
+// useResource / useConfirm / useTableSort / useLocalJSON / SortHead 已提升到 L2 lib/hooks,
+// 此处仅转发, 既有调用点零改动。
+export { useResource } from '../../lib/hooks/useResource'
+export { useConfirm } from '../../lib/hooks/useConfirm'
 // ── 状态徽标: 颜色引用主题变量, color-mix 派生底色(全部主题自动适配) ──
 export const STATUS_TEXT: Record<string, string> = {
   queued: '排队中', running: '运行中', waiting: '等待审批', success: '成功', failed: '失败',
@@ -184,76 +135,18 @@ export function ErrBanner({ msg, onClose, className }: { msg: string; onClose?: 
 }
 
 // ── 格式化 ──
-export function fmtDur(ms: number): string {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60000), s = Math.round((ms % 60000) / 1000)
-  return `${m}m${s}s`
-}
-export function fmtTime(t?: string) { return t ? new Date(t).toLocaleString() : '-' }
-export function fmtSize(n: number): string {
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)}KB`
-  return `${n}B`
-}
+// fmtDur / fmtTime / fmtSize 已上移到公共层 ../../lib/format，由调用方直接 import，
+// 不再在模块的 shared 里转一层（模块 shared 只放「本模块私有」的东西）。
 export const TRIGGER_TEXT: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时', rollback: '回滚' }
 
-// ── 列头排序(B1): 状态按运维关注度定序(活的/异常在前), 其余列走自然序 ──
+// useTableSort / SortHead 已提升到 L2 lib/hooks, 此处仅转发(含类型)。
+export { useTableSort, SortHead } from '../../lib/hooks/useTableSort'
+export type { SortState } from '../../lib/hooks/useTableSort'
+// useLocalJSON 亦在 L2
+export { useLocalJSON } from '../../lib/hooks/useLocalJSON'
+
+// ── 状态定序(cicd 语义: 活的/异常在前) ──
 const STATUS_ORDER: Record<string, number> = {
   running: 0, queued: 1, waiting: 2, failed: 3, success: 4, canceled: 5, skipped: 6, pending: 7,
 }
-
-export interface SortState { key: string; dir: 1 | -1 }
-
-// 表头排序 hook: keyOf 取排序键, 切换同列翻转方向, 切换新列回默认
-export function useTableSort<T>(rows: T[], keyOf: Record<string, (r: T) => string | number>) {
-  const [sort, setSort] = useState<SortState>({ key: '', dir: -1 })
-  const sorted = React.useMemo(() => {
-    if (!sort.key || !keyOf[sort.key]) return rows
-    const fn = keyOf[sort.key]
-    return [...rows].sort((a, b) => {
-      const va = fn(a), vb = fn(b)
-      const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'zh')
-      return c * sort.dir
-    })
-  }, [rows, sort, keyOf])
-  const toggle = useCallback((key: string) => {
-    setSort(s => s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'startedAt' ? -1 : 1 })
-  }, [])
-  return { sorted, sort, toggle }
-}
-
-// 排序表头: 点击切换, 活列显示方向箭头(原生 button 保持键盘可达)
-export function SortHead({ label, k, sort, onToggle, className }: {
-  label: string; k: string; sort: SortState; onToggle: (k: string) => void; className?: string
-}) {
-  const active = sort.key === k
-  return (
-    <TableHead className={className}>
-      <button className="inline-flex items-center gap-1 hover:text-foreground transition-colors" onClick={() => onToggle(k)}>
-        {label}
-        <span className={cn('text-[10px] leading-none', !active && 'opacity-0 hover:opacity-50', active && 'text-accent')}>
-          {active && sort.dir === 1 ? '▲' : '▼'}
-        </span>
-      </button>
-    </TableHead>
-  )
-}
-
 export const statusWeight = (s: string) => STATUS_ORDER[s] ?? 99
-
-// ── localStorage JSON 读写 hook(B5 视图/B6 星标共用): 写穿 + 跨标签页无关 ──
-export function useLocalJSON<T>(key: string, initial: T) {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const raw = localStorage.getItem(key)
-      return raw ? JSON.parse(raw) as T : initial
-    } catch { return initial }
-  })
-  const set = useCallback((v: T) => {
-    setValue(v)
-    try { localStorage.setItem(key, JSON.stringify(v)) } catch { /* 隐私模式等写入失败静默 */ }
-  }, [key])
-  return [value, set] as const
-}

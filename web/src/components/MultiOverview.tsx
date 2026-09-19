@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getJSON } from '../api/client'
+import { fmtByteRate, fmtSize } from '../lib/format'
 
 interface OverviewHost {
   id: string
@@ -27,15 +28,6 @@ interface OverviewResp {
   message?: string
   alerts?: Record<string, string>
 }
-
-const fmtBytes = (b: number) => {
-  if (!b) return '0 B'
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(u.length - 1, Math.floor(Math.log(b) / Math.log(1024)))
-  return `${(b / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`
-}
-
-const fmtRate = (b: number) => fmtBytes(b) + '/s'
 
 const fmtUptime = (sec: number) => {
   if (!sec) return '—'
@@ -103,8 +95,8 @@ export default function MultiOverview() {
                 <td><CpuBar pct={h.cpuPercent} /></td>
                 <td><MemBar total={h.memTotal} used={h.memUsed} pct={h.memPercent} /></td>
                 <td><DiskBar total={h.diskTotal} used={h.diskUsed} pct={h.diskPercent} /></td>
-                <td className="mono">{h.online ? fmtRate(h.netRx) : '—'}</td>
-                <td className="mono">{h.online ? fmtRate(h.netTx) : '—'}</td>
+                <td className="mono">{h.online ? fmtByteRate(h.netRx) : '—'}</td>
+                <td className="mono">{h.online ? fmtByteRate(h.netTx) : '—'}</td>
                 <td className="mono">{fmtUptime(h.uptime)}</td>
                 <td className="dim" style={{ maxWidth:'10rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.os}</td>
               </tr>
@@ -127,7 +119,7 @@ function MemBar({ total, used, pct }: { total: number; used: number; pct: number
   return (
     <div>
       <Bar value={pct} color={pct > 80 ? 'var(--danger)' : pct > 60 ? 'var(--warn)' : 'var(--ok)'} unit="%" />
-      <span className="dim small">{fmtBytes(used)} / {fmtBytes(total)}</span>
+      <span className="dim small">{fmtSize(used)} / {fmtSize(total)}</span>
     </div>
   )
 }
@@ -136,7 +128,7 @@ function DiskBar({ total, used, pct }: { total: number; used: number; pct: numbe
   return (
     <div>
       <Bar value={pct} color={pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--ok)'} unit="%" />
-      <span className="dim small">{fmtBytes(used)} / {fmtBytes(total)}</span>
+      <span className="dim small">{fmtSize(used)} / {fmtSize(total)}</span>
     </div>
   )
 }

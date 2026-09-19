@@ -223,7 +223,7 @@ function UpdatesSection() {
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>{data.updates || '（无）'}</div>
       </Card>
       <Card title="重启状态" subtitle="needs-restarting">
-        <div className="banner" style={{ background: data.needs_restart ? '#ef44441f' : '#22c55e1f', borderColor: data.needs_restart ? '#ef44444d' : '#22c55e4d' }}>
+        <div className="banner" style={{ background: data.needs_restart ? 'color-mix(in srgb, var(--danger) 12%, transparent)' : 'color-mix(in srgb, var(--ok) 12%, transparent)', borderColor: data.needs_restart ? 'color-mix(in srgb, var(--danger) 30%, transparent)' : 'color-mix(in srgb, var(--ok) 30%, transparent)' }}>
           {data.needs_restart ? '⚠ 系统需要重启以应用更新' : '✓ 系统不需要重启'}
         </div>
         <div className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize:'0.7812rem', marginTop: 8 }}>{data.restart_detail}</div>

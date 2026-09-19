@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
+import { fmtPct } from '../lib/format'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
 import Card from '../components/Card'
@@ -417,9 +418,4 @@ function lineLevel(line: string): string {
   if (l.includes('warn') || l.includes('warning')) return 'lvl-warn'
   if (l.includes('info') || l.includes('notice')) return 'lvl-info'
   return 'lvl-default'
-}
-
-function fmtPct(v?: number): string {
-  if (v === undefined || v === null || v === 0) return '—'
-  return v.toFixed(2) + '%'
 }

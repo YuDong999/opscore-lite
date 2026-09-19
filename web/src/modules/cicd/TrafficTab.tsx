@@ -12,7 +12,8 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RefreshCw, LoaderCircle, Check, Network } from 'lucide-react'
 import { API, ErrBanner } from './shared'
-import { OptSelect, HostSelect } from './common'
+import { OptSelect } from '../../components/common/OptSelect'
+import { HostSelect } from './common'
 import { useToast } from '../../components/Toast'
 
 interface NginxUpstreamSrv { addr: string; weight: number; down: boolean; backup: boolean; rawArgs: string }

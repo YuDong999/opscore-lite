@@ -109,7 +109,7 @@ type Pipeline struct {
 	Env         []Var     `json:"env"`
 	Trigger     Trigger   `json:"trigger"`
 	Stages      []Stage   `json:"stages"`
-	Params      []ParamDef `json:"params,omitempty"`    // 参数化构建(触发时可填值)
+	Params      []ParamDef `json:"params"`              // 参数化构建(触发时可填值); 不用 omitempty: 空数组也要输出, 否则前端拿到 undefined
 	Source      Source     `json:"source"`              // 代码源(可选)
 	RegistryID  string     `json:"registryId,omitempty"` // 镜像仓库 → 注入 REGISTRY/REGISTRY_USER/REGISTRY_PASS
 	KubeCredID  string    `json:"kubeCredId,omitempty"` // kubeconfig 凭据 → 注入 KUBECONFIG
@@ -120,6 +120,29 @@ type Pipeline struct {
 	NotifySecret  string    `json:"notifySecret,omitempty"`  // 钉钉机器人加签密钥
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// normalizePipeline 把可选集合字段的 nil 规范化为空 slice。
+//
+// 根因背景: Go 的 nil slice 会序列化成 JSON null, 而前端流水线编辑器对 env/params/stages
+// 是直接 .map() 遍历的(见 web/src/modules/CicdModule.tsx), 拿到 null 会抛
+// `Cannot read properties of null (reading 'map')` 导致整个编辑模块白屏。
+// 经由 API 直接创建、未显式提供这些字段的流水线就会命中该场景, 故在存/读两侧都做规范化。
+func normalizePipeline(p *Pipeline) {
+	if p.Env == nil {
+		p.Env = []Var{}
+	}
+	if p.Params == nil {
+		p.Params = []ParamDef{}
+	}
+	if p.Stages == nil {
+		p.Stages = []Stage{}
+	}
+	for i := range p.Stages {
+		if p.Stages[i].Steps == nil {
+			p.Stages[i].Steps = []Step{}
+		}
+	}
 }
 
 // Artifact 归档制品(每步骤一个 tar.gz)
@@ -603,7 +626,9 @@ func (e *Engine) ListPipelines() []Pipeline {
 	defer e.mu.RUnlock()
 	out := make([]Pipeline, 0, len(e.pipes))
 	for _, p := range e.pipes {
-		out = append(out, maskPipeline(*p))
+		pp := maskPipeline(*p)
+		normalizePipeline(&pp)
+		out = append(out, pp)
 	}
 	return out
 }
@@ -614,7 +639,9 @@ func (e *Engine) GetPipeline(id string) (Pipeline, bool) {
 	defer e.mu.RUnlock()
 	for _, p := range e.pipes {
 		if p.ID == id {
-			return *p, true
+			pp := *p
+			normalizePipeline(&pp)
+			return pp, true
 		}
 	}
 	return Pipeline{}, false
@@ -622,6 +649,7 @@ func (e *Engine) GetPipeline(id string) (Pipeline, bool) {
 
 // SavePipeline 新建或更新(id 为空则新建)。校验名称唯一与 cron 语法。
 func (e *Engine) SavePipeline(p *Pipeline) error {
+	normalizePipeline(p)
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {
 		return errors.New("流水线名称不能为空")

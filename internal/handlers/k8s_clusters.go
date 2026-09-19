@@ -148,6 +148,9 @@ func k8sRestore() {
 type k8sRegisterBody struct {
 	Name       string `json:"name"`
 	Kubeconfig string `json:"kubeconfig"` // YAML 明文或 base64(自动识别)
+	// Overwrite 同名集群已存在时用本次凭据覆盖(K8s 重装/证书轮换后更新旧凭据的兜底,
+	// 避免只能先删再建的空窗); 缺省 false 保持既有"同名即拒"语义。
+	Overwrite bool `json:"overwrite"`
 }
 
 // K8sClustersHandler GET 列表 / POST 注册。
@@ -185,9 +188,16 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 	k8sKubeMu.Lock()
 	defer k8sKubeMu.Unlock()
 
-	if k8sFindCluster(k8sListClusters(), id) != nil {
-		WriteJSON(w, map[string]any{"ok": false, "error": "同名集群已存在"})
-		return
+	overwriting := false
+	createdAt := time.Now().Unix()
+	if old := k8sFindCluster(k8sListClusters(), id); old != nil {
+		if !b.Overwrite {
+			WriteJSON(w, map[string]any{"ok": false, "exists": true, "error": "同名集群已存在"})
+			return
+		}
+		overwriting = true
+		createdAt = old.CreatedAt // 覆盖凭据不重置创建时间
+		k8sMgr.Remove(id)         // 旧实例可能已失效(Remove 对不存在 id 幂等), 覆盖路径直接重建
 	}
 	if aerr := k8sMgr.Add(id, data); aerr != nil {
 		WriteJSON(w, map[string]any{"ok": false, "error": "kubeconfig 解析失败: " + aerr.Error()})
@@ -209,7 +219,7 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "保存 kubeconfig 失败: " + werr.Error()})
 		return
 	}
-	rec := central.K8sCluster{ID: id, Name: b.Name, APIServer: apiServer, Version: version, Status: status, CreatedAt: time.Now().Unix()}
+	rec := central.K8sCluster{ID: id, Name: b.Name, APIServer: apiServer, Version: version, Status: status, CreatedAt: createdAt}
 	// 注册即按 apiserver 地址反查 master 主机并落库(供证书等 master 本地操作走 SSH; 查不到留空=退本机)
 	if apiServer != "" {
 		if master := locateMasterHost(apiServer); master != "" {
@@ -220,7 +230,11 @@ func K8sClustersHandler(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]any{"ok": false, "error": "持久化失败: " + uerr.Error()})
 		return
 	}
-	log.Printf("[K8S-AUDIT] action=register cluster=%s status=%s api=%s", id, status, apiServer)
+	action := "register"
+	if overwriting {
+		action = "overwrite"
+	}
+	log.Printf("[K8S-AUDIT] action=%s cluster=%s status=%s api=%s", action, id, status, apiServer)
 	InvalidateRespCache("/api/plugins/containers/k8s")
 	WriteJSON(w, map[string]any{"ok": true, "cluster": rec})
 }
@@ -235,9 +249,11 @@ func K8sDefaultKubeconfigHandler(w http.ResponseWriter, r *http.Request) {
 	if !pluginGuard(k8sPluginID, w) {
 		return
 	}
-	path, data, err := discoverDefaultKubeconfig()
+	path, data, probed, err := discoverDefaultKubeconfig()
 	if err != nil {
-		WriteJSON(w, map[string]any{"ok": true, "found": false})
+		// 否定回答必须带原因与探测清单: "本机"指运行本系统的机器(不一定是 K8s 所在机),
+		// 前端据此区分引导(远程集群→从主机拉取; 确在本机→环境变量/粘贴上传)。
+		WriteJSON(w, map[string]any{"ok": true, "found": false, "reason": err.Error(), "probed": probed})
 		return
 	}
 	resp := map[string]any{"ok": true, "found": true, "path": path, "source": string(data)}
@@ -269,7 +285,8 @@ func K8sDefaultKubeconfigHandler(w http.ResponseWriter, r *http.Request) {
 // discoverDefaultKubeconfig 按固定优先级返回服务器本机第一份存在的 kubeconfig。
 // 顺序: $OPSCORE_KUBECONFIG → $KUBECONFIG(按平台分隔符多路径) → ~/.kube/config → /root/.kube/config → /etc/kubernetes/admin.conf
 // 仅限部署机本机; 远程主机的凭据走注册面板「从主机拉取」(k8s_kubeconfig_remote.go, RunOnTarget)。
-func discoverDefaultKubeconfig() (string, []byte, error) {
+// 返回 probed = 实际探测过的路径清单(全 miss 时前端据此给出可行动的提示, 而不是无声失败)。
+func discoverDefaultKubeconfig() (string, []byte, []string, error) {
 	var paths []string
 	if v := os.Getenv("OPSCORE_KUBECONFIG"); v != "" {
 		paths = append(paths, v)
@@ -288,14 +305,16 @@ func discoverDefaultKubeconfig() (string, []byte, error) {
 	}
 	paths = append(paths, "/root/.kube/config") // systemd 服务无 $HOME 时兜底
 	paths = append(paths, "/etc/kubernetes/admin.conf")
+	probed := make([]string, 0, len(paths))
 	for _, p := range paths {
+		probed = append(probed, p)
 		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
-		return p, data, nil
+		return p, data, probed, nil
 	}
-	return "", nil, fmt.Errorf("未找到默认 kubeconfig")
+	return "", nil, probed, fmt.Errorf("本机(运行本系统的机器)未找到默认 kubeconfig")
 }
 
 // ===== 集群操作 (删除 / 重探测) =====

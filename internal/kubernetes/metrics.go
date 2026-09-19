@@ -4,6 +4,7 @@ package kubernetes
 // 通过 kubeconfig 直读 API, 不依赖 Prometheus。
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
@@ -255,4 +257,161 @@ func (m *Manager) GetPodMetrics(ctx context.Context, clusterID, ns string) ([]Po
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CPUMilli > out[j].CPUMilli })
 	return out, nil
+}
+
+// ===== metrics-server 缺失时的兜底: API server node proxy → kubelet /stats/summary =====
+// kubelet 内置 /stats/summary(含内嵌 cAdvisor 的节点/Pod 用量 + nodefs 磁盘), 有节点就有数据, 无需任何 add-on。
+// 走 API server 的 node proxy(鉴权/证书由 apiserver→kubelet 既有体系处理), 不碰 kubelet 自签证书问题。
+
+type summaryDisk struct {
+	availPct float64
+	usedGiB  float64
+	capGiB   float64
+	evictPct float64
+}
+
+// SummaryMetrics 兜底采集: 每节点经 apiserver proxy 读 /stats/summary,
+// 返回节点/Pod 实时用量 + nodefs 磁盘(顺带补齐主路径里直连 10250 常失败的那列)。
+func (m *Manager) SummaryMetrics(ctx context.Context, clusterID string) ([]NodeMetric, []PodMetric, map[string]summaryDisk, error) {
+	dyn, err := m.DynamicClient(clusterID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	nodeRes := dyn.Resource(gvrNodes)
+	nodesList, err := nodeRes.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("nodes: %w", err)
+	}
+	// node proxy 走 RESTClient 原始字节: 动态客户端会强制解码资源对象(要求 kind), 而 summary 不是 k8s 资源
+	cfgBase, err := m.RESTConfig(clusterID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	gv := schema.GroupVersion{Group: "", Version: "v1"}
+	cfgV1 := *cfgBase
+	cfgV1.GroupVersion = &gv
+	cfgV1.APIPath = "/api"
+	cfgV1.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	restClient, err := rest.RESTClientFor(&cfgV1)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	type nodeCtx struct {
+		name   string
+		alloc  [2]int64 // cpu milli, mem MiB
+		press  bool
+	}
+	var targets []nodeCtx
+	for i := range nodesList.Items {
+		var n corev1.Node
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(nodesList.Items[i].Object, &n) != nil {
+			continue
+		}
+		nc := nodeCtx{name: n.Name}
+		nc.alloc[0] = n.Status.Allocatable.Cpu().MilliValue()
+		nc.alloc[1] = n.Status.Allocatable.Memory().Value() / (1024 * 1024)
+		for _, c := range n.Status.Conditions {
+			if c.Type == corev1.NodeDiskPressure {
+				nc.press = c.Status == corev1.ConditionTrue
+			}
+		}
+		targets = append(targets, nc)
+	}
+
+	var mu sync.Mutex
+	var nodesOut []NodeMetric
+	var podsOut []PodMetric
+	disks := map[string]summaryDisk{}
+	var firstErr error
+	var wg sync.WaitGroup
+	for _, nc := range targets {
+		wg.Add(1)
+		go func(nc nodeCtx) {
+			defer wg.Done()
+			// 经 apiserver node proxy 读 /stats/summary; 首错只记录不中断其余节点
+			res := restClient.Get().AbsPath("/api/v1/nodes/"+nc.name+"/proxy/stats/summary").Do(ctx)
+			raw, err := res.Raw()
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("%s: HTTP %d: %w", nc.name, res.StatusCode, err)
+				}
+				mu.Unlock()
+				return
+			}
+			var s struct {
+				Node struct {
+					CPU struct {
+						UsageNanoCores int64 `json:"usageNanoCores"`
+					} `json:"cpu"`
+					Memory struct {
+						WorkingSetBytes int64 `json:"workingSetBytes"`
+					} `json:"memory"`
+					FS struct {
+						AvailableBytes int64 `json:"availableBytes"`
+						CapacityBytes  int64 `json:"capacityBytes"`
+					} `json:"fs"`
+					Runtime struct {
+						ImageFS struct {
+							AvailableBytes int64 `json:"availableBytes"`
+							CapacityBytes  int64 `json:"capacityBytes"`
+						} `json:"imageFs"`
+					} `json:"runtime"`
+				} `json:"node"`
+				Pods []struct {
+					PodRef struct {
+						Name      string `json:"name"`
+						Namespace string `json:"namespace"`
+					} `json:"podRef"`
+					Containers []struct {
+						Usage struct {
+							CPU    any `json:"cpu"`
+							Memory any `json:"memory"`
+						} `json:"usage"`
+					} `json:"containers"`
+				} `json:"pods"`
+			}
+			if json.NewDecoder(bytes.NewReader(raw)).Decode(&s) != nil {
+				return
+			}
+			nm := NodeMetric{
+				Name:     nc.name,
+				CPUMilli: s.Node.CPU.UsageNanoCores / 1_000_000,
+				MemMiB:   float64(s.Node.Memory.WorkingSetBytes) / (1024 * 1024),
+			}
+			if nc.alloc[0] > 0 {
+				nm.CPUPct = float64(nm.CPUMilli) / float64(nc.alloc[0]) * 100
+			}
+			if nc.alloc[1] > 0 {
+				nm.MemPct = nm.MemMiB / float64(nc.alloc[1]) * 100
+			}
+			avail := float64(s.Node.FS.AvailableBytes)
+			cap := float64(s.Node.FS.CapacityBytes)
+			sd := summaryDisk{usedGiB: (cap - avail) / (1 << 30), capGiB: cap / (1 << 30), evictPct: 10}
+			if cap > 0 {
+				sd.availPct = avail / cap * 100
+			}
+			for _, pd := range s.Pods {
+				pm := PodMetric{Namespace: pd.PodRef.Namespace, Name: pd.PodRef.Name}
+				for _, ct := range pd.Containers {
+					pm.CPUMilli += parseCPUMilli(ct.Usage.CPU)
+					pm.MemMiB += float64(parseMemBytes(ct.Usage.Memory)) / (1024 * 1024)
+				}
+				mu.Lock()
+				podsOut = append(podsOut, pm)
+				mu.Unlock()
+			}
+			mu.Lock()
+			nodesOut = append(nodesOut, nm)
+			disks[nc.name] = sd
+			mu.Unlock()
+		}(nc)
+	}
+	wg.Wait()
+	if len(nodesOut) == 0 && firstErr != nil {
+		return nil, nil, nil, firstErr
+	}
+	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].Name < nodesOut[j].Name })
+	sort.Slice(podsOut, func(i, j int) bool { return podsOut[i].CPUMilli > podsOut[j].CPUMilli })
+	return nodesOut, podsOut, disks, nil
 }

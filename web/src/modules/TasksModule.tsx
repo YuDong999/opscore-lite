@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api/client'
+import { fmtBytes, fmtTime } from '../lib/format'
 import Card from '../components/Card'
 import { useHost } from '../components/HostContext'
 import HostSelector from '../components/HostSelector'
@@ -1039,9 +1040,6 @@ function DiskCleanSection() {
     } catch (e) { setErr(String(e)) }
     setRunning(false)
   }
-
-  const fmtBytes = (b: number) => b >= 1 << 30 ? (b / (1 << 30)).toFixed(2) + ' GiB' : (b / (1 << 20)).toFixed(1) + ' MiB'
-  const fmtTime = (t: number) => t ? new Date(t * 1000).toLocaleString() : '—'
 
   return (
     <Card title="磁盘清理" subtitle="规则驱动 + 调试 Pod 通道执行(chroot /host), 针对所有已注册集群">

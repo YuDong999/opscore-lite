@@ -1,22 +1,23 @@
-import { Component, useEffect, useState, useMemo, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useEffect, useState, useMemo, type ReactNode, type ComponentType, type LazyExoticComponent } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { getJSON } from './api/client'
 import TopBar from './components/TopBar'
 import LoginPage from './components/LoginPage'
 import { HostProvider } from './components/HostContext'
 import { ToastProvider } from './components/Toast'
-import ResourcesModule from './modules/ResourcesModule'
-import ServicesModule from './modules/ServicesModule'
-import NetworkModule from './modules/NetworkModule'
-import PluginsModule from './modules/PluginsModule'
-import SettingsModule from './modules/SettingsModule'
-import DiagnosticsModule from './modules/DiagnosticsModule'
-import TasksModule from './modules/TasksModule'
-import AnsibleModule from './modules/AnsibleModule'
-import ContainersModule from './modules/ContainersModule'
-import DatabaseManagerModule from './modules/DatabaseManagerModule'
-import CicdModule from './modules/CicdModule'
-import LogMonitorModule from './modules/LogMonitorModule'
+
+const ResourcesModule = lazy(() => import('./modules/ResourcesModule'))
+const ServicesModule = lazy(() => import('./modules/ServicesModule'))
+const NetworkModule = lazy(() => import('./modules/NetworkModule'))
+const PluginsModule = lazy(() => import('./modules/PluginsModule'))
+const SettingsModule = lazy(() => import('./modules/SettingsModule'))
+const DiagnosticsModule = lazy(() => import('./modules/DiagnosticsModule'))
+const TasksModule = lazy(() => import('./modules/TasksModule'))
+const AnsibleModule = lazy(() => import('./modules/ansible'))
+const ContainersModule = lazy(() => import('./modules/containers'))
+const DatabaseManagerModule = lazy(() => import('./modules/dbmanager'))
+const CicdModule = lazy(() => import('./modules/cicd'))
+const LogMonitorModule = lazy(() => import('./modules/logmonitor'))
 
 interface Manifest {
   id: string
@@ -27,7 +28,9 @@ interface Manifest {
   description: string
 }
 
-const MODULE_MAP: Record<string, () => JSX.Element> = {
+type ModuleComponent = LazyExoticComponent<ComponentType<any>>
+
+const MODULE_MAP: Record<string, ModuleComponent> = {
   resources: ResourcesModule,
   services: ServicesModule,
   network: NetworkModule,
@@ -175,6 +178,7 @@ export default function App() {
           <HostProvider>
           <ErrorBoundary>
           <ToastProvider>
+          <Suspense fallback={<div className="log-loading">加载中...</div>}>
           <Routes>
             <Route path="/" element={core[0] ? <Navigate to={core[0].routePath} replace /> : <div className="log-loading">加载中...</div>} />
             {modules.map((m) => {
@@ -187,6 +191,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsModule />} />
             <Route path="*" element={modules.length === 0 ? <div className="log-loading">加载中...</div> : <Navigate to="/resources" replace />} />
           </Routes>
+          </Suspense>
           </ToastProvider>
           </ErrorBoundary>
           </HostProvider>
