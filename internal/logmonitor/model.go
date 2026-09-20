@@ -66,7 +66,8 @@ type LogSource struct {
 	// container/k8s 特有
 	Namespace string `json:"namespace"` // k8s：命名空间
 	Cluster   string `json:"cluster"`   // k8s：集群 ID
-	LastTs    int64  `json:"lastTs"`    // 采集游标：最近一次入库的日志毫秒时间戳
+	LastTs    int64  `json:"lastTs"`    // 采集游标: file 源为字节偏移, container/k8s 源为毫秒时间戳(按 Type 定单位)
+	FileIno   string `json:"fileIno"`   // file 源文件身份 "dev:ino"; 与本行 stat 所得不一致即发生轮转
 }
 
 // FieldMap 字段映射（对标 Kibana Data View 字段）

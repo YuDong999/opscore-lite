@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -86,8 +87,11 @@ func (s *Service) ValidateCursors() int {
 		if !src.Enabled || !src.Follow {
 			continue
 		}
+		if src.Type == "file" {
+			continue // 文件源游标是字节偏移, 与墙钟无关, 不参与"未来时间戳"自检
+		}
 		if src.LastTs > now+cursorFuzzMs {
-			_ = s.store.AdvanceSourceCursor(src.ID, now-180000) // 落后3分钟, 避免与真实日志ts相等被去重吞掉
+			_ = s.store.AdvanceTimeCursor(src.ID, now-180000) // 落后3分钟, 避免与真实日志ts相等被去重吞掉
 			log.Printf("[logmonitor] 游标自检: %s last_ts=%d 超未来值, 重置为当前时间", src.ID, src.LastTs)
 			fixed++
 		}
@@ -141,7 +145,115 @@ func (s *Service) poll() {
 			s.pollContainer(src)
 		case "k8s", "k8spod":
 			s.pollK8s(src)
+		case "file":
+			s.pollFile(src)
 		}
+	}
+}
+
+// pollFile 文件源增量采集: last_ts 是字节偏移游标, file_ino 是该文件的身份(dev:ino)。
+// 轮转判据以文件身份为准 —— 身份变即"换了文件"(rename/create), 旧游标对新文件无意义, 归零从头采;
+// 身份不变而 size < 游标才是原地截断(copytruncate), 同样归零。
+// 单轮最多读 2MB 防爆内存; 末尾不足一行的残段既不入库也不推进游标(留到下一轮补齐)。
+// 不走 ingestIncremental —— 那条链路用时间戳去重(e.Ts<=lastTs 跳过), 与字节偏移游标语义冲突。
+func (s *Service) pollFile(src *LogSource) {
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return // 文件暂不存在(轮转间隙), 静默等下一轮
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return
+	}
+	size := fi.Size()
+	ino := fileIdentity(fi)
+	cursor := src.LastTs
+	rotated := false
+	switch {
+	case ino != "" && src.FileIno != "" && ino != src.FileIno:
+		cursor, rotated = 0, true // 轮转: 同名但已是另一个文件
+	case ino == "" || src.FileIno == "":
+		if cursor > size {
+			cursor = 0 // 无身份可比(Windows/特殊文件系统或首采)时退回 size 猜测
+		}
+	}
+	if size <= cursor {
+		if rotated || ino != src.FileIno {
+			_ = s.store.SetFileCursor(src.ID, cursor, ino) // 没有新行也要把身份落下来, 否则每轮都误判轮转
+		}
+		return
+	}
+	const maxRead = int64(2 << 20)
+	start := cursor
+	catchUp := false
+	if remain := size - cursor; remain > maxRead {
+		start = size - maxRead // 追平保护: 只取最近 2MB
+		catchUp = true
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return
+	}
+	reader := bufio.NewReader(io.LimitReader(f, size-start))
+	var entries []*LogEntry
+	off := start
+	// 追平起点可能落在行中间, 那第一块是缺了行头的残段: 跨过它但不入库
+	if catchUp && start > 0 && !atLineStart(f, start) {
+		line, rerr := reader.ReadString('\n')
+		off += int64(len(line))
+		if rerr != nil {
+			_ = s.store.SetFileCursor(src.ID, off, ino)
+			return
+		}
+	}
+	for {
+		line, rerr := reader.ReadString('\n')
+		if !strings.HasSuffix(line, "\n") {
+			break // 末尾半行: 游标停在最后一个完整行尾
+		}
+		if e := s.ParseLine(strings.TrimRight(line, "\r\n"), src.Path, off, src.Service, src.Type, src.IndexID); e != nil {
+			entries = append(entries, e)
+		}
+		off += int64(len(line))
+		if rerr != nil {
+			break
+		}
+	}
+	s.insertAndArchive(src, entries)
+	if off > cursor || ino != src.FileIno {
+		_ = s.store.SetFileCursor(src.ID, off, ino)
+	}
+}
+
+// atLineStart 判断 off 是否恰好在行首(前一个字节是换行)。用 ReadAt 取字节, 不影响顺序读位置。
+func atLineStart(f *os.File, off int64) bool {
+	b := make([]byte, 1)
+	if _, err := f.ReadAt(b, off-1); err != nil {
+		return false
+	}
+	return b[0] == '\n'
+}
+
+// insertAndArchive 先入库再归档。归档只送真正落库的行: 文件幂等索引吸收掉的重复行没有 id,
+// 连着送会把原文映射到别的行号上, raw 回看就串台。
+func (s *Service) insertAndArchive(src *LogSource, entries []*LogEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	if _, err := s.store.InsertBatch(entries); err != nil {
+		log.Printf("[logmonitor] 源 %s 入库失败: %v", src.ID, err)
+	}
+	if src.IndexID == "" || s.archiver == nil {
+		return
+	}
+	fresh := make([]*LogEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.ID > 0 {
+			fresh = append(fresh, e)
+		}
+	}
+	if len(fresh) > 0 {
+		_ = s.archiver.appendBatch(fresh)
 	}
 }
 
@@ -190,14 +302,9 @@ func (s *Service) ingestIncremental(src *LogSource, lines []string, source strin
 	if len(entries) == 0 {
 		return
 	}
-	if src.IndexID != "" && s.archiver != nil {
-		_, _ = s.store.InsertBatch(entries)
-		_ = s.archiver.appendBatch(entries)
-	} else {
-		_, _ = s.store.InsertBatch(entries)
-	}
+	s.insertAndArchive(src, entries)
 	if maxTs > src.LastTs {
-		_ = s.store.AdvanceSourceCursor(src.ID, maxTs)
+		_ = s.store.AdvanceTimeCursor(src.ID, maxTs)
 	}
 }
 

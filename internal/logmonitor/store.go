@@ -198,6 +198,10 @@ func (s *Store) shardsInit() error {
 	if err := s.ensureColumn("log_meta_minute", "bytes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// 片表已就位(log_shards 由本函数建), 补文件幂等索引; 之后新建片由 ensureShardTable 内联建
+	if err := s.ensureFileDedupIndexes(); err != nil {
+		log.Printf("[logmonitor] 文件幂等索引迁移失败: %v", err)
+	}
 	go s.EnsureIndexShardMigration()
 	// 重建后的空物化表由后台回填; histsReady 会在回填完成后置位
 	return nil
@@ -602,6 +606,7 @@ func (s *Store) migrate() error {
 		{"namespace", "TEXT NOT NULL DEFAULT ''"},
 		{"cluster", "TEXT NOT NULL DEFAULT ''"},
 		{"last_ts", "INTEGER NOT NULL DEFAULT 0"},
+		{"file_ino", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn("log_sources", col.name, col.typ); err != nil {
 			return err
@@ -660,6 +665,7 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 	}
 
 	ids := make([]int64, 0, len(entries))
+	inserted := make([]*LogEntry, 0, len(entries))
 	for _, g := range groups {
 		if err := s.ensureShardTable(g.indexID, g.key); err != nil {
 			return nil, err
@@ -668,7 +674,8 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 		if err != nil {
 			return nil, err
 		}
-		stmt, err := tx.Prepare(`INSERT INTO ` + shardTableName(g.key) + ` (ts, level, service, source, file_path, offset, size, summary, index_id)
+		// OR IGNORE: 文件源的幂等索引(ux_m_file_*)命中即吸收重复, 不再靠采集端保证唯一
+		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO ` + shardTableName(g.key) + ` (ts, level, service, source, file_path, offset, size, summary, index_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			tx.Rollback()
@@ -681,9 +688,14 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 				tx.Rollback()
 				return nil, fmt.Errorf("insert %s: %w", g.key, err)
 			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				e.ID = 0 // 未落库: 归档侧据此跳过, 避免把原文映射到别的行
+				continue
+			}
 			id, _ := res.LastInsertId()
 			e.ID = id
 			ids = append(ids, id)
+			inserted = append(inserted, e)
 		}
 		stmt.Close()
 		if err := tx.Commit(); err != nil {
@@ -692,7 +704,8 @@ func (s *Store) InsertBatch(entries []*LogEntry) ([]int64, error) {
 		s.updateShardBounds(g.key)
 	}
 	// 分钟物化桶(直方图/统计卡片加速): 失败仅记日志, 不阻断主写入; 回填可补齐
-	if err := s.upsertMinute(entries); err != nil {
+	// 只计真正落库的行, 被幂等吸收的重复不进桶, 否则直方图虚高
+	if err := s.upsertMinute(inserted); err != nil {
 		log.Printf("[logmonitor] 物化分钟桶写入失败(可回填): %v", err)
 	}
 	return ids, nil
@@ -1624,7 +1637,7 @@ func (s *Store) ListSources() ([]*LogSource, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts FROM log_sources ORDER BY name")
+	rows, err := s.db.Query("SELECT id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts, file_ino FROM log_sources ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -1633,7 +1646,7 @@ func (s *Store) ListSources() ([]*LogSource, error) {
 	sources := []*LogSource{}
 	for rows.Next() {
 		src := &LogSource{}
-		rows.Scan(&src.ID, &src.Name, &src.Type, &src.Path, &src.Service, &src.Enabled, &src.Follow, &src.IndexID, &src.Namespace, &src.Cluster, &src.LastTs)
+		rows.Scan(&src.ID, &src.Name, &src.Type, &src.Path, &src.Service, &src.Enabled, &src.Follow, &src.IndexID, &src.Namespace, &src.Cluster, &src.LastTs, &src.FileIno)
 		sources = append(sources, src)
 	}
 	return sources, nil
@@ -1643,9 +1656,9 @@ func (s *Store) SaveSource(src *LogSource) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO log_sources (id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		src.ID, src.Name, src.Type, src.Path, src.Service, src.Enabled, src.Follow, src.IndexID, src.Namespace, src.Cluster, src.LastTs)
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO log_sources (id, name, type, path, service, enabled, follow, index_id, namespace, cluster, last_ts, file_ino)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		src.ID, src.Name, src.Type, src.Path, src.Service, src.Enabled, src.Follow, src.IndexID, src.Namespace, src.Cluster, src.LastTs, src.FileIno)
 	return err
 }
 
@@ -1657,13 +1670,59 @@ func (s *Store) DeleteSource(id string) error {
 	return err
 }
 
-// AdvanceSourceCursor 推进持续采集游标（实现幂等，不改变其它字段）
-func (s *Store) AdvanceSourceCursor(id string, lastTs int64) error {
+// AdvanceTimeCursor 推进 container/k8s 源的游标(last_ts 单位=毫秒时间戳)。
+// 文件源不要用本函数 —— 它的 last_ts 是字节偏移, 走 SetFileCursor。
+func (s *Store) AdvanceTimeCursor(id string, lastTs int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	_, err := s.db.Exec("UPDATE log_sources SET last_ts = ? WHERE id = ?", lastTs, id)
 	return err
+}
+
+// SetFileCursor 推进文件源游标(last_ts 单位=字节偏移)并记录当前文件身份。
+// 身份与游标必须同一句写: 分开写会在崩溃窗口里留下"新身份+旧游标"的组合, 下轮会从错误偏移开读。
+func (s *Store) SetFileCursor(id string, off int64, ino string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE log_sources SET last_ts = ?, file_ino = ? WHERE id = ?", off, ino, id)
+	return err
+}
+
+// ensureFileDedupIndexes 为存量片表补文件幂等索引(先按同一口径清掉历史重复行, 否则建索引会因冲突失败)。
+// 片表以路由表 log_shards 为准枚举 —— 不用 sqlite_master LIKE 'log_meta_%', 那会误捞
+// log_meta_minute / log_meta_minute_svc 两张物化聚合表(它们没有 source/offset 列)。
+// 启动期一次性执行, 全程幂等。
+func (s *Store) ensureFileDedupIndexes() error {
+	rows, err := s.db.Query("SELECT shard FROM log_shards")
+	if err != nil {
+		return err
+	}
+	var keys []string
+	for rows.Next() {
+		var k string
+		rows.Scan(&k)
+		keys = append(keys, k)
+	}
+	rows.Close()
+
+	for _, key := range keys {
+		t := shardTableName(key)
+		var n int
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", t).Scan(&n); err != nil || n == 0 {
+			continue // 路由有记录但表已整片淘汰
+		}
+		if _, err := s.db.Exec(`DELETE FROM ` + t + ` WHERE source='file' AND rowid NOT IN (
+			SELECT MIN(rowid) FROM ` + t + ` WHERE source='file' GROUP BY file_path, offset, ts)`); err != nil {
+			log.Printf("[logmonitor] 文件重复行清理失败(%s): %v", t, err)
+			continue
+		}
+		if _, err := s.db.Exec(fileDedupIndexSQL(key, t)); err != nil {
+			log.Printf("[logmonitor] 文件幂等索引建立失败(%s): %v", t, err)
+		}
+	}
+	return nil
 }
 
 // SetSourceEnabled 启停来源采集。仅翻 enabled, 不动 last_ts/其它字段, 避免 SaveSource 的 REPLACE 把游标归零导致全量重采。

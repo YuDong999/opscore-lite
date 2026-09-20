@@ -3,6 +3,7 @@ package logmonitor
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -68,6 +69,14 @@ func shardKeyOf(ts int64, by string) string {
 }
 
 func shardTableName(key string) string { return "log_meta_" + key }
+
+// fileDedupIndexSQL 文件源行的幂等索引: 同 file_path + 同字节 offset + 同 ts 即同一物理行,
+// 采集端游标误判导致的重读在入库层被吸收(INSERT OR IGNORE), 不再落成重复行。
+// 只约束 source='file': container/k8s/http 行的 file_path 恒为 "http-ingest"、offset 是批内序号,
+// 若一并加唯一索引, 不同 pod 同毫秒同序号的真实日志会被判为重复而静默丢弃。
+func fileDedupIndexSQL(key, table string) string {
+	return "CREATE UNIQUE INDEX IF NOT EXISTS ux_m_file_" + key + " ON " + table + " (file_path, offset, ts) WHERE source='file'"
+}
 
 var shardIndexes = []string{
 	"idx_m_ts", "idx_m_svc", "idx_m_lvl", "idx_m_src",
@@ -177,6 +186,9 @@ func (s *Store) ensureShardTable(indexID, key string) error {
 		for _, ix := range shardIndexes {
 			s.db.Exec("CREATE INDEX IF NOT EXISTS " + ix + "_" + key + " ON " + name + indexedCols(ix))
 		}
+		if _, err := s.db.Exec(fileDedupIndexSQL(key, name)); err != nil {
+			log.Printf("[logmonitor] 建文件幂等索引失败 %s: %v", key, err)
+		}
 	}
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO log_shards (shard, index_id, start_ts, end_ts) VALUES (?, ?, 0, 0)`, key, indexID)
 	return err
@@ -213,11 +225,9 @@ func (s *Store) tablesForRange(startTs, endTs int64, indexID string) []string {
 		var k, idx string
 		var st, et int64
 		rows.Scan(&k, &idx, &st, &et)
-		if indexID == "" && idx != "" {
-			any = true
-		} else if indexID != "" {
-			any = true
-		}
+		// 片表里存在任何行都算"已分片"(index_id='' 的 unassigned 片也是合法数据片,
+		// 此前全局检索漏算它 → any 恒 false → 回落只读空的 log_meta, 检索永远 0 行)
+		any = true
 		if startTs > 0 && et > 0 && et < startTs {
 			continue
 		}
