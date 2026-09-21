@@ -1281,7 +1281,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
         <div style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--warn) 35%, transparent)', borderRadius: 'var(--radius-sm)', padding: '0.5rem 0.75rem', fontSize: '0.75rem', lineHeight: 1.6 }}>
           <b>metrics-server 不可用</b> —— 实时用量已自动降级为 kubelet 直读（/stats/summary），节点/Pod 用量仍可用；
           但 <b>kubectl top 与基于资源指标的 HPA 自动扩缩</b> 此期间不可用。原因: {metricsDegraded.reason}
-          。恢复指引: 在集群主机执行 <code style={{ fontFamily: 'monospace' }}>bash /root/k8s-addons/install-metrics-server.sh</code>（离线镜像与说明见 207.10:/root/k8s-addons/）。
+          。恢复指引: 部署官方 metrics-server 即可恢复——标准做法为 <code style={{ fontFamily: 'monospace' }}>kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</code>（离线环境可提前下载镜像与清单，按集群实际情况导入）。
         </div>
       )}
 
