@@ -201,7 +201,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   backend?: DataGridBackend          // 后端能力注入(导出/写 SQL); 不提供时相应菜单项隐藏或静默跳过
   // 批量提交模式(dbx dataGrid 同款): 给了它就"先攒着", 底部出变更条统一保存/回滚;
   // 不传则保持原行为(每次编辑立即回调父级), 其它调用方零影响。cancelled=用户在预览弹窗里取消了。
-  onCommitBatch?: (changes: GridChange[]) => Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number }>
+  onCommitBatch?: (changes: GridChange[]) => Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number; badCells?: Array<{ row: number; col: number }> }>
   emptyState?: {                     // 空结果占位(可选, 不传时行为不变)
     hint: string
     actionLabel?: string
@@ -230,8 +230,11 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   const batchMode = !!onCommitBatch
   const [pending, setPending] = useState<GridChange[]>([])
   const [savingBatch, setSavingBatch] = useState(false)
+  // 父级校验失败时点名的单元格(如列长度超限): 标红, 用户改一下就清掉
+  const [badCells, setBadCells] = useState<Set<string>>(new Set())
   // 同一个格子改了多次只留最后一次; 删行覆盖该行所有单元格改动
   const markPending = useCallback((c: GridChange) => {
+    setBadCells(prev => { const n = new Set(prev); n.delete(`${c.row}:${c.col}`); return n })
     setPending(prev => [
       ...prev.filter(p => !(p.row === c.row && p.kind === c.kind && (c.kind === 'delete' || p.col === c.col))),
       c,
@@ -378,10 +381,12 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       if (r?.cancelled) return
       if (r?.ok) {
         setPending([])
+        setBadCells(new Set())
         toast.success(`已提交 ${pending.length} 处变更`)
         onAfterWrite?.()
       } else {
-        toast.error('提交失败: ' + (r?.error || '未知错误'))
+        if (r?.badCells?.length) setBadCells(new Set(r.badCells.map(b => `${b.row}:${b.col}`)))
+        toast.error('提交失败(改动保留): ' + (r?.error || '未知错误'))
       }
     } catch (e: any) {
       toast.error('提交失败: ' + (e?.message || e))
@@ -952,6 +957,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                       colNumeric[j] ? 'db-numr' : '',
                       cell === null ? 'db-isnull' : '',
                       pendingCell(i, j) ? 'dg-dirty' : '',
+                      badCells.has(`${i}:${j}`) ? 'dg-bad' : '',
                     ].filter(Boolean).join(' ') || undefined}
                     style={j < frozenN ? { left: frozenLeft(j) } : undefined}
                     title={cell === null || cell === undefined ? undefined : renderCell(cell)}
@@ -995,7 +1001,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           <span className="dim">改动只暂存在本页, 点保存才写库</span>
           <span style={{ marginLeft: 'auto' }} />
           <button className="btn-glass-soft btn-glass-soft-sm" disabled={savingBatch}
-            onClick={() => { setPending([]); toast.success('已回滚本页未提交的改动') }}>回滚</button>
+            onClick={() => { setPending([]); setBadCells(new Set()); toast.success('已回滚本页未提交的改动') }}>回滚</button>
           <button className="btn-glass-soft btn-glass-soft-sm btn-accent" disabled={savingBatch} onClick={saveBatch}>
             {savingBatch ? '提交中…' : '保存'}
           </button>

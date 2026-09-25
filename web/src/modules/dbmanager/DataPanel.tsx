@@ -144,9 +144,30 @@ export default function DataPanel({
   }, [data, visibleCols])
 
   // 单元格编辑落库: 变更 → 后端按方言拼 UPDATE(主键定位) → 预览确认 → 执行 → 回读。
+  // 提交前本地预检: CHAR(n)/VARCHAR(n) 超长这种"一看就知道"的错别丢给 MySQL 报 1406,
+  // 在界面上直接点名到单元格(列名 + 实际/上限字符数)。
+  const precheck = useCallback((changes: GridChange[]): { error?: string; badCells?: Array<{ row: number; col: number }> } => {
+    for (const [i, c] of changes.entries()) {
+      if (c.kind !== 'update' || c.value === null || c.col === undefined) continue
+      const name = visibleColumns[c.col]
+      const meta = (colMeta ?? []).find(m => m.name === name)
+      const m = /^\s*(?:var)?char\((\d+)\)/i.exec(meta?.type || '')
+      if (!m) continue
+      const limit = Number(m[1])
+      const val = typeof c.value === 'string' ? c.value : String(c.value ?? '')
+      if (limit > 0 && val.length > limit) {
+        return {
+          badCells: [{ row: c.row, col: c.col }],
+          error: `第 ${i + 1} 处: ${name} 是 ${meta?.type}, 你填了 ${val.length} 个字符(上限 ${limit}) —— 未提交任何内容`,
+        }
+      }
+    }
+    return {}
+  }, [visibleColumns, colMeta])
+
   // 网格"待提交变更"保存(dbx 保存/回滚同款): 整批走一个事务 —— 任一条失败整体回滚。
   // 语句仍由后端拼(pkCols + 可见列名 + 值, apply-batch); 前端只报"哪行列改成什么/删哪行"。
-  const runBatch = useCallback(async (changes: GridChange[]): Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number }> => {
+  const runBatch = useCallback(async (changes: GridChange[]): Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number; badCells?: Array<{ row: number; col: number }> }> => {
     if (!data?.rows || !data.columns) return { ok: false, error: '数据未就绪' }
     const pkCols = (colMeta ?? []).filter(c => c.key === 'PRI').map(c => c.name)
     if (pkCols.length === 0) return { ok: false, error: '该表无主键, 无法安全定位行' }
@@ -155,6 +176,8 @@ export default function DataPanel({
       data.columns.forEach((name, i) => { obj[name] = data.rows![rowIdx]?.[i] })
       return obj
     }
+    const pre = precheck(changes)
+    if (pre.error) return { ok: false, error: pre.error, badCells: pre.badCells }
     const ops = changes.map(c => c.kind === 'delete'
       ? { kind: 'delete' as const, row: rowObjAt(c.row) }
       : { kind: 'update' as const, row: rowObjAt(c.row), setCol: visibleColumns[c.col!], setValue: c.value })
@@ -172,7 +195,7 @@ export default function DataPanel({
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) }
     }
-  }, [data, colMeta, visibleColumns, conn.id, database, table, confirm, load])
+  }, [data, colMeta, visibleColumns, conn.id, database, table, confirm, load, precheck])
 
   // 无主键的表直接拒绝(后端同样拒绝)。行索引与 data.rows 对齐(DataGrid 保证), 列名取可见列投影。
   const handleEditChanges = useCallback(async (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => {
@@ -184,6 +207,8 @@ export default function DataPanel({
       data.columns.forEach((name, i) => { obj[name] = data.rows![rowIdx]?.[i] })
       return obj
     }
+    const pre = precheck(changes.map(c => ({ kind: 'update' as const, row: c.row, col: c.col, value: c.newValue })))
+    if (pre.error) { toast.error(pre.error); return }
     try {
       // 第一刀: confirm=false 拿到后端生成的 SQL 预览, 展示后再执行(透明原则)
       const previews = await Promise.all(changes.map(ch =>
@@ -203,7 +228,7 @@ export default function DataPanel({
     } catch (e: any) {
       toast.error('更新失败: ' + (e.message || e))
     }
-  }, [data, colMeta, visibleColumns, conn.id, database, table, load, toast, confirm])
+  }, [data, colMeta, visibleColumns, conn.id, database, table, load, toast, confirm, precheck])
 
   // 右键「置为 NULL / 删除行」: 单元格编辑那条通道的另一半 —— 前端只报"哪一行(哪一列)做什么"。
   // 原来这里前端手搓 `UPDATE 库.表 SET 列 = NULL WHERE 主键 = 值`(删行同理): 标识符不引用(列名撞
