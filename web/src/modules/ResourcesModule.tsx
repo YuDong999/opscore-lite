@@ -44,8 +44,18 @@ interface Snapshot {
     swapPercent: number
   }
   load?: { load1: number; load5: number; load15: number }
-  disks: { mountpoint: string; total: number; used: number; usedPercent: number; fstype: string }[]
+  disks: {
+    mountpoint: string; total: number; used: number; usedPercent: number; fstype: string
+    // inode 也是"这个挂载点的容量": 空间还剩很多但 inode 先满, 一个字节都写不进去
+    inodesTotal?: number; inodesUsed?: number; inodesPct?: number
+  }[]
   net: { byNic: { name: string; rxRate: number; txRate: number; rxTotal: number; txTotal: number }[] }
+  // 内核层容量红线; 非 Linux 平台不下发(整块不显示)
+  limits?: {
+    threads: number; threadsMax: number; threadsPct: number
+    conntrack: number; conntrackMax: number; conntrackPct: number
+    fileHandles: number; fileHandlesMax: number; fileHandlesPct: number
+  }
 }
 
 type TrendMetric = 'combined' | 'cpu' | 'mem' | 'swap' | 'net'
@@ -59,6 +69,16 @@ const fmtUptime = (sec: number) => {
   if (d > 0) return `${d} 天 ${h} 小时`
   if (h > 0) return `${h} 小时 ${m} 分`
   return `${m} 分`
+}
+
+// inode / 句柄这类"个数"用紧凑写法: 14,513,320 在格子放不下, 换成 14.5M。
+// 档位要到 E —— file-max 在内核里默认就是 9.2e18(没有实际限制的意思), 只到 M 会打出 9223372036854.8M 这种鬼话
+const fmtCount = (n: number) => {
+  const units = ['', 'K', 'M', 'G', 'T', 'P', 'E']
+  let v = n
+  let i = 0
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++ }
+  return i === 0 ? String(Math.round(v)) : v.toFixed(1) + units[i]
 }
 
 type ColorStop = { pct: number; r: number; g: number; b: number }
@@ -113,12 +133,19 @@ export default function ResourcesModule() {
       return
     }
     setExpanded(mp)
-    if (!drill[mp]) {
-      setDrill((d) => ({ ...d, [mp]: { loading: true } }))
-      getJSON<DiskChildrenResp>(`/api/core/disk/children?path=${encodeURIComponent(mp)}${selected?.id ? `&host=${selected.id}` : ''}`)
-        .then((data) => setDrill((d) => ({ ...d, [mp]: { loading: false, data } })))
-        .catch((e) => setDrill((d) => ({ ...d, [mp]: { loading: false, error: String(e) } })))
-    }
+    if (drill[mp]) return
+    setDrill((d) => ({ ...d, [mp]: { loading: true } }))
+    const url = `/api/core/disk/children?path=${encodeURIComponent(mp)}${selected?.id ? `&host=${selected.id}` : ''}`
+    getJSON<DiskChildrenResp>(url)
+      .then((data) => {
+        // 出错时后端是 200 + {error}, 没有 children —— 当成错误显示, 别让渲染炸掉
+        if (!data || !Array.isArray(data.children)) {
+          setDrill((d) => ({ ...d, [mp]: { loading: false, error: (data as { error?: string } | null)?.error || '读不到这个挂载点' } }))
+          return
+        }
+        setDrill((d) => ({ ...d, [mp]: { loading: false, data } }))
+      })
+      .catch(() => setDrill((d) => ({ ...d, [mp]: { loading: false, error: '读取失败（与服务器的连接中断了）' } })))
   }
 
   useEffect(() => {
@@ -437,6 +464,9 @@ return (
                     const open = expanded === d.mountpoint
                     const st = drill[d.mountpoint]
                     const pct = d.total > 0 ? (d.used / d.total) * 100 : d.usedPercent
+                    // inode 行: 平台没有 inode 语义时(Windows)不显示数字, 只摆一个 —
+                    const inoPct = d.inodesPct ?? 0
+                    const hasIno = (d.inodesTotal ?? 0) > 0
                     return (
                       <Fragment key={d.mountpoint}>
                         <tr
@@ -450,17 +480,33 @@ return (
                           <td className="dim">{d.fstype}</td>
                           <td className="mono">{fmtSize(d.total)}</td>
                           <td>
-                            <div className="usage-cell">
-                              <div className="usage-bar">
-                                <span
-                                  className={`usage-fill ${pct > 85 ? 'bg-danger' : pct > 65 ? 'bg-warn' : 'bg-ok'}`}
-                                  style={{ width: `${Math.min(100, pct)}%` }}
-                                />
+                            {/* 一格两行(空间 / inode): 卡片固定 ~425px 宽, 再加一列放不下, 只能竖向叠 */}
+                            <div className="usage-cell usage-cell-stack">
+                              <div className="usage-line">
+                                <span className={`badge ${pct > 85 ? 'badge-danger' : pct > 65 ? 'badge-warn' : 'badge-ok'}`}>
+                                  {pct.toFixed(2)}%
+                                </span>
+                                <div className="usage-bar usage-bar-cap">
+                                  <span
+                                    className={`usage-fill ${pct > 85 ? 'bg-danger' : pct > 65 ? 'bg-warn' : 'bg-ok'}`}
+                                    style={{ width: `${Math.min(100, pct)}%` }}
+                                  />
+                                </div>
+                                <span className="dim small"> {fmtSize(d.used)} / {fmtSize(d.total)}</span>
                               </div>
-                              <span className={`badge ${pct > 85 ? 'badge-danger' : pct > 65 ? 'badge-warn' : 'badge-ok'}`}>
-                                 {pct.toFixed(2)}%
-                              </span>
-                              <span className="dim small"> {fmtSize(d.used)} / {fmtSize(d.total)}</span>
+                              <div className="usage-line" title={hasIno ? `inode ${d.inodesUsed} / ${d.inodesTotal}` : '该平台没有 inode 语义'}>
+                                {hasIno ? (
+                                  <>
+                                    <span className={`badge ${inoPct > 85 ? 'badge-danger' : inoPct > 65 ? 'badge-warn' : 'badge-ok'}`}>{inoPct.toFixed(2)}%</span>
+                                    <div className="usage-bar usage-bar-cap">
+                                      <span className={`usage-fill ${inoPct > 85 ? 'bg-danger' : inoPct > 65 ? 'bg-warn' : 'bg-ok'}`} style={{ width: `${Math.min(100, inoPct)}%` }} />
+                                    </div>
+                                    <span className="dim small"> inode {fmtCount(d.inodesUsed ?? 0)} / {fmtCount(d.inodesTotal ?? 0)}</span>
+                                  </>
+                                ) : (
+                                  <span className="dim small">inode —</span>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -469,10 +515,10 @@ return (
                             <td colSpan={4}>
                               {st?.loading && <div className="loading small">计算目录大小中…(大目录可能需要数秒)</div>}
                               {st?.error && <div className="banner banner-err small">{st.error}</div>}
-                              {st?.data && (
+                              {st?.data?.children && !st.error && (
                                 <div className="drill">
                                   <div className="drill-head dim small">
-                                    顶层占用 · 按大小排序{st.data.partial ? ' · 部分目录因超时/权限未扫全' : ''} · Docker 部署下子目录大小为逻辑遍历结果，可能与已用总量存在差异
+                                    顶层占用 · 按大小排序{st.data.partial ? ' · 部分目录未扫全(超时/权限/容器口径差异)' : ''}
                                   </div>
                                   <div className="drill-list">
                                     {st.data.children.map((c) => {
@@ -509,6 +555,38 @@ return (
                 </tbody>
               </table>
             </Card>
+
+            {snap.limits && (
+              <Card title="隐形容量" subtitle="Linux 内核层 · 阈值 60/80">
+                <table className="mini-table">
+                  <thead><tr><th>项目</th><th>当前</th><th>上限</th><th>使用率</th></tr></thead>
+                  <tbody>
+                    {[
+                      { k: '进程 / 线程', cur: snap.limits.threads, max: snap.limits.threadsMax, pct: snap.limits.threadsPct },
+                      { k: 'conntrack 连接表', cur: snap.limits.conntrack, max: snap.limits.conntrackMax, pct: snap.limits.conntrackPct },
+                      { k: '打开文件句柄', cur: snap.limits.fileHandles, max: snap.limits.fileHandlesMax, pct: snap.limits.fileHandlesPct },
+                    ].map((r) => (
+                      <tr key={r.k}>
+                        <td>{r.k}</td>
+                        <td className="mono">{fmtCount(r.cur)}</td>
+                        <td className="mono dim">{fmtCount(r.max)}</td>
+                        <td>
+                          <div className="usage-cell">
+                            <span className={`badge ${r.pct > 80 ? 'badge-danger' : r.pct > 60 ? 'badge-warn' : 'badge-ok'}`}>{r.pct.toFixed(2)}%</span>
+                            <div className="usage-bar usage-bar-cap">
+                              <span className={`usage-fill ${r.pct > 80 ? 'bg-danger' : r.pct > 60 ? 'bg-warn' : 'bg-ok'}`} style={{ width: `${Math.min(100, r.pct)}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="dim small" style={{ marginTop: 6, lineHeight: '16px' }}>
+                  这几项平时都是个位数百分比。阈值取 60/80(比磁盘那套更早) —— 它们撞顶不是"变慢", 而是直接丢新连接 / 起不了新进程 / 写不进文件。
+                </div>
+              </Card>
+            )}
           </div>
         </>
       )}

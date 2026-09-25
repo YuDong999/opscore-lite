@@ -16,7 +16,8 @@ import (
 )
 
 // AgentVersion 是 agent 协议/采集逻辑的版本号,服务端据此识别旧 agent 并自动推送更新。
-const AgentVersion = "v3"
+// v4: 新增内核层容量红线采集(线程/conntrack/文件句柄 + 每挂载点 inode)
+const AgentVersion = "v4"
 
 // Snapshot 是一个时间点的全量系统指标快照。
 // 后端用一个后台 goroutine 每 2 秒刷新一次,前端轮询读取,避免每次请求都阻塞采集。
@@ -34,6 +35,8 @@ type Snapshot struct {
 	Processes   []ProcessInfo `json:"processes,omitempty"`
 	Network   NetworkDetail `json:"network,omitempty"`
 	Crontab   *CrontabInfo  `json:"crontab,omitempty"`
+	// 内核层容量红线(inode 在 Disks 里); 非 Linux 为 nil
+	Limits *LimitInfo `json:"limits,omitempty"`
 }
 
 // CrontabInfo 表示一台主机上采集到的 crontab 内容 (agent 慢周期采集)
@@ -73,6 +76,25 @@ type DiskInfo struct {
 	Used        uint64  `json:"used"`
 	UsedPercent float64 `json:"usedPercent"`
 	Fstype      string  `json:"fstype"`
+	// inode 也是"这个挂载点的容量": 空间还剩很多但 inode 先满, 照样一个字节都写不进去
+	InodesTotal uint64  `json:"inodesTotal"`
+	InodesUsed  uint64  `json:"inodesUsed"`
+	InodesPct   float64 `json:"inodesPct"`
+}
+
+// LimitInfo 内核层的容量红线。这类资源平时都是个位数百分比, 不进 CPU/内存/磁盘任何一块面板,
+// 但撞顶的后果是"直接丢新连接 / 起不了新进程 / 写不进文件" —— 属于出事才知道的隐形资源。
+// 非 Linux 平台拿不到 /proc, 整块为 nil(前端不显示)。
+type LimitInfo struct {
+	Threads        int64   `json:"threads"`
+	ThreadsMax     int64   `json:"threadsMax"`
+	ThreadsPct     float64 `json:"threadsPct"`
+	Conntrack      int64   `json:"conntrack"`
+	ConntrackMax   int64   `json:"conntrackMax"`
+	ConntrackPct   float64 `json:"conntrackPct"`
+	FileHandles    int64   `json:"fileHandles"`
+	FileHandlesMax int64   `json:"fileHandlesMax"`
+	FileHandlesPct float64 `json:"fileHandlesPct"`
 }
 
 type NetIO struct {
@@ -208,6 +230,9 @@ func tick() {
 				Used:        u.Used,
 				UsedPercent: round2(u.UsedPercent),
 				Fstype:      p.Fstype,
+				InodesTotal: u.InodesTotal,
+				InodesUsed:  u.InodesUsed,
+				InodesPct:   round2(u.InodesUsedPercent),
 			})
 			}
 		}
@@ -230,6 +255,9 @@ func tick() {
 		prevNet = cur
 		prevTick = now
 	}
+
+	// 内核层容量红线(线程/conntrack/文件句柄); 非 Linux 返回 nil, 前端整块不显示
+	s.Limits = CollectLimits()
 
 	mu.Lock()
 	current = s

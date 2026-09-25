@@ -87,6 +87,9 @@ func (c *collector) tick() metrics.Snapshot {
 					Used:        u.Used,
 					UsedPercent: round2(u.UsedPercent),
 					Fstype:      p.Fstype,
+					InodesTotal: u.InodesTotal,
+					InodesUsed:  u.InodesUsed,
+					InodesPct:   round2(u.InodesUsedPercent),
 				})
 			}
 		}
@@ -109,6 +112,8 @@ func (c *collector) tick() metrics.Snapshot {
 
 	c.collectNodeData(&s)
 	c.collectCrontab(&s)
+	// 内核层容量红线(线程/conntrack/文件句柄); 非 Linux 返回 nil, 前端整块不显示
+	s.Limits = metrics.CollectLimits()
 
 	return s
 }

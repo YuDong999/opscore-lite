@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,24 +33,35 @@ type DiskChildrenResp struct {
 	Partial     bool       `json:"partial"` // 是否因超时/权限未扫全
 }
 
-// DiskChildren 处理 GET /api/core/disk/children?path=<挂载点>
+// virtualDirs 排除虚拟/特殊文件系统, 避免把 /proc、/sys 等当成真实磁盘占用。
+var virtualDirs = map[string]bool{
+	"proc": true, "sys": true, "dev": true, "run": true,
+	"snap": true, "boot": true, "mnt": true, "media": true,
+}
+
+// DiskChildren 处理 GET /api/core/disk/children?path=<挂载点>&host=<主机ID>
 // 返回该挂载点的总容量 + 顶层子目录/文件大小,供前端点击下钻。
+// 目标主机按 target.go 的契约经 RunOnTarget 分发: 本机直接读盘, 远程一条 SSH 会话。
 func DiskChildren(w http.ResponseWriter, r *http.Request) {
-	root := r.URL.Query().Get("path")
+	hostID := HostIDFromRequest(r)
+	root := strings.TrimSpace(r.URL.Query().Get("path"))
 	if root == "" {
-		WriteJSON(w, map[string]any{"error": "missing path"})
+		WriteJSON(w, map[string]any{"error": "缺少路径参数"})
+		return
+	}
+	// 禁止下钻虚拟文件系统：这些路径不是真实磁盘，扫出来会得到天文数字。
+	if isVirtualMount(root) {
+		WriteJSON(w, map[string]any{"error": "虚拟文件系统不可下钻", "root": root})
+		return
+	}
+	if !IsLocalTarget(hostID) {
+		remoteDiskChildren(w, hostID, root)
 		return
 	}
 	// Windows 盘符形如 `C:` 会被 Go 解释为"该盘的当前工作目录",
 	// 需补成 `C:\` 才能读到盘根(否则下钻内容其实是程序 CWD)。
 	if len(root) == 2 && root[1] == ':' {
 		root = root + `\`
-	}
-
-	// 禁止下钻虚拟文件系统：这些路径不是真实磁盘，扫出来会得到天文数字。
-	if isVirtualMount(root) {
-		WriteJSON(w, map[string]any{"error": "虚拟文件系统不可下钻", "root": root})
-		return
 	}
 
 	dc := DiskChildrenResp{Root: root}
@@ -64,14 +77,9 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		WriteJSON(w, map[string]any{"error": err.Error(), "root": root})
+		log.Printf("[disk] 本机读取 %s 失败: %v", root, err)
+		WriteJSON(w, map[string]any{"error": "读不到 " + root + "（不存在或没有权限）", "root": root})
 		return
-	}
-
-	// 排除虚拟/特殊文件系统,避免把/proc、/sys等当成真实磁盘占用
-	virtualDirs := map[string]bool{
-		"proc": true, "sys": true, "dev": true, "run": true,
-		"snap": true, "boot": true, "mnt": true, "media": true,
 	}
 
 	// Docker 环境下 du 遍历结果与 statvfs 口径不一致，标记为部分扫描
@@ -103,6 +111,108 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 	}
 	dc.Children = collected
 	WriteJSON(w, dc)
+}
+
+// remoteDiskScript 在目标主机上一条会话里取: 挂载点容量(df) + 顶层占用(du) + 哪些是目录(find)。
+// 路径经 argv 传成 $1, 不参与 shell 解析; 各段以哨兵开头, 由 remoteDiskChildren 解析。
+// 注意 du 的 -s 与 --max-depth 互斥(GNU 会报 "summarizing conflicts"), 这里只留后者:
+// 一次遍历就拿到全部顶层大小, 比逐个子目录各起一个 du 快一个量级。
+const remoteDiskScript = `echo __OPSCORE_DF__
+df -Pk "$1" 2>/dev/null | tail -n +2
+echo __OPSCORE_DU__
+du -k --max-depth=1 "$1" 2>/dev/null
+echo __OPSCORE_DIRS__
+find "$1" -maxdepth 1 -mindepth 1 -type d 2>/dev/null
+echo __OPSCORE_END__`
+
+// remoteDiskChildren 在远程主机上列挂载点的顶层占用, 返回结构与本机版本一致。
+func remoteDiskChildren(w http.ResponseWriter, hostID, root string) {
+	target := displayTarget(hostID)
+	out, err := RunOnTarget(hostID, []string{"sh", "-c", remoteDiskScript, "opscore-disk", root})
+	if err != nil {
+		log.Printf("[disk] 远程读取 %s@%s 失败: %v out=%q", root, target, err, truncateForLog(out))
+		WriteJSON(w, map[string]any{"error": "连不上 " + target + "（检查主机是否在线、凭据是否正确）", "root": root})
+		return
+	}
+
+	dc := DiskChildrenResp{Root: root}
+	sizes := map[string]uint64{}
+	dirs := map[string]bool{}
+	section := ""
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		switch line {
+		case "__OPSCORE_DF__":
+			section = "df"
+			continue
+		case "__OPSCORE_DU__":
+			section = "du"
+			continue
+		case "__OPSCORE_DIRS__":
+			section = "dirs"
+			continue
+		case "__OPSCORE_END__":
+			section = ""
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		switch section {
+		case "df":
+			// Filesystem 1024-blocks Used Available Capacity Mounted-on
+			f := strings.Fields(line)
+			if len(f) >= 3 {
+				dc.Total = parseUint64(f[1]) * 1024
+				dc.Used = parseUint64(f[2]) * 1024
+			}
+		case "du":
+			// "<KB>\t<path>"; 其中一行是挂载点自身, 不算子项
+			i := strings.IndexByte(line, '\t')
+			if i <= 0 {
+				continue
+			}
+			p := line[i+1:]
+			if strings.TrimRight(p, "/") == strings.TrimRight(root, "/") {
+				continue
+			}
+			sizes[p] = parseUint64(line[:i]) * 1024
+		case "dirs":
+			dirs[line] = true
+		}
+	}
+	if dc.Total > 0 {
+		dc.UsedPercent = float64(dc.Used) / float64(dc.Total) * 100
+	}
+	if len(sizes) == 0 {
+		log.Printf("[disk] 远程读取 %s@%s 无结果(目录不存在或无权限)", root, target)
+		WriteJSON(w, map[string]any{"error": "读不到 " + target + " 上的 " + root + "（目录不存在或没有权限）", "root": root})
+		return
+	}
+
+	collected := make([]DirEntry, 0, len(sizes))
+	for p, size := range sizes {
+		name := path.Base(p)
+		if dirs[p] && virtualDirs[name] {
+			continue
+		}
+		collected = append(collected, DirEntry{Name: name, Path: p, Size: size, IsDir: dirs[p]})
+	}
+	sort.Slice(collected, func(i, j int) bool { return collected[i].Size > collected[j].Size })
+	if len(collected) > 60 {
+		collected = collected[:60]
+	}
+	dc.Children = collected
+	WriteJSON(w, dc)
+}
+
+// truncateForLog 截断远端输出, 避免把整屏报错灌进日志。
+func truncateForLog(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 300 {
+		return s[:300] + "…"
+	}
+	return s
 }
 
 // duSize 调用 du -s 获取单个目录的总大小（字节），比 WalkDir 快。
