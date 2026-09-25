@@ -15,6 +15,7 @@ import ExecTerminalModal from './ExecTerminalModal'
 import K8sCertsModal from './K8sCertsModal'
 import LogStreamModal from './LogStreamModal'
 import { useHost } from '../../../components/HostContext'
+import { fmtBytes } from '../../../lib/format'
 import { useTheme } from '../../../theme'
 import jsYaml from 'js-yaml'
 
@@ -1160,6 +1161,22 @@ function fade(hex: string, a: number): string {
 
 const WIN_LABELS: Record<string, string> = { '15m': '15分钟', '1h': '1小时', '6h': '6小时' }
 
+const PLANE_LABELS: Record<string, string> = { cilium: 'Cilium / BPF', ipvs: 'IPVS', iptables: 'iptables', unknown: '未知' }
+
+function planeText(p: any): string {
+  if (p.kind === 'cilium') {
+    const cap = p.bpfLbMax ? ` / map 容量 ${p.bpfLbMax}` : ''
+    const maps = p.ciliumMaps ? ` · ${p.ciliumMaps} 个 lb map` : ''
+    return `${p.ciliumLbEntries || 0} 条 lb 条目${cap}${maps}`
+  }
+  if (p.kind === 'ipvs') {
+    const tab = p.ipvsTabBits ? ` · 连接表 2^${p.ipvsTabBits}` : ''
+    return `real-server ${p.realServers} · 活跃连接 ${p.ipvsConns}${tab} · iptables ${p.iptablesRules} 行`
+  }
+  if (p.kind === 'iptables') return `${p.iptablesRules} 行规则`
+  return p.note || '未识别'
+}
+
 function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterName: string }) {
   useTheme() // 仅订阅主题状态: 切换主题时重渲染, 图表重新读取 CSS 变量配色
   const [ov, setOv] = useState<Record<string, any> | null>(null)
@@ -1178,6 +1195,7 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
   }, [])
 
   const [metricsDegraded, setMetricsDegraded] = useState<{ degraded: boolean; reason: string } | null>(null)
+  const [etcd, setEtcd] = useState<any | null>(null)
   const loadAll = () => {
     getJSON<Record<string, any>>(`/api/plugins/containers/k8s/overview?cluster=${clusterID}&_=${Date.now()}`)
       .then(setOv).catch((e) => setErr(String(e)))
@@ -1188,6 +1206,8 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
       .then((d) => d.ok && setTopPods(d.pods || [])).catch(() => {})
     getJSON<{ ok: boolean; points: any[] }>(`/api/plugins/containers/k8s/metrics/history?cluster=${clusterID}&window=${win}&_=${Date.now()}`)
       .then((d) => d.ok && setHist(d.points || [])).catch(() => {})
+    getJSON<any>(`/api/plugins/containers/k8s/etcd?cluster=${clusterID}&_=${Date.now()}`)
+      .then((d) => setEtcd(d && d.ok ? d : null)).catch(() => setEtcd(null))
   }
   useEffect(loadAll, [clusterID, win])
   // 30s 自动刷新实时区
@@ -1322,12 +1342,22 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
             </div>
             <EChart option={trendOption} height={160} />
           </Card>
-          <Card title={`节点实时用量 (${nodeMetrics.length})`} subtitle="CPU / 内存 · 磁盘可用率(驱逐线按节点实际配置)">
-            {nodeMetrics.length === 0 ? <div className="loading">读取中…</div> : nodeMetrics.map((n) => (
-              <div key={n.name} className="k8s-node-meter">
+          <Card title={`节点实时用量 (${nodeMetrics.length})`} subtitle="CPU / 内存 · 磁盘可用率(驱逐线按节点实际配置) · Pod 数与临时存储只在越线时显示">
+            {nodeMetrics.length === 0 ? <div className="loading">读取中…</div> : nodeMetrics.map((n) => {
+              // 这两个是节点级的"隐形上限": 平时个位数, 不占版面; 越过 60% 才长出一条 + 摘要里挂 ⚠
+              // (与磁盘那条 ⚠ 驱逐压力 同一写法)。数值想看随时悬停, 见下方 title。
+              const podPct = n.podsAllocatable > 0 ? (n.podsUsed / n.podsAllocatable) * 100 : 0
+              const ephPct = n.ephAllocBytes > 0 ? (n.ephUsedBytes / n.ephAllocBytes) * 100 : 0
+              const podWarn = podPct > 60
+              const ephWarn = ephPct > 60
+              const ephUsedG = n.ephUsedBytes / 1024 / 1024 / 1024
+              const ephAllocG = n.ephAllocBytes / 1024 / 1024 / 1024
+              return (
+              <div key={n.name} className="k8s-node-meter"
+                title={n.podsAllocatable > 0 ? `已调度 Pod ${n.podsUsed}/${n.podsAllocatable} (${podPct.toFixed(1)}%) · 临时存储 ${ephUsedG.toFixed(1)}G/${ephAllocG.toFixed(1)}G (${ephPct.toFixed(1)}%)` : undefined}>
                 <div className="k8s-meter-head">
                   <b className="mono">{n.name}</b>
-                  <span className="dim mono">{n.cpuMilli}m ({n.cpuPct.toFixed(0)}%) · {Math.round(n.memMiB)}MiB ({n.memPct.toFixed(0)}%){n.diskOK ? ` · 磁盘可用 ${n.diskAvailPct.toFixed(0)}%${n.diskPressure ? ' ⚠ 驱逐压力' : ''}` : ''}</span>
+                  <span className="dim mono">{n.cpuMilli}m ({n.cpuPct.toFixed(0)}%) · {Math.round(n.memMiB)}MiB ({n.memPct.toFixed(0)}%){n.diskOK ? ` · 磁盘可用 ${n.diskAvailPct.toFixed(0)}%${n.diskPressure ? ' ⚠ 驱逐压力' : ''}` : ''}{podWarn ? ` · ⚠ Pod ${n.podsUsed}/${n.podsAllocatable}` : ''}{ephWarn ? ` · ⚠ 临时存储 ${ephUsedG.toFixed(1)}/${ephAllocG.toFixed(1)}G` : ''}</span>
                 </div>
                 {[
                   { v: n.cpuPct, mem: false },
@@ -1346,8 +1376,19 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
                     <span style={{ position: 'absolute', left: `${n.diskEvictPct}%`, top: 0, bottom: 0, width: 1, background: 'color-mix(in srgb, var(--danger) 90%, transparent)' }} />
                   </div>
                 )}
+                {podWarn && (
+                  <div className="usage-bar" title={`已调度 Pod ${n.podsUsed} / 节点上限 ${n.podsAllocatable}(撞顶后新 Pod 调度不上去)`}>
+                    <span className={`usage-fill ${podPct > 80 ? 'bg-danger' : 'bg-warn'}`} style={{ width: `${Math.min(podPct, 100)}%` }} />
+                  </div>
+                )}
+                {ephWarn && (
+                  <div className="usage-bar" title={`临时存储已用 ${ephUsedG.toFixed(1)}G / 上限 ${ephAllocG.toFixed(1)}G(容器可写层 + 日志 + emptyDir 都算它, 越线触发磁盘驱逐)`}>
+                    <span className={`usage-fill ${ephPct > 80 ? 'bg-danger' : 'bg-warn'}`} style={{ width: `${Math.min(ephPct, 100)}%` }} />
+                  </div>
+                )}
               </div>
-            ))}
+              )
+            })}
           </Card>
         </div>
         <Card title="Pod 用量" subtitle="按 CPU 排序 · 点击行打开 Pod 详情" className="k8s-ov-pods-card">
@@ -1371,6 +1412,55 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
           </div>
         </Card>
       </div>
+
+      {etcd && (
+        <Card title="etcd 与数据面" subtitle="集群级隐形容量 · 只读 · 切换集群/刷新时采集">
+          {!etcd.members?.length ? (
+            <div className="banner banner-warn small">{etcd.reason || '没采到 etcd 数据（控制面未在主机清单登记？）'}</div>
+          ) : (
+            <table className="mini-table">
+              <thead><tr><th>节点</th><th>后端 DB / 上限</th><th>碎片</th><th>数据目录</th><th>健康</th></tr></thead>
+              <tbody>
+                {etcd.members.map((m: any) => {
+                  // 撞 quota = etcd 停止写入 = 整个集群变只读, 所以阈值比磁盘更早
+                  const pct = m.quotaBytes > 0 ? (m.dbBytes / m.quotaBytes) * 100 : 0
+                  const frag = m.fragPct || 0
+                  return (
+                    <tr key={m.node} title={m.note || undefined}>
+                      <td><span className="mono">{m.node}</span>{m.version ? <span className="dim small"> v{m.version}</span> : null}</td>
+                      <td>
+                        <div className="usage-cell">
+                          <span className={`badge ${pct > 80 ? 'badge-danger' : pct > 60 ? 'badge-warn' : 'badge-ok'}`}>{pct.toFixed(2)}%</span>
+                          <div className="usage-bar usage-bar-cap"><span className={`usage-fill ${pct > 80 ? 'bg-danger' : pct > 60 ? 'bg-warn' : 'bg-ok'}`} style={{ width: `${Math.min(100, pct)}%` }} /></div>
+                          <span className="dim small">{fmtBytes(m.dbBytes)} / {fmtBytes(m.quotaBytes)}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${frag > 70 ? 'badge-danger' : frag > 50 ? 'badge-warn' : 'badge-ok'}`}>{frag.toFixed(0)}%</span>
+                        {frag > 50 && <span className="dim small"> 该 compact + defrag 了</span>}
+                      </td>
+                      <td className="mono dim small">{m.dataDirBytes ? fmtBytes(m.dataDirBytes) : '—'}</td>
+                      <td className="dim small">
+                        {m.hasLeader ? 'leader 正常' : <span className="badge badge-danger">无 leader</span>} · 变更 {m.leaderChanges} 次
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+          {etcd.dataplane?.nodes?.length > 0 && (
+            <div className="dim small" style={{ marginTop: 4, lineHeight: '16px' }}>
+              数据面 <b>{PLANE_LABELS[etcd.dataplane.kind] || etcd.dataplane.kind}</b>
+              {etcd.dataplane.nodes.map((p: any) => (
+                <span key={p.node} className="mono" title={p.note || undefined}>
+                  {' · '}{p.node} {planeText(p)}
+                </span>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   )
 }

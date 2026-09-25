@@ -42,6 +42,19 @@ type NodeMetric struct {
 	DiskCapGiB   float64 `json:"diskCapGiB"`
 	DiskEvictPct float64 `json:"diskEvictPct"` // nodefs.available 驱逐线(%, 默认 10 兜底)
 	DiskPressure bool    `json:"diskPressure"` // Node condition DiskPressure=True
+	// 节点级的两个"隐形上限": 撞顶时不是变慢, 而是新 Pod 调度不上去 / 节点触发磁盘驱逐
+	PodsAllocatable int64 `json:"podsAllocatable"` // status.allocatable.pods(默认 110)
+	PodsUsed        int64 `json:"podsUsed"`        // 已调度且未终结的 Pod 数(与调度器口径一致)
+	EphAllocBytes   int64 `json:"ephAllocBytes"`   // status.allocatable.ephemeral-storage
+	EphUsedBytes    int64 `json:"ephUsedBytes"`    // nodefs 已用(= 临时存储的物理占用上限来源)
+}
+
+// nodeAlloc 一个节点的各项上限(都是 status.allocatable 里现成的)
+type nodeAlloc struct {
+	cpuMilli int64
+	memMiB   int64
+	pods     int64
+	ephBytes int64
 }
 
 type PodMetric struct {
@@ -88,16 +101,21 @@ func (m *Manager) GetNodeMetrics(ctx context.Context, clusterID string) ([]NodeM
 		return nil, fmt.Errorf("node metrics: %w", err)
 	}
 	nodes, _ := dyn.Resource(gvrNodes).List(ctx, metav1.ListOptions{})
-	alloc := map[string][2]int64{} // cpu milli, mem MiB
-	hosts := map[string]string{}   // node name → InternalIP (kubelet summary)
-	pressure := map[string]bool{}  // node name → DiskPressure condition
+	alloc := map[string]nodeAlloc{} // 各项上限
+	hosts := map[string]string{}    // node name → InternalIP (kubelet summary)
+	pressure := map[string]bool{}   // node name → DiskPressure condition
 	if nodes != nil {
 		for i := range nodes.Items {
 			var n corev1.Node
 			if runtime.DefaultUnstructuredConverter.FromUnstructured(nodes.Items[i].Object, &n) == nil {
-				cpu := n.Status.Allocatable.Cpu().MilliValue()
-				mem := n.Status.Allocatable.Memory().Value() / (1024 * 1024) // MiB
-				alloc[n.Name] = [2]int64{cpu, mem}
+				ephQ := n.Status.Allocatable[corev1.ResourceEphemeralStorage] // map 下标是副本, 不能直接调指针方法
+				a := nodeAlloc{
+					cpuMilli: n.Status.Allocatable.Cpu().MilliValue(),
+					memMiB:   n.Status.Allocatable.Memory().Value() / (1024 * 1024), // MiB
+					pods:     n.Status.Allocatable.Pods().Value(),
+					ephBytes: ephQ.Value(),
+				}
+				alloc[n.Name] = a
 				for _, a := range n.Status.Addresses {
 					if a.Type == corev1.NodeInternalIP {
 						hosts[n.Name] = a.Address
@@ -111,6 +129,26 @@ func (m *Manager) GetNodeMetrics(ctx context.Context, clusterID string) ([]NodeM
 			}
 		}
 	}
+	// 已调度 Pod 数: 与调度器同口径 —— 只数"已绑定到节点且未终结"的 Pod
+	// (Succeeded/Failed 的残留 Pod 不占调度配额, 数进去会虚高)
+	pods, _ := dyn.Resource(gvrPods).List(ctx, metav1.ListOptions{})
+	podCount := map[string]int64{}
+	if pods != nil {
+		for i := range pods.Items {
+			obj := pods.Items[i].Object
+			spec, _ := obj["spec"].(map[string]any)
+			nodeName, _ := spec["nodeName"].(string)
+			if nodeName == "" {
+				continue
+			}
+			if st, ok := obj["status"].(map[string]any); ok {
+				if ph, _ := st["phase"].(string); ph == "Succeeded" || ph == "Failed" {
+					continue
+				}
+			}
+			podCount[nodeName]++
+		}
+	}
 	disk := m.kubeletNodeFS(ctx, clusterID, hosts)
 	out := make([]NodeMetric, 0, len(list.Items))
 	for i := range list.Items {
@@ -122,13 +160,16 @@ func (m *Manager) GetNodeMetrics(ctx context.Context, clusterID string) ([]NodeM
 			MemMiB:   float64(parseMemBytes(usage["memory"])) / (1024 * 1024),
 		}
 		if a, ok := alloc[it.GetName()]; ok {
-			if a[0] > 0 {
-				nm.CPUPct = float64(nm.CPUMilli) / float64(a[0]) * 100
+			if a.cpuMilli > 0 {
+				nm.CPUPct = float64(nm.CPUMilli) / float64(a.cpuMilli) * 100
 			}
-			if a[1] > 0 {
-				nm.MemPct = nm.MemMiB / float64(a[1]) * 100
+			if a.memMiB > 0 {
+				nm.MemPct = nm.MemMiB / float64(a.memMiB) * 100
 			}
+			nm.PodsAllocatable = a.pods
+			nm.EphAllocBytes = a.ephBytes
 		}
+		nm.PodsUsed = podCount[it.GetName()]
 		if d, ok := disk[it.GetName()]; ok {
 			nm.DiskOK = true
 			nm.DiskAvailPct = d.availPct
@@ -136,6 +177,8 @@ func (m *Manager) GetNodeMetrics(ctx context.Context, clusterID string) ([]NodeM
 			nm.DiskCapGiB = d.capGiB
 			nm.DiskEvictPct = d.evictPct
 			nm.DiskPressure = pressure[it.GetName()]
+			// 临时存储的物理占用就是 nodefs 已用(容器可写层 + 日志 + emptyDir 都落在它上面)
+			nm.EphUsedBytes = int64(d.usedGiB * 1024 * 1024 * 1024)
 		}
 		out = append(out, nm)
 	}
@@ -334,7 +377,10 @@ func (m *Manager) SummaryMetrics(ctx context.Context, clusterID string) ([]NodeM
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
-					firstErr = fmt.Errorf("%s: HTTP %d: %w", nc.name, res.StatusCode, err)
+					// client-go 的 Result.StatusCode 是"传指针写回"式取值: 拿不到响应时保持 0
+					code := 0
+					_ = res.StatusCode(&code)
+					firstErr = fmt.Errorf("%s: HTTP %d: %w", nc.name, code, err)
 				}
 				mu.Unlock()
 				return

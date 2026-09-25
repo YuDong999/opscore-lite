@@ -209,7 +209,6 @@ func main() {
 	mux.HandleFunc("/api/manifest", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		all := reg.Active()
-		fmt.Printf("DEBUG: All modules: %v\n", all)
 		out := make([]registry.Manifest, 0, len(all))
 		for _, m := range all {
 			if m.Group == "plugin" && m.ID != "plugins" && !module.IsPluginActive(m.ID) {
@@ -217,7 +216,6 @@ func main() {
 			}
 			out = append(out, m)
 		}
-		fmt.Printf("DEBUG: Filtered modules: %v\n", out)
 		json.NewEncoder(w).Encode(out)
 	})
 
@@ -593,6 +591,7 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/rollout/history", Handler: handlers.K8sRolloutHistoryHandler},
 			{Path: "/api/plugins/containers/k8s/yaml/save", Handler: handlers.K8sYamlSaveHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/nodes", Handler: handlers.K8sNodeMetricsHandler},
+			{Path: "/api/plugins/containers/k8s/etcd", Handler: handlers.K8sEtcdHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/pods", Handler: handlers.K8sPodMetricsHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/history", Handler: handlers.K8sMetricsHistoryHandler},
 			{Path: "/api/plugins/containers/k8s/resources", Handler: handlers.K8sResourcesHandler},
