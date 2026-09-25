@@ -75,6 +75,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/apply-delete", Handler: h.handleApplyDelete},
 			{Path: "/api/dbmanager/apply-ddl", Handler: h.handleApplyDDL},
 			{Path: "/api/dbmanager/kill-session", Handler: h.handleKillSession},
+			{Path: "/api/dbmanager/apply-batch", Handler: h.handleApplyBatch},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
