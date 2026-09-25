@@ -39,7 +39,7 @@ type RuleMatch struct {
 type TimeRule struct {
 	Regex    string   `json:"regex"`             // 提取时间文本, 要求第 1 个捕获组为时间串
 	Formats  []string `json:"formats"`           // Go 布局列表; 空=内置通用列表(含逗号小数秒兜底)
-	Timezone string   `json:"timezone,omitempty"` // 空=按 UTC(与历史一致); 如 "Asia/Shanghai"
+	Timezone string   `json:"timezone,omitempty"` // 空=按**本机时区**解析(日志里的裸时间通常就是本机时间); 如 "Asia/Shanghai" 可显式指定
 }
 
 type LevelRule struct {
@@ -342,6 +342,7 @@ func parseOneRule(rule compiledRule, line, filePath string, offset int64, defaul
 		if m := rule.timeRe.FindStringSubmatch(line); m != nil {
 			if t, err := parseLogTimeWith(m[1], rule.timeFormats, rule.src.Time.Timezone); err == nil {
 				e.Ts = t
+				e.tsFromLine = true
 			}
 		}
 	}
@@ -381,7 +382,10 @@ func parseOneRule(rule compiledRule, line, filePath string, offset int64, defaul
 
 // parseLogTimeWith 按指定布局与时区解析; 布局空用内置列表(含逗号小数秒兜底)
 func parseLogTimeWith(s string, formats []string, tz string) (int64, error) {
-	loc := time.UTC
+	// 裸时间按本机时区解析 —— 日志文件里的时间戳几乎都是写日志那台机器的本地时间。
+	// 早先按 UTC 解析, 在本机(UTC+8)会让每条记录"落到未来 8 小时", 而检索的时间窗右端恒为 now
+	// → 刚采来的日志在界面上根本查不到(2026-09-24 实测)。要覆盖成别的时区, 在规则里写 timezone 字段。
+	loc := time.Local
 	if tz != "" {
 		if l, err := time.LoadLocation(tz); err == nil {
 			loc = l
@@ -391,9 +395,6 @@ func parseLogTimeWith(s string, formats []string, tz string) (int64, error) {
 		val := s
 		if len(v) > 0 {
 			val = v[0]
-		}
-		if loc == time.UTC {
-			return time.Parse(f, val)
 		}
 		return time.ParseInLocation(f, val, loc)
 	}

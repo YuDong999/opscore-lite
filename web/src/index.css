@@ -1010,6 +1010,14 @@ body {
   filter: brightness(1.08);
 }
 
+/* 无底/无边的"幽灵"变体: 给"取消/重置/上一页"这类次要动作(此前各模块自建 bare/ghost 类) */
+.btn-glass-soft-bare {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.btn-glass-soft-bare:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+
 .btn-glass-soft-danger {
   color: #fff;
   background: linear-gradient(135deg, var(--danger), color-mix(in srgb, var(--danger) 78%, #000));

@@ -470,36 +470,6 @@
   font-size: 0.8125rem;
 }
 
-/* 通用按钮: 参照 Kibana 扁平按钮 */
-.kib-btn {
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
-}
-.kib-btn:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.kib-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.kib-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.kib-btn-primary {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.kib-btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }
-.kib-btn-bare {
-  background: transparent;
-  border-color: transparent;
-  color: var(--text-dim);
-}
-.kib-btn-bare:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
-.kib-btn-bare-danger:hover { color: var(--lvl-error); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-
 .kib-live {
   display: inline-flex;
   align-items: center;
@@ -717,7 +687,7 @@
   min-width: 12.5rem;
   max-width: 21.875rem;
 }
-.kib-search-bar .kib-btn {
+.kib-search-bar .btn-glass-soft {
   padding: 0.375rem 0.625rem;
   font-size: 0.75rem;
 }
@@ -814,7 +784,7 @@
 .kib-topbar .kib-dataview select,
 .kib-topbar .kib-time,
 .kib-topbar .kib-search input,
-.kib-topbar .kib-btn,
+.kib-topbar .btn-glass-soft,
 .kib-topbar .kib-live {
   height: 28px;
   min-height: 28px;
@@ -836,7 +806,6 @@
 .kib-page select,
 .kib-page .btn-glass,
 .kib-page .btn-glass-soft,
-.kib-page .kib-btn,
 .kib-page .kib-live {
   height: 28px;
   min-height: 28px;

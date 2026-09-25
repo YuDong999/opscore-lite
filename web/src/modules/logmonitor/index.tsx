@@ -1529,7 +1529,7 @@ function clearFilters() {
                      {live ? 'LIVE' : 'Live'}
                    </button>
 
-                   <button className="kib-btn" onClick={runSearch} disabled={loading}>
+                   <button className="btn-glass-soft" onClick={runSearch} disabled={loading}>
                      {loading ? '查询中…' : '刷新'}
                    </button>
 
@@ -1563,8 +1563,8 @@ function clearFilters() {
                         </div>
                       )}
                    </div>
-                   <button className="kib-btn kib-btn-primary" onClick={() => applyKql()}>查询</button>
-                   <button className="kib-btn kib-btn-bare" onClick={clearFilters} title="清空所有过滤">重置</button>
+                   <button className="btn-glass-soft btn-glass-soft-accent" onClick={() => applyKql()}>查询</button>
+                   <button className="btn-glass-soft btn-glass-soft-bare" onClick={clearFilters} title="清空所有过滤">重置</button>
                  </div>
 
                  {/* 已应用过滤 chips */}
@@ -1645,9 +1645,9 @@ function clearFilters() {
                       </div>
                       {result.total > pageSize && (
                         <div className="kib-pager">
-                          <button className="kib-btn kib-btn-bare" disabled={page <= 1} onClick={() => setPage(page - 1)}>← 上一页</button>
+                          <button className="btn-glass-soft btn-glass-soft-bare" disabled={page <= 1} onClick={() => setPage(page - 1)}>← 上一页</button>
                           <span>第 {page} / {Math.ceil(result.total / pageSize)} 页 · 共 {result.total.toLocaleString()} 条</span>
-                          <button className="kib-btn kib-btn-bare" disabled={page * pageSize >= result.total} onClick={() => setPage(page + 1)}>下一页 →</button>
+                          <button className="btn-glass-soft btn-glass-soft-bare" disabled={page * pageSize >= result.total} onClick={() => setPage(page + 1)}>下一页 →</button>
                         </div>
                       )}
                     </>
@@ -1663,7 +1663,7 @@ function clearFilters() {
                       <span className="kib-drawer-title">日志 #{detail.id}</span>
                       <span className="kib-lvl" style={{ color: levelColor(detail.level), background: levelColor(detail.level) + '22' }}>{detail.level || '-'}</span>
                       <span style={{ flex: 1 }} />
-                      <button className="kib-btn kib-btn-bare" onClick={() => setDetail(null)} title="关闭">
+                      <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setDetail(null)} title="关闭">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
                       </button>
                     </div>
@@ -2421,8 +2421,8 @@ function clearFilters() {
               </div>
             </div>
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setRuleDraft(null)}>取消</button>
-              <button className="kib-btn kib-btn-primary" onClick={saveRule}>保存</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setRuleDraft(null)}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveRule}>保存</button>
             </div>
           </div>
         </div>
@@ -2468,8 +2468,8 @@ function clearFilters() {
               </div>
             </div>
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setChanDraft(null)}>取消</button>
-              <button className="kib-btn kib-btn-primary" onClick={saveChan}>保存</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setChanDraft(null)}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveChan}>保存</button>
             </div>
           </div>
         </div>
@@ -2505,8 +2505,8 @@ function clearFilters() {
               )}
             </div>
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setScanOpen(false)} disabled={scanBusy}>取消</button>
-              <button className="kib-btn kib-btn-primary" onClick={doScan} disabled={scanBusy}>{scanBusy ? '扫描中…' : '开始扫描'}</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setScanOpen(false)} disabled={scanBusy}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={doScan} disabled={scanBusy}>{scanBusy ? '扫描中…' : '开始扫描'}</button>
             </div>
           </div>
         </div>
@@ -2542,8 +2542,8 @@ function clearFilters() {
               </div>
             </div>
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setSrcOpen(false)}>取消</button>
-              <button className="kib-btn kib-btn-primary" onClick={addSource}>保存</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setSrcOpen(false)}>取消</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={addSource}>保存</button>
             </div>
           </div>
         </div>
@@ -2633,10 +2633,10 @@ function clearFilters() {
             </div>
 
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setParserOpen(false)}>关闭</button>
-              <button className="kib-btn kib-btn-bare" onClick={fillDefaultRules}>填入内置默认</button>
-              <button className="kib-btn" onClick={testParser} disabled={parserBusy}>测试解析</button>
-              <button className="kib-btn kib-btn-primary" onClick={saveParsers} disabled={parserBusy}>保存并生效</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={() => setParserOpen(false)}>关闭</button>
+              <button className="btn-glass-soft btn-glass-soft-bare" onClick={fillDefaultRules}>填入内置默认</button>
+              <button className="btn-glass-soft" onClick={testParser} disabled={parserBusy}>测试解析</button>
+              <button className="btn-glass-soft btn-glass-soft-accent" onClick={saveParsers} disabled={parserBusy}>保存并生效</button>
             </div>
           </div>
         </div>

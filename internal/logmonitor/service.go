@@ -37,6 +37,29 @@ type Service struct {
 	inFlight atomic.Int64
 	// 采集失败日志限流(同一条故障不刷屏, 见 pollerrs.go)
 	pollErrs pollErrLimiter
+	// 每个文件"上一条带时间戳的行"的时间: 增量采集时, 无时间戳的续行/横幅继承它,
+	// 免得退化成入库时刻(时间语义错)。scan 有自己的确定性回填(首块回填+继承), 不用这个。
+	lastTsMu  sync.Mutex
+	lastTsFor map[string]int64
+}
+
+// noteTs 记住"该文件上一条带时间戳的时间"
+func (s *Service) noteTs(filePath string, ts int64) {
+	if filePath == "" {
+		return
+	}
+	s.lastTsMu.Lock()
+	if s.lastTsFor == nil {
+		s.lastTsFor = map[string]int64{}
+	}
+	s.lastTsFor[filePath] = ts
+	s.lastTsMu.Unlock()
+}
+
+func (s *Service) lastKnownTs(filePath string) int64 {
+	s.lastTsMu.Lock()
+	defer s.lastTsMu.Unlock()
+	return s.lastTsFor[filePath]
 }
 
 func NewService(store *Store, archiver *Archiver) *Service {
@@ -214,6 +237,12 @@ func (s *Service) pollFile(src *LogSource) {
 			break // 末尾半行: 游标停在最后一个完整行尾
 		}
 		if e := s.ParseLine(strings.TrimRight(line, "\r\n"), src.Path, off, src.Service, src.Type, src.IndexID); e != nil {
+			// 无时间戳的续行/横幅继承上一条的时间(增量跨批次靠 lastTsFor 记住)
+			if e.tsFromLine {
+				s.noteTs(src.Path, e.Ts)
+			} else if known := s.lastKnownTs(src.Path); known > 0 {
+				e.Ts = known
+			}
 			entries = append(entries, e)
 		}
 		off += int64(len(line))
@@ -494,6 +523,17 @@ func (s *Service) ScanFile(path, defaultService, defaultSource string, tailOnly 
 	var offset int64 = 0
 	var count int
 	lineNum := 0
+	// 无时间戳的行(启动横幅/多行续行)给**确定性** ts: 继承上一条; 文件开头那一段(还没有时间戳可继承)
+	// 先攒着, 等第一条带时间戳的行出现再回填 —— 这样重扫同样的内容得到同样的 ts, 幂等索引才挡得住。
+	// (此前用"入库时刻", 同一份文件每扫一次就多出一批重复行: 实测 20 行/次, 正是历史上 5 份的来源之一。)
+	var inheritTs int64
+	var headPending []*LogEntry
+	flushHead := func(ts int64) {
+		for _, he := range headPending {
+			he.Ts = ts
+		}
+		headPending = nil
+	}
 
 	for {
 		if offset >= total {
@@ -507,6 +547,16 @@ func (s *Service) ScanFile(path, defaultService, defaultSource string, tailOnly 
 		var e *LogEntry
 		if offset >= startOffset {
 			e = s.ParseLine(strings.TrimRight(line, "\r\n"), path, offset, defaultService, defaultSource, indexID)
+			if e.tsFromLine {
+				if len(headPending) > 0 {
+					flushHead(e.Ts)
+				}
+				inheritTs = e.Ts
+			} else if inheritTs > 0 {
+				e.Ts = inheritTs
+			} else {
+				headPending = append(headPending, e) // 文件还没出现任何时间戳
+			}
 			entries = append(entries, e)
 		}
 		offset += int64(len(line))

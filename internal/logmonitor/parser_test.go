@@ -16,7 +16,8 @@ func TestDefaultParserRulesParseGoLogTimestamp(t *testing.T) {
 	line := `2026/09/24 12:27:06 [logmonitor] poll 容器 dbx 失败: exec: "docker": executable file not found in %PATH%`
 	e := parseOneRule(compiled[0], line, "data/opscore.log", 12345, "opscore", "file", "")
 
-	want := time.Date(2026, 9, 24, 12, 27, 6, 0, time.UTC).UnixMilli()
+	// 裸时间按本机时区解析(日志时间 = 写日志那台机器的本地时间), 不是 UTC
+	want := time.Date(2026, 9, 24, 12, 27, 6, 0, time.Local).UnixMilli()
 	if e.Ts != want {
 		t.Fatalf("行内时间没被解析: got %d(%s), want %d(%s)", e.Ts, time.UnixMilli(e.Ts).UTC(), want, time.UnixMilli(want).UTC())
 	}

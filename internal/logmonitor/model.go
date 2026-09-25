@@ -15,6 +15,10 @@ type LogEntry struct {
 	Summary  string `json:"summary"`  // 前 200 字符摘要
 	Raw      string `json:"raw,omitempty"` // 实际内容（按需填充）
 	IndexID  string `json:"indexId,omitempty"` // 归属索引
+
+	// tsFromLine 表示 Ts 是从**行文里解析出来的**。为 false 时调用方要用"确定性回退"
+	// (继承上一条 / 首块回填), 不能用入库时刻 —— 否则每重扫一次这些行的时间都变, 幂等索引挡不住。
+	tsFromLine bool
 }
 
 // LogQuery 查询条件
