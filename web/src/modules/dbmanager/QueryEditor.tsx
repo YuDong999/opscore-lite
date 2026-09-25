@@ -109,6 +109,16 @@ export default function QueryEditor({
     }
   }
 
+  // 非 200 的响应体(拦截/报错)没有 columns/rows —— 直接丢给网格会让它去 join(null) 整模块崩。
+  // 统一裹成"有形状的错误结果"(保留 code/reason 供拦截链判断)。
+  const asErrorResult = (data: any, status: number): QueryResult & InterceptionBody => ({
+    ...emptyResult(),
+    error: data?.error || data?.reason || `执行失败 (HTTP ${status})`,
+    code: data?.code,
+    risk: data?.risk,
+    reason: data?.reason,
+  })
+
   const handleResponse = async (status: number, data: QueryResult & InterceptionBody, confirm: boolean) => {
     if (status === 200) {
       // 只允许简单 SELECT 进入编辑模式(无 JOIN/GROUP/UNION 等)
@@ -128,16 +138,16 @@ export default function QueryEditor({
         if (confirm) {
           run(true)
         } else {
-          onResult?.(data)
+          onResult?.(asErrorResult(data, status))
         }
       } else if (data.code === 'write_locked') {
         onWriteLocked?.([data.error, data.reason].filter(Boolean).join(' —— ') || '写操作被拦截: 连接默认只读')
-        onResult?.(data)
+        onResult?.(asErrorResult(data, status))
       } else {
-        onResult?.(data)
+        onResult?.(asErrorResult(data, status))
       }
     } else {
-      onResult?.(data)
+      onResult?.(asErrorResult(data, status))
     }
   }
 

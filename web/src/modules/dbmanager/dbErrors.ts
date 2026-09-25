@@ -17,6 +17,20 @@ export function humanizeDbError(raw: string): string {
     return `外键约束：${e?.[1] || '该字段'} 的值必须在 ${e?.[2] || '父表'}.${e?.[3] || '主键'} 里已经存在`
   }
   if (code(1451)) return '外键约束：这行还被其它表引用，不能修改/删除'
+  // 编辑 SQL 时最常见的三类: 语法错 / 列名错 / 表名错
+  if (code(1064)) {
+    const near = /near '([^']{1,40})' at line (\d+)/.exec(s)
+    return near ? `SQL 语法错误：'${near[1]}' 附近有问题（第 ${near[2]} 行）` : 'SQL 语法错误：请检查拼写/括号/关键字'
+  }
+  if (code(1054)) {
+    const e = /Unknown column '([^']+)' in '([^']+)'/.exec(s)
+    return `字段不存在：${e?.[1] || ''}${e?.[2] ? `（${e[2]}）` : ''}`
+  }
+  if (code(1146)) {
+    const e = /Table '([^']+)' doesn't exist/.exec(s)
+    return `表不存在：${e?.[1] || ''}`
+  }
+  if (code(1046)) return '没有选中数据库：表名请带库名前缀（如 employees.users），或从左侧库节点新建查询'
   if (code(1364)) {
     const e = /Field '([^']+)' doesn't have a default value/.exec(s)
     return `字段 ${e?.[1] || ''} 没有默认值，必须显式填（该列 NOT NULL 且无默认）`

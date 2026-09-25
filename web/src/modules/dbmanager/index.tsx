@@ -8,7 +8,7 @@ import { useToast } from '../../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
   listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
-  listTables, fetchTableDDL, describeTable, applyCellEdit,
+  listTables, fetchTableDDL, describeTable, applyCellEdit, applyBatch,
 } from './api'
 import ConnectionPanel from './ConnectionPanel'
 import ConnectionTree from './ConnectionTree'
@@ -20,6 +20,8 @@ import DataPanel, { type TableFilter } from './DataPanel'
 import OverviewPanel from './OverviewPanel'
 import QuickOpen from './QuickOpen'
 import { useConfirm } from '../../lib/hooks/useConfirm'
+import { humanizeDbError } from './dbErrors'
+import { precheckChanges } from './batchWrite'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import SyncPanel from './SyncPanel'
 import ErGraphPanel from './ErGraphPanel'
@@ -327,6 +329,85 @@ ${ddl};
 
   // ── 查询页行内编辑: 解析目标表 → describe 取主键 → 预览确认 → 执行 → 原位更新结果 ──
   // 仅支持单表 SELECT(QueryEditor 的 isEditable 判定已先行过滤); 无主键表后端同样拒绝。
+  // 从查询结果里解析"改哪张表"(与下面单条编辑同一套规则: 只认单表 SELECT + 库前缀/默认库)
+  const resolveQueryTarget = useCallback((qs: { lastSQL?: string }, c: ConnectionInfo, tabDb?: string) => {
+    const m = /FROM\s+([`"\[\]\w.]+)/i.exec(qs.lastSQL || '')
+    if (!m) return { error: '无法定位目标表: 行内编辑仅支持单表 SELECT' }
+    const parts = m[1].replace(/[`"\[\]]/g, '').split('.').filter(Boolean)
+    const database = parts.length >= 2 ? parts[0] : (tabDb || c.config?.database || '')
+    const table = parts.length >= 2 ? parts[parts.length - 1] : parts[0]
+    if (!database || !table) return { error: '无法定位目标库表(表名未带库前缀且连接未指定默认库)' }
+    return { database, table }
+  }, [])
+
+  // 查询结果页也走"待提交变更"(与表数据页一致): 整批一个事务, 预览→确认→提交
+  // 注意: 故意**不**用 useCallback —— 它要读 queryState(结果集), 记忆化会捕获到"查询之前"的空快照,
+  // 表现为一点保存就报"结果集未就绪"(实测踩过)。与旁边的单条编辑同一写法。
+  const handleQueryBatch = async (
+    changes: import('../../components/common/DataGrid').GridChange[],
+    c: ConnectionInfo, tabDb?: string, tabKey?: string,
+  ): Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number; badCells?: Array<{ row: number; col: number }> }> => {
+    const qs = getQS(tabKey || activeTab)
+    if (!qs.result?.columns || !qs.result.rows) return { ok: false, error: '结果集未就绪' }
+    const t = resolveQueryTarget(qs, c, tabDb)
+    if (t.error) return { ok: false, error: t.error }
+    const { database, table } = t as { database: string; table: string }
+    try {
+      const d = await describeTable(c.id, database, table)
+      const meta = d.columns || []
+      const pkCols = meta.filter(x => x.key === 'PRI').map(x => x.name)
+      if (pkCols.length === 0 && changes.some(ch => ch.kind !== 'insert')) {
+        return { ok: false, error: `表 ${database}.${table} 无主键, 无法安全定位行` }
+      }
+      const pre = precheckChanges(changes, qs.result.columns, meta)
+      if (pre.error) return { ok: false, error: pre.error, badCells: pre.badCells }
+      const rowObjAt = (ri: number) => {
+        const obj: Record<string, any> = {}
+        qs.result!.columns!.forEach((name, i) => { obj[name] = qs.result!.rows![ri]?.[i] ?? null })
+        return obj
+      }
+      const ops = changes.map(ch => ch.kind === 'insert'
+        ? { kind: 'insert' as const, values: ch.values || {} }
+        : ch.kind === 'delete'
+          ? { kind: 'delete' as const, row: rowObjAt(ch.row!) }
+          : { kind: 'update' as const, row: rowObjAt(ch.row!), setCol: qs.result!.columns![ch.col!], setValue: ch.value })
+      const preview = await applyBatch(c.id, database, table, pkCols, ops, false)
+      if (!preview.ok) return { ok: false, error: preview.error || '生成预览失败' }
+      if (!(await confirm(`将提交 ${ops.length} 处变更 · 同一事务 · ${database}.${table}`, {
+        content: <SqlPreviewBody sqls={preview.sqls || []} caption={`${ops.length} 处变更`} />,
+        okText: '提交', danger: true, maxWidth: 680,
+      }))) return { ok: true, cancelled: true }
+      const r = await applyBatch(c.id, database, table, pkCols, ops, true)
+      if (!r.ok) {
+        const bad = r.failedAt && changes[r.failedAt - 1]?.col !== undefined
+          ? [{ row: changes[r.failedAt - 1].row!, col: changes[r.failedAt - 1].col! }]
+          : undefined
+        return { ok: false, error: humanizeDbError(r.error || '提交失败'), badCells: bad }
+      }
+      // 结果集原位刷新(与单条编辑同一目标): 改值/删行直接落到本地结果;
+      // 新增行要看库生成的默认值/自增号, 只能重新执行查询 —— 提示一句, 不假装刷过
+      setQueryState(prev => {
+        const key = tabKey || activeTab
+        const cur = prev[key]
+        if (!cur?.result?.rows) return prev
+        const upRow = new Map<number, Array<{ col: number; newValue: any }>>()
+        const delRows = new Set<number>()
+        changes.forEach(ch => {
+          if (ch.kind === 'update') { const arr = upRow.get(ch.row!) || []; arr.push({ col: ch.col!, newValue: ch.value }); upRow.set(ch.row!, arr) }
+          else if (ch.kind === 'delete') delRows.add(ch.row!)
+        })
+        const rows = cur.result.rows
+          .map((row, ri) => { const chs = upRow.get(ri); if (!chs) return row; const next = [...row]; chs.forEach(x => { next[x.col] = x.newValue }); return next })
+          .filter((_, ri) => !delRows.has(ri))
+        return { ...prev, [key]: { ...cur, result: { ...cur.result, rows, rowCount: rows.length } } }
+      })
+      if (changes.some(ch => ch.kind === 'insert')) toast.success('新增行已提交 —— 重新执行查询即可看到(含库生成的默认值)')
+      return { ok: true, affected: r.affected }
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) }
+    }
+  }
+
   const handleQueryEditChanges = async (
     changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>,
     c: ConnectionInfo, tabDb?: string, tabKey?: string,
@@ -571,7 +652,7 @@ ${ddl};
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={sql => setQS(t.key, { lastSQL: sql })}
                         />
-                        {qs.result && <DataGrid result={qs.result} connId={c!.id} sql={qs.lastSQL} onEdit={(changes) => handleQueryEditChanges(changes, c!, t.db, t.key)} backend={{ onExport: (sql, format) => exportQuery(c!.id, sql, format) }} emptyState={{ hint: '查询返回 0 行 —— 检查 WHERE 条件' }} />}
+                        {qs.result && <DataGrid result={qs.result} connId={c!.id} sql={qs.lastSQL} onEdit={(changes) => handleQueryEditChanges(changes, c!, t.db, t.key)} onCommitBatch={(changes) => handleQueryBatch(changes, c!, t.db, t.key)} backend={{ onExport: (sql, format) => exportQuery(c!.id, sql, format) }} emptyState={{ hint: '查询返回 0 行 —— 检查 WHERE 条件' }} />}
                       </div>
                     )
                   }

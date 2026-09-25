@@ -10,6 +10,7 @@ import { useConfirm } from '../../lib/hooks/useConfirm'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import { buildFilter, buildWhere, type FilterCond } from './filterSql'
 import { humanizeDbError } from './dbErrors'
+import { precheckChanges } from './batchWrite'
 
 type ViewMode = 'table' | 'json' | 'text'
 
@@ -145,38 +146,11 @@ export default function DataPanel({
   }, [data, visibleCols])
 
   // 单元格编辑落库: 变更 → 后端按方言拼 UPDATE(主键定位) → 预览确认 → 执行 → 回读。
-  // 提交前本地预检: CHAR(n)/VARCHAR(n) 超长这种"一看就知道"的错别丢给 MySQL 报 1406,
-  // 在界面上直接点名到单元格(列名 + 实际/上限字符数)。
-  const precheck = useCallback((changes: GridChange[]): { error?: string; badCells?: Array<{ row: number; col: number }> } => {
-    for (const [i, c] of changes.entries()) {
-      // 新增行: 检查用户填过的字符串列是否超长(新增没有单元格可点名, 只给消息)
-      if (c.kind === 'insert' && c.values) {
-        for (const [name, v] of Object.entries(c.values)) {
-          const meta = (colMeta ?? []).find(m => m.name === name)
-          const m2 = /^\s*(?:var)?char\((\d+)\)/i.exec(meta?.type || '')
-          const val = typeof v === 'string' ? v : String(v ?? '')
-          if (m2 && Number(m2[1]) > 0 && val.length > Number(m2[1])) {
-            return { error: `新增行: ${name} 是 ${meta?.type}, 你填了 ${val.length} 个字符(上限 ${m2[1]}) —— 未提交任何内容` }
-          }
-        }
-        continue
-      }
-      if (c.kind !== 'update' || c.value === null || c.col === undefined) continue
-      const name = visibleColumns[c.col]
-      const meta = (colMeta ?? []).find(m => m.name === name)
-      const m = /^\s*(?:var)?char\((\d+)\)/i.exec(meta?.type || '')
-      if (!m) continue
-      const limit = Number(m[1])
-      const val = typeof c.value === 'string' ? c.value : String(c.value ?? '')
-      if (limit > 0 && val.length > limit) {
-        return {
-          badCells: [{ row: c.row, col: c.col }],
-          error: `第 ${i + 1} 处: ${name} 是 ${meta?.type}, 你填了 ${val.length} 个字符(上限 ${limit}) —— 未提交任何内容`,
-        }
-      }
-    }
-    return {}
-  }, [visibleColumns, colMeta])
+  // 提交前本地预检(与查询结果页共用 batchWrite.precheckChanges)
+  const precheck = useCallback(
+    (changes: GridChange[]) => precheckChanges(changes, visibleColumns, colMeta),
+    [visibleColumns, colMeta],
+  )
 
   // 网格"待提交变更"保存(dbx 保存/回滚同款): 整批走一个事务 —— 任一条失败整体回滚。
   // 语句仍由后端拼(pkCols + 可见列名 + 值, apply-batch); 前端只报"哪行列改成什么/删哪行"。

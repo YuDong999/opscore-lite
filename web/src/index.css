@@ -201,6 +201,8 @@
 }
 .dg-row-del > td { opacity: 0.5; text-decoration: line-through; }
 .dg-row-new > td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.dg-pick { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.dg-pick input { width: 12px; height: 12px; margin: 0; }
 .dg-insert-form { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
 .dg-insert-field { display: flex; align-items: center; gap: 8px; }
 .dg-insert-label { display: flex; flex-direction: column; gap: 1px; min-width: 11rem; }

@@ -331,7 +331,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   // ── 两阶段布局: 列集变化 → 先 auto 实测自然宽 → 全列写入 colW → fixed 布局生效。
   // 直接 fixed+部分宽度会在窄容器把无宽列塌缩成 0(实测), 故任何列必须有显式宽 ──
   const [measuring, setMeasuring] = useState(true)
-  const colSig = result ? result.columns.join('\u0001') : ''
+  const colSig = result && Array.isArray(result.columns) ? result.columns.join('\u0001') : ''
   useEffect(() => { setMeasuring(true); setColW({}); setFrozenN(0) }, [colSig])
   useLayoutEffect(() => {
     if (!measuring || !result?.columns?.length) return
@@ -468,6 +468,16 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   // ── 结果分页(dbx 同款): 默认 100 行/页 + 底部翻页栏; 行数据始终全量在内存(客户端分页) ──
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
+  // 行复选(批量模式下可用): 交给底部「删除选中行」; 翻页/换结果集时清空
+  const [picked, setPicked] = useState<Set<number>>(new Set())
+  useEffect(() => {
+    setPicked(new Set())
+  }, [page, pageSize, result?.rows?.length, result?.columns?.length])
+  const togglePick = useCallback((i: number) => setPicked(prev => {
+    const n = new Set(prev)
+    if (n.has(i)) n.delete(i); else n.add(i)
+    return n
+  }), [])
   useEffect(() => { setPage(1) }, [result])
 
   // 本地排序视图(不影响原始行号映射)
@@ -882,6 +892,11 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   if (!result) {
     return <div className="db-empty">执行查询后查看结果 · Ctrl+Enter 快速执行</div>
   }
+  // 兜底: 结果对象没有 columns 数组(异常响应/老调用方)时只渲染错误条 ——
+  // 否则后面的 columns.join/map 会把整个模块打崩(实测: 查询报错即崩)
+  if (!Array.isArray(result.columns)) {
+    return <div className="banner banner-err">{result.error || '结果集不可用(缺少列信息)'}</div>
+  }
   if (result.error) {
     return <div className="banner banner-err" style={{ margin: 12 }}>{result.error}</div>
   }
@@ -955,7 +970,13 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           </colgroup>
           <thead>
             <tr>
-              <th className="db-col-num db-col-frozen" style={{ left: 0 }}>#</th>
+              <th className="db-col-num db-col-frozen" style={{ left: 0 }}>
+                {batchMode && isEditable ? (
+                  <input type="checkbox" title="全选本页"
+                    checked={pageIdx.length > 0 && pageIdx.every(i => picked.has(i))}
+                    onChange={e => setPicked(e.target.checked ? new Set(pageIdx) : new Set())} />
+                ) : '#'}
+              </th>
               {result.columns.map((c, j) => {
                 // 键列着色: 主键淡红 / 索引(UNI/MUL)淡绿 —— 行内编辑定位与索引感知; 标记走类型行后缀不用 emoji
                 const k = columnMeta?.[j]?.key || ''
@@ -1019,7 +1040,14 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                     e.preventDefault()
                     setRowCtxMenu({ row: i, x: e.clientX, y: e.clientY })
                   }}
-                >{i + 1}</td>
+                >
+                  {batchMode && isEditable ? (
+                    <label className="dg-pick" onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={picked.has(i)} onChange={() => togglePick(i)} />
+                      <span>{i + 1}</span>
+                    </label>
+                  ) : (i + 1)}
+                </td>
                 {row.map((cell, j) => (
                    <td
                     key={j}
@@ -1085,6 +1113,15 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
         <div className="dg-pending-bar">
           <button className="btn-glass-soft btn-glass-soft-sm"
             onClick={() => { setInsertDraft({}); setInsertOpen(true) }}>+ 插入行</button>
+          {picked.size > 0 && (
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-danger"
+              title="把选中的行标记为删除(进待提交, 保存后一起提交)"
+              onClick={() => {
+                picked.forEach(i => markPending({ kind: 'delete', row: i }))
+                toast.success(`已标记删除 ${picked.size} 行 —— 点「保存」一起写库`)
+                setPicked(new Set())
+              }}>删除选中行 ({picked.size})</button>
+          )}
           {pending.length > 0 ? (
             <>
               <span>待提交 <b>{pending.length}</b> 处变更{(() => {
