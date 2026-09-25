@@ -193,6 +193,19 @@
 [data-surface='flat'] .btn-glass-soft-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
 [data-surface='flat'] .btn-glass-soft, [data-surface='flat'] .card { box-shadow: none; }
 
+/* ── 网格"待提交变更"(批量提交模式): 改了还没写库的格子/行要有记号 ── */
+.dg-dirty { position: relative; }
+.dg-dirty::after {
+  content: ''; position: absolute; left: 2px; top: 2px;
+  width: 5px; height: 5px; border-radius: 999px; background: var(--accent);
+}
+.dg-row-del > td { opacity: 0.5; text-decoration: line-through; }
+.dg-pending-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.375rem 0.75rem; font-size: 0.75rem;
+  border-top: 1px dashed var(--border); background: var(--surface-tint);
+}
+
 /* ── 圆角档位: data-corner-style = round(默认 .75rem) | compact(dbx 档) ── */
 :root[data-corner-style='compact'] {
   --shadcn-radius: 6px;

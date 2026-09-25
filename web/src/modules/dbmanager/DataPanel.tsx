@@ -2,9 +2,9 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, applyRowDelete, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, applyRowDelete, applyBatch, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
 import { useToast } from '../../components/Toast'
-import DataGrid, { PAGE_SIZES } from '../../components/common/DataGrid'
+import DataGrid, { PAGE_SIZES, type GridChange } from '../../components/common/DataGrid'
 import { FilterWorkbench } from './FilterWorkbench'
 import { useConfirm } from '../../lib/hooks/useConfirm'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
@@ -144,6 +144,36 @@ export default function DataPanel({
   }, [data, visibleCols])
 
   // 单元格编辑落库: 变更 → 后端按方言拼 UPDATE(主键定位) → 预览确认 → 执行 → 回读。
+  // 网格"待提交变更"保存(dbx 保存/回滚同款): 整批走一个事务 —— 任一条失败整体回滚。
+  // 语句仍由后端拼(pkCols + 可见列名 + 值, apply-batch); 前端只报"哪行列改成什么/删哪行"。
+  const runBatch = useCallback(async (changes: GridChange[]): Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number }> => {
+    if (!data?.rows || !data.columns) return { ok: false, error: '数据未就绪' }
+    const pkCols = (colMeta ?? []).filter(c => c.key === 'PRI').map(c => c.name)
+    if (pkCols.length === 0) return { ok: false, error: '该表无主键, 无法安全定位行' }
+    const rowObjAt = (rowIdx: number) => {
+      const obj: Record<string, any> = {}
+      data.columns.forEach((name, i) => { obj[name] = data.rows![rowIdx]?.[i] })
+      return obj
+    }
+    const ops = changes.map(c => c.kind === 'delete'
+      ? { kind: 'delete' as const, row: rowObjAt(c.row) }
+      : { kind: 'update' as const, row: rowObjAt(c.row), setCol: visibleColumns[c.col!], setValue: c.value })
+    try {
+      const preview = await applyBatch(conn.id, database, table, pkCols, ops, false)
+      if (!preview.ok) return { ok: false, error: preview.error || '生成预览失败' }
+      if (!(await confirm(`将提交 ${ops.length} 处变更 · 同一事务`, {
+        content: <SqlPreviewBody sqls={preview.sqls || []} caption={`${ops.length} 处变更`} />,
+        okText: '提交', danger: true, maxWidth: 680,
+      }))) return { ok: true, cancelled: true }
+      const r = await applyBatch(conn.id, database, table, pkCols, ops, true)
+      if (!r.ok) return { ok: false, error: r.error || '提交失败' }
+      load()
+      return { ok: true, affected: r.affected }
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) }
+    }
+  }, [data, colMeta, visibleColumns, conn.id, database, table, confirm, load])
+
   // 无主键的表直接拒绝(后端同样拒绝)。行索引与 data.rows 对齐(DataGrid 保证), 列名取可见列投影。
   const handleEditChanges = useCallback(async (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => {
     if (!data?.rows || !data.columns) return
@@ -385,6 +415,7 @@ export default function DataPanel({
             sql={`SELECT * FROM ${database}.${table}`}
             exportSql={`SELECT * FROM ${database}.${table} LIMIT ${pageSize} OFFSET ${(page - 1) *pageSize}`}
             onEdit={handleEditChanges}
+            onCommitBatch={runBatch}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
             onFilter={(col, op, value) => setFiltersApplied([{ col, op, value }])}

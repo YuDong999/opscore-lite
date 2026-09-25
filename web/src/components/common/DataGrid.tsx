@@ -56,6 +56,16 @@ export interface DataGridBackend {
   idWorker?: () => Promise<number>
 }
 
+// 网格内"待提交变更"(批量提交模式): 编辑/置 NULL/删行先攒着, 由底部变更条统一走 onCommitBatch。
+// 父级负责 SQL 预览/确认/执行/刷新 —— 这里同样不拼 SQL, 只报"哪行哪列改成什么/删哪行"。
+export interface GridChange {
+  kind: 'update' | 'delete'
+  row: number      // 当前页行下标(与 result.rows 同序)
+  col?: number     // update 必填
+  value?: any      // update 后的值(null = 置为 NULL)
+  oldValue?: any
+}
+
 // 分页档位唯一来源: DataPanel 数据页 pager 与 DataGrid 查询结果 footer 共用,
 // 所有"每页行数"控件选项一致(默认 100 在档位内, 显示值不会与真实值背离)。
 export const PAGE_SIZES = [10, 20, 50, 100, 200, 500, 1000]
@@ -173,7 +183,7 @@ function renderCell(v: any): string {
   return String(v)
 }
 
-export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite, foreignKeys, onFkJump, hidePager, emptyState, backend }: {
+export default function DataGrid({ result, onEdit, connId, sql, exportSql, columnTypes, columnMeta, onFilter, onClearFilters, onSortDatabase, onAfterWrite, foreignKeys, onFkJump, hidePager, emptyState, backend, onCommitBatch }: {
   result: QueryResult | null
   onEdit?: (changes: Array<{ row: number, col: number, newValue: any, oldValue: any }>) => void | Promise<void>
   connId?: string
@@ -189,6 +199,9 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   exportSql?: string                 // 导出用 SQL(数据页=当前页 LIMIT/OFFSET; 缺省用 sql)
   hidePager?: boolean                // 不渲染内部分页脚(数据页由外层 pager 负责)
   backend?: DataGridBackend          // 后端能力注入(导出/写 SQL); 不提供时相应菜单项隐藏或静默跳过
+  // 批量提交模式(dbx dataGrid 同款): 给了它就"先攒着", 底部出变更条统一保存/回滚;
+  // 不传则保持原行为(每次编辑立即回调父级), 其它调用方零影响。cancelled=用户在预览弹窗里取消了。
+  onCommitBatch?: (changes: GridChange[]) => Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number }>
   emptyState?: {                     // 空结果占位(可选, 不传时行为不变)
     hint: string
     actionLabel?: string
@@ -213,6 +226,25 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   const [fieldFilter, setFieldFilter] = useState('')
   const [transpose, setTranspose] = useState<{ r: number } | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null)
+  // ── 待提交变更(仅批量模式下生效) ──
+  const batchMode = !!onCommitBatch
+  const [pending, setPending] = useState<GridChange[]>([])
+  const [savingBatch, setSavingBatch] = useState(false)
+  // 同一个格子改了多次只留最后一次; 删行覆盖该行所有单元格改动
+  const markPending = useCallback((c: GridChange) => {
+    setPending(prev => [
+      ...prev.filter(p => !(p.row === c.row && p.kind === c.kind && (c.kind === 'delete' || p.col === c.col))),
+      c,
+    ])
+  }, [])
+  const pendingCell = useCallback((row: number, col: number): GridChange | null => {
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const c = pending[i]
+      if (c.row === row && c.kind === 'update' && c.col === col) return c
+    }
+    return null
+  }, [pending])
+  const pendingDeleted = useCallback((row: number) => pending.some(c => c.kind === 'delete' && c.row === row), [pending])
   const [rowCtxMenu, setRowCtxMenu] = useState<{ row: number; x: number; y: number } | null>(null)
   const [colHeadMenu, setColHeadMenu] = useState<{ col: number; x: number; y: number } | null>(null)
   // ── 列操作三件套: 虚拟滚动(定高窗口) / 列宽(colgroup) / 冻结(前缀语义) ──
@@ -320,6 +352,13 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     if (typeof orig === 'number' && detailDraft.trim() !== '' && !Number.isNaN(Number(detailDraft))) nv = Number(detailDraft)
     if (typeof orig === 'boolean') nv = detailDraft === 'true'
     if (JSON.stringify(nv) === JSON.stringify(orig)) { setDetailEdit(false); return }
+    // 有主键才可能攒批量(parent 的 isEditable 已含该判定, runBatch 里还会再验一次)
+    if (batchMode) {
+      markPending({ kind: 'update', row: detail.r, col: detail.c, value: nv, oldValue: orig })
+      toast.success('已加入待提交 —— 点底部「保存」一起写库')
+      setDetail(null); setDetailEdit(false)
+      return
+    }
     setSavingEdit(true)
     try {
       await onEdit([{ row: detail.r, col: detail.c, newValue: nv, oldValue: orig }])
@@ -328,7 +367,28 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     } finally {
       setSavingEdit(false)
     }
-  }, [detail, detailDraft, onEdit, result])
+  }, [detail, detailDraft, onEdit, result, batchMode, markPending, toast])
+
+  // 保存/回滚(批量模式): 真正写库在父级 onCommitBatch 里(预览→确认→一个事务提交)
+  const saveBatch = useCallback(async () => {
+    if (!onCommitBatch || pending.length === 0) return
+    setSavingBatch(true)
+    try {
+      const r = await onCommitBatch(pending)
+      if (r?.cancelled) return
+      if (r?.ok) {
+        setPending([])
+        toast.success(`已提交 ${pending.length} 处变更`)
+        onAfterWrite?.()
+      } else {
+        toast.error('提交失败: ' + (r?.error || '未知错误'))
+      }
+    } catch (e: any) {
+      toast.error('提交失败: ' + (e?.message || e))
+    } finally {
+      setSavingBatch(false)
+    }
+  }, [onCommitBatch, pending, toast, onAfterWrite])
 
   // ── 结果分页(dbx 同款): 默认 100 行/页 + 底部翻页栏; 行数据始终全量在内存(客户端分页) ──
   const [page, setPage] = useState(1)
@@ -612,10 +672,15 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       // 单元格编辑入口(右键): 打开详情弹窗并直接进入编辑模式(无主键表/查询页不可编辑时隐藏)
       ...(isEditable && onEdit ? [{ label: '编辑单元格', icon: <ActionIcon kind="edit" />, onClick: () => { setDetail({ r: row, c: col }); openDetailEdit(row, col) } }] : []),
       ...(genChildren.length ? [{ label: '生成值', icon: <ActionIcon kind="wand" />, children: genChildren } as ContextMenuItem] : []),
-      ...(tableFromSql && pkCols.length && !pkCols.includes(colName) && applyRowWrite ? [{
+      ...(tableFromSql && pkCols.length && !pkCols.includes(colName) && (applyRowWrite || batchMode) ? [{
         label: '置为 NULL',
         icon: <ActionIcon kind="edit" />,
         onClick: async () => {
+          if (batchMode) {
+            markPending({ kind: 'update', row, col, value: null, oldValue: cellValue })
+            toast.success('已加入待提交 —— 点底部「保存」一起写库')
+            return
+          }
           try {
             // 先干跑拿后端生成的语句, 摆在确认弹窗里给人看, 确认后才真写
             const preview = await applyRowWrite!({ op: 'set-null', row, col, dryRun: true })
@@ -630,11 +695,16 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           }
         },
       }] : []),
-      ...(tableFromSql && pkCols.length && applyRowWrite ? [{
+      ...(tableFromSql && pkCols.length && (applyRowWrite || batchMode) ? [{
         label: '删除行',
         icon: <ActionIcon kind="delete" />,
         danger: true,
         onClick: async () => {
+          if (batchMode) {
+            markPending({ kind: 'delete', row })
+            toast.success('已标记删除 —— 点底部「保存」一起写库')
+            return
+          }
           try {
             const preview = await applyRowWrite!({ op: 'delete-row', row, dryRun: true })
             if (!preview.ok || !preview.sql) { toast.error('删除失败: ' + (preview.error || '后端未生成语句')); return }
@@ -650,7 +720,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       }] : []),
     ]
     return items
-  }, [result, backend, copyCell, onFilter, onClearFilters, sortCol, genIncrement, genSnowflake, workerPolicy])
+  }, [result, backend, copyCell, onFilter, onClearFilters, sortCol, genIncrement, genSnowflake, workerPolicy, batchMode, markPending, toast])
 
   // 列头右键菜单: 排序收二级 + 复制列名 + 列详情 —— 排序入口不再依赖先选中某个单元格
   const buildColHeadMenu = useCallback((col: number): ContextMenuItem[] => {
@@ -854,6 +924,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
               return (
               <tr
                 key={i}
+                className={pendingDeleted(i) ? 'dg-row-del' : undefined}
                 onContextMenu={e => {
                   e.preventDefault()
                   // 只在行空白处(非单元格)弹行菜单; 打开前行菜单先关单元格菜单
@@ -880,6 +951,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                       colKind[j] && colKind[j] !== 'unknown' ? `db-t-${colKind[j]}` : '',
                       colNumeric[j] ? 'db-numr' : '',
                       cell === null ? 'db-isnull' : '',
+                      pendingCell(i, j) ? 'dg-dirty' : '',
                     ].filter(Boolean).join(' ') || undefined}
                     style={j < frozenN ? { left: frozenLeft(j) } : undefined}
                     title={cell === null || cell === undefined ? undefined : renderCell(cell)}
@@ -917,6 +989,18 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           </div>
         )}
       </div>
+      {batchMode && pending.length > 0 && (
+        <div className="dg-pending-bar">
+          <span>待提交 <b>{pending.length}</b> 处变更</span>
+          <span className="dim">改动只暂存在本页, 点保存才写库</span>
+          <span style={{ marginLeft: 'auto' }} />
+          <button className="btn-glass-soft btn-glass-soft-sm" disabled={savingBatch}
+            onClick={() => { setPending([]); toast.success('已回滚本页未提交的改动') }}>回滚</button>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-accent" disabled={savingBatch} onClick={saveBatch}>
+            {savingBatch ? '提交中…' : '保存'}
+          </button>
+        </div>
+      )}
       {!hidePager && (
       <div className="db-result-footer">
         <span className="dim">共 {viewRows.length} 行{result.truncated ? ' · 已截断' : ''}</span>
@@ -1003,7 +1087,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', paddingTop: 6 }}>
                         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setDetailEdit(false)} disabled={savingEdit}>取消</button>
                         <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" onClick={saveDetailEdit} disabled={savingEdit}>
-                          {savingEdit ? '保存中...' : '保存修改 (按主键 UPDATE)'}
+                          {savingEdit ? '保存中...' : (batchMode ? '加入待提交' : '保存修改 (按主键 UPDATE)')}
                         </button>
                       </div>
                     </>

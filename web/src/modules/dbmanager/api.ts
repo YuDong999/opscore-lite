@@ -647,6 +647,16 @@ export async function applyTableDDL(
   return postJSON('/api/dbmanager/apply-ddl', { id, database, table, action, confirm })
 }
 
+// 批量写(网格"待提交变更"保存): 一个事务里提交多格/多行, 任一条失败整体回滚。
+// 前端只报"哪行列改成什么 / 删哪行", 语句与事务由后端拼(apply-batch)。
+export async function applyBatch(
+  id: string, database: string, table: string, pkCols: string[],
+  ops: Array<{ kind: 'update' | 'delete'; row: Record<string, any>; setCol?: string; setValue?: any }>,
+  confirm = false,
+): Promise<{ ok: boolean; affected?: number; count?: number; error?: string; sqls?: string[]; failedAt?: number; rolledBack?: boolean }> {
+  return postJSON('/api/dbmanager/apply-batch', { id, database, table, pkCols, ops, confirm })
+}
+
 // 终止会话(进程列表): 只报 pid, 语句由后端按引擎生成。confirm=false 先拿预览。
 export async function killSession(
   id: string, pid: number, confirm = false,
