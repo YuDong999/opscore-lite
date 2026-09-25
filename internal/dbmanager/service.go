@@ -6,7 +6,6 @@ package dbmanager
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -292,7 +291,7 @@ func aggregateIndexes(defs []gonaviConnection.IndexDefinition) []IndexInfo {
 }
 
 func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
-	db, _, err := s.pool.Acquire(connID)
+	db, conn, err := s.pool.Acquire(connID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,13 +302,12 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 	start := time.Now()
 	res := &QueryResult{}
 
-	// 标签绑定的库上下文: USE 是会话级的, 池化连接会漂移 ——
-	// 优先钉住一个物理连接(SessionExecerProvider), 在同一会话内 USE+Query
-	if strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
-		dbgType := fmt.Sprintf("%T", db)
-		fmt.Fprintln(os.Stderr, "[dbg] USE branch db=", defaultDatabase, "type=", dbgType)
+	// 标签绑定的库上下文: USE 是 MySQL 系语法 —— PG/Oracle 等会话内换库不存在,
+	// 传了 defaultDatabase 也不能发 USE, 否则 PG 直接报 `syntax error at or near "USE"`
+	// (2026-09-25 实测: /query 带 database 的 PG 查询全挂)。方言统一走 sync.EngineDialect。
+	useDatabase := syncpkg.EngineDialect(string(conn.Info.Engine)) == syncpkg.DialectMySQL
+	if useDatabase && strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
 		if sp, ok := db.(gonavibase.SessionExecerProvider); ok {
-			fmt.Fprintln(os.Stderr, "[dbg] SessionExecerProvider OK")
 			sess, serr := sp.OpenSessionExecer(ctx)
 			if serr != nil {
 				res.Error = serr.Error()
@@ -321,7 +319,6 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 				return res, uerr
 			}
 			qsess, qok := sess.(gonavibase.StatementQueryExecer)
-			fmt.Fprintln(os.Stderr, "[dbg] StatementQueryExecer=", qok)
 			if !qok {
 				res.Error = "驱动会话不支持查询"
 				return res, fmt.Errorf("驱动会话不支持查询")

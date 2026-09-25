@@ -42,12 +42,15 @@ func TestBuiltinLikeDriversRemainAvailable(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetExternalDriverDownloadDirectory(tmpDir)
 
-	supported, reason := DriverRuntimeSupportStatus("redis")
-	if !supported {
-		t.Fatalf("redis 应始终可用，reason=%s", reason)
+	// redis 不再声明为"始终内置": 工厂里没有实现, 声明了也只会得到一个必失败的入口。
+	// 注意断言的是 IsBuiltinDriver —— DriverRuntimeSupportStatus 对"任何列表都没有的未知类型"
+	// 默认返回可用(那是留给外部/自定义驱动的口子), 拿它来判 redis 会得到误导性的 true。
+	// 等 Redis 引擎真正接入后, 这里再改回断言可用。
+	if IsBuiltinDriver("redis") {
+		t.Fatal("redis 尚无实现, 不应被声明为内置驱动")
 	}
 
-	supported, reason = DriverRuntimeSupportStatus("kafka")
+	supported, reason := DriverRuntimeSupportStatus("kafka")
 	if !supported {
 		t.Fatalf("kafka 应始终可用，reason=%s", reason)
 	}

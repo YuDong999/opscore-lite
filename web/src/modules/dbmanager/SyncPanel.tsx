@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '../../components/Toast'
+import { useConfirm } from '../../lib/hooks/useConfirm'
 import {
   type ConnectionInfo,
   listDatabases,
@@ -72,6 +73,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   presetDb?: string; presetSchema?: string; presetTable?: string
 }) {
   const toast = useToast()
+  const { confirm, confirmEl } = useConfirm()
   const [sourceId, setSourceId] = useState('')
   const [sourceDb, setSourceDb] = useState('')
   const [targetId, setTargetId] = useState('')
@@ -311,7 +313,12 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
   useEffect(() => { loadJobs() }, [])
 
   const doCancel = async (id: string) => {
-    if (!window.confirm('确认取消该任务?')) return
+    const ok = await confirm('取消该同步任务?', {
+      desc: '已在途的表会跑完当前批次, 之后不再继续下一张。',
+      okText: '取消任务',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await post('/api/dbmanager/sync/cancel', { id })
       toast.success('已请求取消')
@@ -648,6 +655,7 @@ export default function SyncPanel({ conns, activeConnId, presetDb, presetSchema,
           })
         )}
       </div>
+      {confirmEl}
     </div>
   )
 }

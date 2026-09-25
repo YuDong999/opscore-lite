@@ -4,10 +4,12 @@
 import React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, runQueryRaw,
+  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, applyTableDDL,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from '../../components/common/ContextMenu'
+import { useConfirm } from '../../lib/hooks/useConfirm'
+import { SqlPreviewBody } from '../../components/common/SqlPreview'
 
 // 系统库/系统对象判定: 灰色置底便于识别
 function isSysDbName(name: string): boolean {
@@ -132,6 +134,8 @@ export default function ConnectionTree({
   onToggleSide?: () => void
 }) {
   const [filter, setFilter] = useState('')
+  // 删除表/删连接这类不可逆动作的确认: 走公共弹窗(带 DDL 预览), 不用原生 confirm
+  const { confirm, confirmEl } = useConfirm()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // 钻取模式(=类别页签非"全部")下默认展开、但允许手动收起: 记录被收起的节点
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -332,12 +336,13 @@ export default function ConnectionTree({
     const isOpen = node.level === 'connGroup' ? !collapsedGroups.has(node.key) : (drill ? !collapsed.has(node.key) : expanded.has(node.key))
     return (
       <div
+        key={node.key}
         role="treeitem"
         tabIndex={0}
         aria-level={depth + 1}
         aria-selected={selected}
         aria-expanded={canExpand ? isOpen : undefined}
-        className={`group flex cursor-default items-center gap-2 min-h-7 py-1 px-2 relative outline-none rounded-[0.25rem] hover:bg-accent${selected ? ' bg-black/[0.08]' : ''}`}
+        className="db-tree-node group flex cursor-default items-center relative outline-none"
         style={{ paddingLeft: `${8 + depth * 16}px`, ['--ind' as any]: `${8 + depth * 16}px`, contain: 'layout style', ...(node.sys ? { opacity: 0.6 } : {}) }}
         onClick={() => onNodeClick(node)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onNodeClick(node) } }}
@@ -350,7 +355,7 @@ export default function ConnectionTree({
       >
         {canExpand ? (
           <button
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent p-0 text-muted-foreground outline-none hover:text-foreground"
+            className="db-tree-caret flex shrink-0 items-center justify-center border-0 bg-transparent p-0 outline-none"
             onClick={e => { e.stopPropagation(); onNodeClick(node) }}
             aria-label={isOpen ? '收起' : '展开'}
           >
@@ -359,7 +364,7 @@ export default function ConnectionTree({
             </svg>
           </button>
         ) : (
-          <span className="w-3.5 h-3.5 shrink-0" />
+          <span className="db-tree-caret-leaf shrink-0" />
         )}
         {children}
       </div>
@@ -491,20 +496,28 @@ export default function ConnectionTree({
         copyItems.push({ label: '导出 XLSX', icon: <ActionIcon kind="upload" />, onClick: () => onExportTable(node.conn!, node.db!, node.table!, 'xlsx') })
       }
       // ── 维护 ──
-      const bt = (name: string) => '`' + name.replace(/`/g, '``') + '`'
-      const qt = (name: string) => '"' + name.replace(/"/g, '""') + '"'
-      const quoteTable = () => {
-        const eng = node.conn!.engine
-        if (eng === 'mysql' || eng === 'mariadb' || eng === 'goldendb') return bt(node.db!) + '.' + bt(node.table!)
-        return node.table.includes('.') ? node.table.split('.').map(qt).join('.') : qt(node.table)
-      }
-      const runDanger = async (label: string, sqlText: string) => {
-        if (!confirm(`确认${label}表 ${node.table}? 该操作不可撤销。`)) return
+      // 表级 DDL 交给后端拼(apply-ddl)。前端原先自己拼 `DROP TABLE x` 再丢给 /query:
+      // 一是那份 quoting 只认 mysql 系反引号, 二是 /query 的二次确认看请求体里的 confirm,
+      // 弹窗确认了却没传 → 后端回 403 confirm_required, 而这里只判 write_locked, 于是弹"删除完成"
+      // 而表根本没删(实测过)。改走 apply-ddl 两刀一起修掉: 语句是后端的, 确认是显式的。
+      const runDanger = async (label: string, action: 'drop' | 'truncate') => {
+        if (!node.conn || !node.db || !node.table) return
+        const connId = node.conn.id
         try {
-          const r = await runQueryRaw(node.conn!.id, sqlText)
-          if (r.data.code === 'write_locked') { notify(false, '写操作被拦截: 请先解锁写模式'); return }
-          notify(true, `${label}完成: ${node.table}${r.data.affected != null ? ` (影响 ${r.data.affected} 行)` : ''}`)
-          loadTables(node.conn!.id, node.db!)
+          const preview = await applyTableDDL(connId, node.db, node.table, action, false)
+          if (!preview.ok || !preview.sql) { notify(false, `${label}失败: ` + (preview.error || '后端未生成语句')); return }
+          const ok = await confirm(`确认${label}表 ${node.table}?`, {
+            desc: '该操作不可撤销。',
+            content: <SqlPreviewBody sqls={[preview.sql]} caption="表级 DDL" />,
+            okText: label,
+            danger: true,
+            maxWidth: 620,
+          })
+          if (!ok) return
+          const r = await applyTableDDL(connId, node.db, node.table, action, true)
+          if (!r.ok) { notify(false, `${label}失败: ` + (r.error || '执行未成功')); return }
+          notify(true, `${label}完成: ${node.table}`)
+          loadTables(connId, node.db)
         } catch (e: any) {
           notify(false, `${label}失败: ${e.message || e}`)
         }
@@ -514,8 +527,8 @@ export default function ConnectionTree({
         { label: '刷新行数统计', icon: <ActionIcon kind="refresh" />, onClick: () => notify(true, `${node.table}: 统计已刷新`) },
         ...(isTable ? [
           { divider: 'heavy' as const },
-          { label: '清空表 (TRUNCATE)', icon: <ActionIcon kind="refresh" />, onClick: () => runDanger('清空', `TRUNCATE TABLE ${quoteTable()}`) },
-          { label: '删除表 (DROP)', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => runDanger('删除', `DROP TABLE ${quoteTable()}`) },
+          { label: '清空表 (TRUNCATE)', icon: <ActionIcon kind="refresh" />, onClick: () => runDanger('清空', 'truncate') },
+          { label: '删除表 (DROP)', icon: <ActionIcon kind="delete" />, danger: true, onClick: () => runDanger('删除', 'drop') },
         ] : []),
       ]
       return [
@@ -550,7 +563,12 @@ export default function ConnectionTree({
   }
 
   const remove = async (c: ConnectionInfo) => {
-    if (!confirm(`确认删除连接「${c.name}」?`)) return
+    const ok = await confirm(`删除连接「${c.name}」`, {
+      desc: '只从本机移除这条连接配置, 不动远端数据库。',
+      okText: '删除',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteConnection(c.id)
       notify(true, `已删除 ${c.name}`)
@@ -800,7 +818,7 @@ export default function ConnectionTree({
   }, [menu])
 
   return (
-    <div className="db-tree" style={{ fontSize: '14px' }}>
+    <div className="db-tree">
       <div className="db-tree-header">
         <div className="db-tree-row-1">
           <div className="db-tree-search-row">
@@ -868,7 +886,7 @@ export default function ConnectionTree({
             return renderRow(node, depth, (
               <>
                 <NodeIcon level={node.level} />
-                <span className="truncate font-medium">{node.label}</span>
+                <span className="db-tree-label truncate font-medium">{node.label}</span>
                 {node.count !== undefined && (
                   <span className="ml-0.5 inline-flex h-4 items-center rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{node.count}</span>
                 )}
@@ -885,7 +903,7 @@ export default function ConnectionTree({
                   <span className="db-tree-rcount" title={`约 ${cnt} 行`}>{fmtCount(cnt)}</span>
                 ) : null
               })()}
-              <span className="truncate">{node.label}</span>
+              <span className="db-tree-label truncate">{node.label}</span>
               {isConn && node.conn && (() => {
                 const h = connHealth[node.conn.id]
                 // fail 与未测试同为灰灯(约定: 错误配置也正常入侧栏, 不红不吓人), 点击行可看具体错误
@@ -957,6 +975,7 @@ export default function ConnectionTree({
           </div>
         </div>
       )}
+      {confirmEl}
     </div>
   )
 }

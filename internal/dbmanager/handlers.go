@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -73,13 +72,17 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/data", Handler: h.handleData},
 			{Path: "/api/dbmanager/table-inserts", Handler: h.handleTableInserts},
 			{Path: "/api/dbmanager/apply-edit", Handler: h.handleApplyEdit},
+			{Path: "/api/dbmanager/apply-delete", Handler: h.handleApplyDelete},
+			{Path: "/api/dbmanager/apply-ddl", Handler: h.handleApplyDDL},
+			{Path: "/api/dbmanager/kill-session", Handler: h.handleKillSession},
+			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
+			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
 			{Path: "/api/dbmanager/drivers/install", Handler: h.handleDriverInstall},
 		},
 	}
-	fmt.Printf("DEBUG: dbmanager module registered: %v\n", module.Manifest)
 	return module
 }
 
@@ -363,7 +366,6 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "id 格式非法", http.StatusBadRequest)
 		return
 	}
-	fmt.Fprintln(os.Stderr, "[dbg-q] database=", body.Database)
 	if strings.TrimSpace(body.SQL) == "" {
 		writeErr(w, "SQL 不能为空", http.StatusBadRequest)
 		return

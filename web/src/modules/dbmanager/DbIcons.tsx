@@ -97,11 +97,17 @@ export function NodeIcon({ level, size = 14 }: { level: 'conn' | 'db' | 'group' 
     case 'conn':
       return null // 连接用 EngineIcon
     case 'db':
+      // 实心数据库图标。几何是拿用户截图放大到像素级量的, 单色(截图主色 rgb(28,28,28), 全灰阶)。
+      // 不变式一: 同一圆柱上每条圈线弧度相同 —— 下方两条带的弧 ry 必须等于顶部椭圆的 ry(5.5),
+      //   各带只是沿 y 平移(参数化: 缝 g 均匀、盘厚 t), 弧一旦压扁, 顶面圆、下面扁, 立刻不像。
+      // 不变式二: 缝 g 是"看得见的宽度"而不是几何精确的宽度 —— 图标实际渲染在 14px, 24 视框缩到 14px
+      //   是 ×0.583, g=0.6 只有 0.35px, 抗锯齿一抹就没了(实测: 改前中间那道缝看不见)。
+      //   现在 g=2.4 / t=4 → 缝在 14px 下有 ~1.4px, 盘厚 ~2.3px。
       return (
-        <svg {...common} className="dbx-node-icon icon-db">
-          <ellipse cx="12" cy="5" rx="8" ry="3" />
-          <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-          <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+        <svg width={size} height={size} viewBox="0 0 24 24" className="dbx-node-icon icon-db" fill="currentColor" stroke="none">
+          <ellipse cx="12" cy="5.6" rx="10.5" ry="5.5" />
+          <path d="M1.5 8A10.5 5.5 0 0 0 22.5 8V12A10.5 5.5 0 0 1 1.5 12Z" />
+          <path d="M1.5 14.4A10.5 5.5 0 0 0 22.5 14.4V18.4A10.5 5.5 0 0 1 1.5 18.4Z" />
         </svg>
       )
     case 'schema':

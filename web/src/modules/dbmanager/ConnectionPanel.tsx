@@ -20,7 +20,6 @@ import {
   listConnections,
   createConnection,
   updateConnection,
-  deleteConnection,
   testConnection,
   loadEngines,
   getEngineConfig,
@@ -255,17 +254,6 @@ export default function ConnectionPanel({
       toast.error('保存失败: ' + e.message)
     } finally {
       setBusy(false)
-    }
-  }
-
-  const remove = async (c: ConnectionInfo) => {
-    if (!confirm(`确认删除连接「${c.name}」?`)) return
-    try {
-      await deleteConnection(c.id)
-      toast.success('已删除')
-      await reload()
-    } catch (e: any) {
-      toast.error('删除失败: ' + e.message)
     }
   }
 

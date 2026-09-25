@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useToast } from '../../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
-  listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery, runQueryRaw,
+  listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
   listTables, fetchTableDDL, describeTable, applyCellEdit,
 } from './api'
 import ConnectionPanel from './ConnectionPanel'
@@ -16,9 +16,11 @@ import { ActionIcon } from './DbIcons'
 import DocPanel from './DocPanel'
 import QueryEditor from './QueryEditor'
 import DataGrid from '../../components/common/DataGrid'
-import DataPanel from './DataPanel'
+import DataPanel, { type TableFilter } from './DataPanel'
 import OverviewPanel from './OverviewPanel'
 import QuickOpen from './QuickOpen'
+import { useConfirm } from '../../lib/hooks/useConfirm'
+import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import SyncPanel from './SyncPanel'
 import ErGraphPanel from './ErGraphPanel'
 import TableOverviewPanel from './TableOverviewPanel'
@@ -26,18 +28,20 @@ import ServerDashboardPanel from './ServerDashboardPanel'
 import AuditPanel from './AuditPanel'
 import DriverManagement from './DriverManagement'
 import SlowSQLPanel from './SlowSQLPanel'
+import ProcessListPanel from './ProcessListPanel'
 import TableStatusPanel from './TableStatusPanel'
 import ExplainPanel from './ExplainPanel'
 import SavedQueriesPanel from './SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs'
   connId: string
   db?: string
   table?: string
   schema?: string
   isView?: boolean
+  initialFilters?: TableFilter[]  // 外键跳转带入的过滤条件; 有值时 tab key 附条件指纹, 避免复用旧 tab 的过滤态
   label: string
 }
 
@@ -50,6 +54,7 @@ function formatRemaining(sec: number): string {
 
 export default function DatabaseManagerModule() {
   const toast = useToast()
+  const { confirm, confirmEl } = useConfirm()
   const [conns, setConns] = useState<ConnectionInfo[]>([])
   const [conn, setConn] = useState<ConnectionInfo | null>(null)
   const [tabs, setTabs] = useState<WorkTab[]>([])
@@ -193,9 +198,12 @@ export default function DatabaseManagerModule() {
   const explainSqlRef = useRef<string>('')
 
   // ── 树交互 ──
-  const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean) => {
+  const handleOpenTable = (c: ConnectionInfo, db: string, table: string, isView?: boolean, filters?: TableFilter[]) => {
     setConn(c)
-    openTab({ key: `data:${c.id}.${db}.${table}`, kind: 'data', connId: c.id, db, table, isView, label: tabLabel(c, db, table) })
+    // 带条件时把条件编进 tab key: 同表不同键值 = 各自独立 tab(否则复用旧 tab 会串过滤条件),
+    // 同键值重复跳 = 回到同一个 tab。等价于 dbx 的 forceNew + whereInput 落 tab。
+    const suffix = filters?.length ? `?${filters.map(f => `${f.col}=${f.value}`).join('&')}` : ''
+    openTab({ key: `data:${c.id}.${db}.${table}${suffix}`, kind: 'data', connId: c.id, db, table, isView, initialFilters: filters, label: tabLabel(c, db, table) })
   }
   const handleNewQuery = (c: ConnectionInfo, db: string) => {
     setConn(c)
@@ -345,7 +353,7 @@ ${ddl};
         applyCellEdit(c.id, database, table, pkCols, rowObjAt(ch.row), qs.result!.columns![ch.col], ch.newValue, false)
       ))
       const sqls = previews.map(p => p.sql).filter(Boolean)
-      if (sqls.length && !window.confirm('将执行以下语句:\n\n' + sqls.join('\n\n'))) return
+      if (sqls.length && !(await confirm(`将执行以下语句 · ${database}.${table}`, { content: <SqlPreviewBody sqls={sqls} />, okText: '执行', danger: true, maxWidth: 620 }))) return
       for (const ch of changes) {
         const r = await applyCellEdit(c.id, database, table, pkCols, rowObjAt(ch.row), qs.result!.columns![ch.col], ch.newValue, true)
         if (!r.ok) throw new Error(r.error || '写入失败')
@@ -387,6 +395,9 @@ ${ddl};
         <div className="db-head-global-actions">
           <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>驱动</button>
           <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>查询</button>
+          {conn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="进程列表(当前会话)" onClick={() => openTab({ key: `procs:${conn.id}`, kind: 'procs', connId: conn.id, label: '进程列表' })}>进程</button>
+          )}
           {conn && (
             <button className="btn-glass-soft btn-glass-soft-sm" title="慢 SQL" onClick={() => openTab({ key: `slow:${conn.id}`, kind: 'slow', connId: conn.id, label: '慢 SQL' })}>慢 SQL</button>
           )}
@@ -542,7 +553,9 @@ ${ddl};
                 if (needsConn && !c) return <div className="db-empty">连接不存在, 请关闭此标签</div>
                 switch (t.kind) {
                   case 'data':
-                    return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView} />
+                    return <DataPanel key={t.key} conn={c!} database={t.db!} table={t.table!} isView={t.isView}
+                      initialFilters={t.initialFilters}
+                      onOpenTable={(refTable, conds) => handleOpenTable(c!, t.db!, refTable, false, conds)} />
                   case 'query': {
                     const seedTab = querySeedRef.current
                     const isSeedTab = seedTab != null && seedTab.key === t.key
@@ -558,7 +571,7 @@ ${ddl};
                           onWriteLocked={() => setShowUnlock(true)}
                           onExecuted={sql => setQS(t.key, { lastSQL: sql })}
                         />
-                        {qs.result && <DataGrid result={qs.result} connId={c!.id} sql={qs.lastSQL} onEdit={(changes) => handleQueryEditChanges(changes, c!, t.db, t.key)} backend={{ onExport: (sql, format) => exportQuery(c!.id, sql, format), runWrite: sql => runQueryRaw(c!.id, sql) }} emptyState={{ hint: '查询返回 0 行 —— 检查 WHERE 条件' }} />}
+                        {qs.result && <DataGrid result={qs.result} connId={c!.id} sql={qs.lastSQL} onEdit={(changes) => handleQueryEditChanges(changes, c!, t.db, t.key)} backend={{ onExport: (sql, format) => exportQuery(c!.id, sql, format) }} emptyState={{ hint: '查询返回 0 行 —— 检查 WHERE 条件' }} />}
                       </div>
                     )
                   }
@@ -580,6 +593,8 @@ ${ddl};
                     return <div className="db-driver-section" key={t.key}><DriverManagement /></div>
                   case 'slow':
                     return <div className="db-slow-section" key={t.key}><SlowSQLPanel connId={t.connId} /></div>
+                  case 'procs':
+                    return <div className="db-slow-section" key={t.key}><ProcessListPanel connId={c!.id} engine={c!.engine} database={t.db || c!.config?.database} /></div>
                   case 'status':
                     return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
                   case 'explain':
@@ -594,6 +609,7 @@ ${ddl};
           )}
         </main>
       </div>
+      {confirmEl}
     </div>
   )
 }

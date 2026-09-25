@@ -31,6 +31,20 @@ func buildPGLikeVisibleRelationPredicate(alias string, schemaName string) string
 	return buildPGLikeVisibleRelationPredicateWithNamespace(alias, "n", schemaName)
 }
 
+// pg_proc(函数/存储过程)的可见性判据。**不能复用上面那个关系版**:
+// pg_table_is_visible 只认 pg_class 的 oid, 拿它去判 pg_proc 的 oid 既不报错也不为真 ——
+// 函数/存储过程会静默变成空列表(比报错更难发现)。
+func buildPGLikeVisibleFunctionPredicate(alias string, schemaName string) string {
+	funcAlias := strings.TrimSpace(alias)
+	if funcAlias == "" {
+		funcAlias = "p"
+	}
+	if strings.TrimSpace(schemaName) == "" {
+		return fmt.Sprintf("pg_catalog.pg_function_is_visible(%s.oid)", funcAlias)
+	}
+	return fmt.Sprintf("n.nspname = '%s'", escapePGLikeMetadataLiteral(schemaName))
+}
+
 func buildPGLikeVisibleRelationPredicateWithNamespace(alias string, namespaceAlias string, schemaName string) string {
 	relAlias := strings.TrimSpace(alias)
 	if relAlias == "" {

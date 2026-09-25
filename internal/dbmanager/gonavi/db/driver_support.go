@@ -13,10 +13,12 @@ import (
 )
 
 // coreBuiltinDrivers 是始终内置可用的核心驱动，无需额外安装即可使用。
+// 注: redis 曾在此列(且被测试断言"始终可用"), 但 databaseFactories 里从来没有它的实现 ——
+// `NewDatabase("redis")` 必然报错, 属于"对外宣称支持、实际创建必失败"的不一致。
+// 在 Redis 引擎真正接入(工厂 + 实现 + 引擎元数据)之前, 先不在此声明, 免得界面展示一个用不了的驱动。
 var coreBuiltinDrivers = map[string]struct{}{
 	"mysql":    {},
 	"goldendb": {},
-	"redis":    {},
 	"oracle":   {},
 	"postgres": {},
 	"chroma":   {},

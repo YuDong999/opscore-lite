@@ -3,6 +3,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { describeTable, runQueryRaw, type ColumnInfo, type IndexInfo } from './api'
+import { useConfirm } from '../../lib/hooks/useConfirm'
+import { useToast } from '../../components/Toast'
+import { SqlPreviewBody } from '../../components/common/SqlPreview'
 
 // 编辑态列(原始列 + 编辑字段; 新列标记 __new)
 interface EditCol extends ColumnInfo {
@@ -39,8 +42,16 @@ export default function DocPanel({
   // 结构编辑态: null=只读浏览; 非空=编辑中(副本)
   const [editing, setEditing] = useState<EditCol[] | null>(null)
   const [applying, setApplying] = useState(false)
+  // 结构变更确认走公共弹窗(带 ALTER 预览), 结果走 toast —— 原先是原生 confirm/alert, 弹出的东西跟全站不是一个体系
+  const { confirm, confirmEl } = useConfirm()
+  const toast = useToast()
 
-  const qTable = QUOTE_ID(engine || 'mysql', table.includes('.') ? table : table)
+  // 表名可能是 "schema.table" 两段(三级引擎): 必须逐段引用再用点拼回来。
+  // 原先这里写的是 `table.includes('.') ? table : table` —— 两个分支一模一样(死代码), 于是整串被
+  // 当成一个标识符: PG 下 "public.users" 变成 "public.users" 一整个带引号的表名, ALTER 直接找不到表。
+  const qTable = table.includes('.')
+    ? table.split('.').map(part => QUOTE_ID(engine || 'mysql', part)).join('.')
+    : QUOTE_ID(engine || 'mysql', table)
   const fullReload = () => {
     setEditing(null)
     setLoading(true)
@@ -130,19 +141,26 @@ export default function DocPanel({
 
   const applyAlter = async () => {
     if (!alterStatements.length) return
-    if (!confirm(`确认执行 ${alterStatements.length} 条结构变更? 涉及删列时数据将丢失。`)) return
+    const ok = await confirm(`确认执行 ${alterStatements.length} 条结构变更?`, {
+      desc: '涉及删列时数据将丢失, 不可撤销。',
+      content: <SqlPreviewBody sqls={alterStatements} caption="结构变更" />,
+      okText: '执行',
+      danger: true,
+      maxWidth: 620,
+    })
+    if (!ok) return
     setApplying(true)
     try {
       const r = await runQueryRaw(connId, alterStatements.join('\n'))
       if (r.data.code === 'write_locked') {
-        alert('写操作被拦截: 请先解锁写模式')
+        toast.error('写操作被拦截: 请先解锁写模式')
         return
       }
-      alert('结构变更完成')
+      toast.success('结构变更完成')
       fullReload()
       onStructureChanged?.()
     } catch (e: any) {
-      alert('执行失败: ' + (e.message || e))
+      toast.error('执行失败: ' + (e.message || e))
     } finally {
       setApplying(false)
     }
@@ -305,6 +323,7 @@ export default function DocPanel({
       {tab === 'ddl' && (
         <pre className="code-block db-doc-ddl">{ddl || '— DDL 不可用 —'}</pre>
       )}
+      {confirmEl}
     </div>
   )
 }

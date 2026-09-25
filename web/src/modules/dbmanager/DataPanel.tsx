@@ -2,22 +2,30 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery, runQueryRaw } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, applyRowDelete, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
 import { useToast } from '../../components/Toast'
 import DataGrid, { PAGE_SIZES } from '../../components/common/DataGrid'
 import { FilterWorkbench } from './FilterWorkbench'
+import { useConfirm } from '../../lib/hooks/useConfirm'
+import { SqlPreviewBody } from '../../components/common/SqlPreview'
+import { buildFilter, buildWhere, type FilterCond } from './filterSql'
 
 type ViewMode = 'table' | 'json' | 'text'
 
+export type { FilterCond as TableFilter } from './filterSql'
+
 export default function DataPanel({
-  conn, database, table, isView,
+  conn, database, table, isView, initialFilters, onOpenTable,
 }: {
   conn: ConnectionInfo
   database: string
   table: string
   isView?: boolean
+  initialFilters?: FilterCond[]            // 外键跳转带入的过滤条件(本组件按 key 重挂载, 故只在初始化时吃一次)
+  onOpenTable?: (table: string, conds: FilterCond[]) => void  // 外键跳转: 由上层开新 tab
 }) {
   const toast = useToast()
+  const { confirm, confirmEl } = useConfirm()
   const [data, setData] = useState<TableData | null>(null)
   const [colTypes, setColTypes] = useState<(string | undefined)[] | undefined>(undefined)
   const [colMeta, setColMeta] = useState<ColumnInfo[] | undefined>(undefined)
@@ -34,10 +42,10 @@ export default function DataPanel({
   const [viewMode, setViewMode] = useState<ViewMode>('table')
   const [visibleCols, setVisibleCols] = useState<Set<number>>(new Set())
   const [showColFilter, setShowColFilter] = useState(false)
-  const [showFilterRow, setShowFilterRow] = useState(false)
+  const [showFilterRow, setShowFilterRow] = useState(!!initialFilters?.length)
   const [orderBy, setOrderBy] = useState('')
   const [orderDir, setOrderDir] = useState<'ASC' | 'DESC'>('ASC')
-  const [filters, setFilters] = useState<Array<{ col: string; op: string; value: string }>>([])
+  const [filters, setFilters] = useState<FilterCond[]>(initialFilters || [])
   const [filterJoiner, setFilterJoiner] = useState<'AND' | 'OR'>('AND')
   // 列名 → 类型映射(用于判断数值列是否加引号); 类型取不到时按字符串(加引号)处理
   const colTypeByName = useMemo(() => {
@@ -64,48 +72,21 @@ export default function DataPanel({
     return NUMERIC.has(base)
   }, [])
 
-  // 筛选状态条 chip 文案: 复用 isNumericType / colTypeByName 同一套引号判定, 与 where 生成保持一致
-  // (数值列无引号、其余加引号、NULL 类不吃 value、类型取不到按字符串加引号), 避免"显示 vs 实际 SQL"不一致
-  const filterChipLabel = useCallback((f: { col: string; op: string; value: string }): string => {
-    if (f.op === 'IS NULL') return `${f.col} IS NULL`
-    if (f.op === 'IS NOT NULL') return `${f.col} IS NOT NULL`
-    const num = isNumericType(colTypeByName.get(f.col))
-    // LIKE 操作数恒为字符串字面量, 不受"数值列不加引号"影响(数值列也加引号, 否则 MySQL 语法错)
-    if (f.op === 'LIKE') return `${f.col} LIKE '%${f.value}%'`
-    return `${f.col} ${f.op} ${num ? f.value : `'${f.value}'`}`
-  }, [isNumericType, colTypeByName])
+  // SQL 片段与 chip 文案同源于 filterSql.buildFilter —— 之前是两处各写一套引号判定,
+  // 那就是"界面显示的和实际执行的"开始漂移的起点。
+  const filterCtx = useMemo(() => ({
+    engine: conn.engine,
+    isNumeric: (col: string) => isNumericType(colTypeByName.get(col)),
+  }), [conn.engine, isNumericType, colTypeByName])
 
-  // 输入防抖: 筛选条件(filters)即时更新 UI, 但只有停手 350ms 后才提交到 appliedFilters
-  // 并真正参与 where / 触发查询 —— 避免值输入框每敲一个字符都打一次数据库。
-  const [appliedFilters, setAppliedFilters] = useState<Array<{ col: string; op: string; value: string }>>(filters)
-  useEffect(() => {
-    const t = setTimeout(() => setAppliedFilters(filters), 350)
-    return () => clearTimeout(t)
-  }, [filters])
+  // 显式应用(对齐 dbx): 编辑中的条件不直接查库, 按「应用筛选」或回车才提交。
+  // 原来是 350ms 防抖自动查 —— 输入 "100" 会先按 "1"、"10" 各查一次, 大表上就是两次无谓扫描。
+  const [appliedFilters, setAppliedFilters] = useState<FilterCond[]>(initialFilters || [])
+  const applyFilters = useCallback(() => { setAppliedFilters(filters); setPage(1) }, [filters])
+  // 离散步进(右键筛选/移除 chip/清除) 直接一步到位: 编辑态与执行态同时更新
+  const setFiltersApplied = useCallback((fs: FilterCond[]) => { setFilters(fs); setAppliedFilters(fs); setPage(1) }, [])
 
-  const where = useMemo(() => appliedFilters.map(f => {
-    const col = f.col
-    const op = f.op
-    // NULL 类操作不吃 value, 始终保留(即使 value 为空也照常生成)
-    if (op === 'IS NULL') return `${col} IS NULL`
-    if (op === 'IS NOT NULL') return `${col} IS NOT NULL`
-    // 空值/纯空白条件不进 WHERE(新条件默认 value:'' 即被过滤掉)
-    if (!f.value || !f.value.trim()) return ''
-    const v = f.value.replace(/'/g, "''")
-    const num = isNumericType(colTypeByName.get(col))
-    const q = (s: string) => (num ? s : `'${s}'`)
-    switch (op) {
-      case '=': return `${col} = ${q(v)}`
-      case '!=': return `${col} != ${q(v)}`
-      // LIKE 始终字符串字面量(数值列也加引号, 避免 MySQL Error 1064); 比较运算符才走数值去引号
-      case 'LIKE': return `${col} LIKE '%${v}%'`
-      case '>': return `${col} > ${q(v)}`
-      case '<': return `${col} < ${q(v)}`
-      case '>=': return `${col} >= ${q(v)}`
-      case '<=': return `${col} <= ${q(v)}`
-      default: return ''
-    }
-  }).filter(Boolean).join(` ${filterJoiner} `), [appliedFilters, filterJoiner, colTypeByName, isNumericType])
+  const where = useMemo(() => buildWhere(appliedFilters, filterJoiner, filterCtx), [appliedFilters, filterJoiner, filterCtx])
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
@@ -132,6 +113,14 @@ export default function DataPanel({
         setColMeta(d?.columns)
       })
       .catch(() => setColTypes(undefined))
+  }, [conn.id, database, table])
+
+  // 打开表即取一次完整元数据: 外键跳转要用其中的 foreignKeys, 而「表信息」抽屉是点开才取。
+  // 失败静默(不影响浏览), 抽屉展开时若仍为空会再试一次。
+  useEffect(() => {
+    let alive = true
+    getTableMeta(conn.id, database, table).then(m => { if (alive) setMeta(m) }).catch(() => { if (alive) setMeta(null) })
+    return () => { alive = false }
   }, [conn.id, database, table])
 
   useEffect(() => { load() }, [load])
@@ -171,7 +160,8 @@ export default function DataPanel({
         applyCellEdit(conn.id, database, table, pkCols, rowObjAt(ch.row), visibleColumns[ch.col], ch.newValue, false)
       ))
       const sqls = previews.map(p => p.sql).filter(Boolean)
-      if (sqls.length && !window.confirm('将执行以下语句:\n\n' + sqls.join('\n\n'))) return
+      // 预览走公共确认弹窗(可选中/可复制), 不再用 window.confirm
+      if (sqls.length && !(await confirm('将执行以下语句', { content: <SqlPreviewBody sqls={sqls} />, okText: '执行', danger: true, maxWidth: 620 }))) return
       let done = 0
       for (const ch of changes) {
         const r = await applyCellEdit(conn.id, database, table, pkCols, rowObjAt(ch.row), visibleColumns[ch.col], ch.newValue, true)
@@ -183,7 +173,28 @@ export default function DataPanel({
     } catch (e: any) {
       toast.error('更新失败: ' + (e.message || e))
     }
-  }, [data, colMeta, visibleColumns, conn.id, database, table, load, toast])
+  }, [data, colMeta, visibleColumns, conn.id, database, table, load, toast, confirm])
+
+  // 右键「置为 NULL / 删除行」: 单元格编辑那条通道的另一半 —— 前端只报"哪一行(哪一列)做什么"。
+  // 原来这里前端手搓 `UPDATE 库.表 SET 列 = NULL WHERE 主键 = 值`(删行同理): 标识符不引用(列名撞
+  // order/from 直接语法错), 值也不按方言转义, 还绕开了后端 apply-edit 那条写锁拦截与审计。
+  const runRowWrite = useCallback(async ({ op, row, col, dryRun }: { op: 'set-null' | 'delete-row'; row: number; col?: number; dryRun: boolean }) => {
+    if (!data?.rows || !data.columns) return { ok: false, error: '数据未就绪' }
+    const pkCols = (colMeta ?? []).filter(c => c.key === 'PRI').map(c => c.name)
+    if (pkCols.length === 0) return { ok: false, error: '该表无主键, 无法安全定位行' }
+    const rowObj: Record<string, any> = {}
+    data.columns.forEach((name, i) => { rowObj[name] = data.rows![row]?.[i] })
+    // 网格的列号是可见列投影后的下标, 列名要按同一投影取(行对象相反: 必须用全量列, 主键可能在隐藏列里)
+    if (op === 'delete-row') return applyRowDelete(conn.id, database, table, pkCols, rowObj, !dryRun)
+    return applyCellEdit(conn.id, database, table, pkCols, rowObj, visibleColumns[col!], null, !dryRun)
+  }, [data, colMeta, visibleColumns, conn.id, database, table])
+
+  // 递增 ID 要问库(前端不知道表里现在最大是多少)。列号是可见列投影后的下标, 取名列用同一投影。
+  const runNextId = useCallback(async (col: number) => {
+    const name = visibleColumns[col]
+    if (!name) throw new Error('列不存在')
+    return fetchNextId(conn.id, database, table, name)
+  }, [visibleColumns, conn.id, database, table])
 
   // JSON 视图
   const jsonRows = useMemo(() => {
@@ -304,21 +315,21 @@ export default function DataPanel({
       {/* 常驻筛选状态条: 只要存在"生效中"的筛选条件就显示(不受 showFilterRow 影响), 空结果时也可见, 作为“清除筛选”逃生通道。
           生效判定与 where 生成(:91)完全一致 —— 空值/纯空白的非 NULL 条件视为未生效, 既不进 where 也不在 chip 展示,
           故 chip 里出现的每条, where 里必然也有; IS NULL / IS NOT NULL 不吃 value, 一加即生效, 始终展示。 */}
-      {filters.some(f => f.op === 'IS NULL' || f.op === 'IS NOT NULL' || !!(f.value && f.value.trim())) && (
+      {filters.some(f => buildFilter(f, filterCtx)) && (
         <div className="db-filter-bar">
           <span className="dim db-filter-bar-label">筛选</span>
           {filters.map((f, fi) => {
-            // 与 where 同源的生效判定; 未生效的条件(空值)直接不渲染, 避免"显示但不生效"
-            const eff = f.op === 'IS NULL' || f.op === 'IS NOT NULL' || !!(f.value && f.value.trim())
-            if (!eff) return null
+            // "是否生效"就一次判定: buildFilter 返回 null 的条件既不渲染也不进 WHERE
+            const built = buildFilter(f, filterCtx)
+            if (!built) return null
             return (
               <span key={fi} className="db-filter-chip">
-                <span className="db-filter-chip-text">{filterChipLabel(f)}</span>
-                <button className="db-filter-chip-x" title="移除该条件" onClick={() => setFilters(fs => fs.filter((_, i) => i !== fi))}>✕</button>
+                <span className="db-filter-chip-text">{built.label}</span>
+                <button className="db-filter-chip-x" title="移除该条件" onClick={() => setFiltersApplied(filters.filter((_, i) => i !== fi))}>✕</button>
               </span>
             )
           })}
-          <button className="btn-glass-soft btn-glass-soft-sm db-filter-clear" onClick={() => { setFilters([]); setOrderBy('') }}>清除全部筛选</button>
+          <button className="btn-glass-soft btn-glass-soft-sm db-filter-clear" onClick={() => { setFiltersApplied([]); setOrderBy('') }}>清除全部筛选</button>
         </div>
       )}
 
@@ -330,8 +341,10 @@ export default function DataPanel({
           onChange={setFilters}
           joiner={filterJoiner}
           onJoinerToggle={() => setFilterJoiner(j => (j === 'AND' ? 'OR' : 'AND'))}
-          onClearAll={() => setFilters([])}
-          hint={`多条件 ${filterJoiner} 组合 · 筛选后翻页统计随之变化`}
+          onClearAll={() => setFiltersApplied([])}
+          onApply={applyFilters}
+          dirty={JSON.stringify(filters) !== JSON.stringify(appliedFilters)}
+          hint={`多条件 ${filterJoiner} 组合 · 回车或「应用筛选」才查库`}
         />
       )}
 
@@ -374,13 +387,17 @@ export default function DataPanel({
             onEdit={handleEditChanges}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
-            onFilter={(col, op, value) => { setFilters([{ col, op, value }]); setPage(1) }}
-            onClearFilters={() => { setFilters([]); setOrderBy('') }}
+            onFilter={(col, op, value) => setFiltersApplied([{ col, op, value }])}
+            onClearFilters={() => { setFiltersApplied([]); setOrderBy('') }}
             onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}
+            foreignKeys={(meta?.foreignKeys || []).map(f => ({ column: f.column, refTable: f.refTable, refColumn: f.refColumn, name: f.name }))}
+            onFkJump={(refTable, conds) => onOpenTable?.(refTable, conds)}
             hidePager
             backend={{
               onExport: (sql, format) => exportQuery(conn.id, sql, format),
-              runWrite: sql => runQueryRaw(conn.id, sql),
+              applyRowWrite: runRowWrite,
+              nextId: runNextId,
+              idWorker: fetchIdWorker,
             }}
             emptyState={
               filters.length > 0
@@ -466,6 +483,7 @@ export default function DataPanel({
       ) : (
         <div className="db-empty">选择字段后查看数据</div>
       )}
+      {confirmEl}
     </div>
   )
 }

@@ -5,9 +5,39 @@ import (
 	"testing"
 )
 
-func TestBuildPGLikeMetadataQueriesUseVisibleRelationForPureTable(t *testing.T) {
-	t.Parallel()
+// GetObjects 的四条查询共用别名, 曾经把关系版谓词(c, pg_table_is_visible)贴给了 pg_proc(p) 那条:
+// PG 直接报 missing FROM-clause entry for table "c", 整个对象列表 500。
+// 而且"只把别名换成 p"是假修: pg_table_is_visible 只认 pg_class 的 oid, 判 pg_proc 恒为 false,
+// 函数/存储过程会静默变成空列表。这里钉住 pg_proc 那条必须用 pg_function_is_visible(p.oid)。
+func TestPostgresGetObjectsPinsFunctionVisibilityPredicateToPgProcAlias(t *testing.T) {
+	dbConn, state := openOracleRecordingDB(t)
+	objects, err := (&PostgresDB{conn: dbConn}).GetObjects("postgres")
+	if err != nil {
+		t.Fatalf("GetObjects() error = %v", err)
+	}
+	if len(objects) != 0 {
+		t.Fatalf("空结果集应得到 0 个对象, got %+v", objects)
+	}
 
+	queries := state.snapshotQueries()
+	procSeen := false
+	for _, q := range queries {
+		if strings.Contains(q, "pg_table_is_visible(p.oid)") {
+			t.Fatalf("pg_proc 上用了关系版可见性判据(恒 false, 函数列表会静默变空): %s", q)
+		}
+		if strings.Contains(q, "FROM pg_catalog.pg_proc p") {
+			procSeen = true
+			if !strings.Contains(q, "pg_catalog.pg_function_is_visible(p.oid)") {
+				t.Fatalf("pg_proc 查询缺少 pg_function_is_visible(p.oid): %s", q)
+			}
+		}
+	}
+	if !procSeen {
+		t.Fatalf("没有捕获到 pg_proc 查询, got %#v", queries)
+	}
+}
+
+func TestBuildPGLikeMetadataQueriesUseVisibleRelationForPureTable(t *testing.T) {
 	columnQuery := buildPGLikeColumnsMetadataQuery("", "users")
 	if !strings.Contains(columnQuery, "pg_catalog.pg_table_is_visible(c.oid)") {
 		t.Fatalf("expected visible relation predicate for column metadata, got %s", columnQuery)

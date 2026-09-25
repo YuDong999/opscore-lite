@@ -469,8 +469,7 @@ export interface AuditEntry {
   detail?: string
 }
 
-export async function getUnlockState(id: string): Promise<UnlockState> {
-  return getJSON(`/api/dbmanager/write-unlock?id=${id}`)
+export async function getUnlockState(id: string): Promise<UnlockState> {  return getJSON(`/api/dbmanager/write-unlock?id=${id}`)
 }
 
 export async function unlockWrite(id: string, minutes: number): Promise<{ ok: boolean; remainingSec: number }> {
@@ -629,4 +628,44 @@ export async function applyCellEdit(
   setCol: string, setValue: any, confirm = false,
 ): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
   return postJSON('/api/dbmanager/apply-edit', { id, database, table, pkCols, row, setCol, setValue, confirm })
+}
+
+// ── 行删除: 按主键生成 DELETE 并执行(与 applyCellEdit 同一条链, 只是没有 SET 子句) ──
+export async function applyRowDelete(
+  id: string, database: string, table: string,
+  pkCols: string[], row: Record<string, any>, confirm = false,
+): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
+  return postJSON('/api/dbmanager/apply-delete', { id, database, table, pkCols, row, confirm })
+}
+
+// ── 表级破坏性 DDL: 删表 / 清空表(后端按方言引用标识符 + 走写安全链与审计) ──
+// 别再用 runQueryRaw 发 DDL: /query 的二次确认看的是请求体里的 confirm, 弹窗确认了不传就等于没确认。
+export async function applyTableDDL(
+  id: string, database: string, table: string,
+  action: 'drop' | 'truncate', confirm = false,
+): Promise<{ ok: boolean; affected: number; error?: string; sql?: string; needsConfirm?: boolean }> {
+  return postJSON('/api/dbmanager/apply-ddl', { id, database, table, action, confirm })
+}
+
+// 终止会话(进程列表): 只报 pid, 语句由后端按引擎生成。confirm=false 先拿预览。
+export async function killSession(
+  id: string, pid: number, confirm = false,
+): Promise<{ ok: boolean; affected?: number; error?: string; sql?: string; needsConfirm?: boolean }> {
+  return postJSON('/api/dbmanager/kill-session', { id, pid, confirm })
+}
+
+// ── 生成值: 表内最大值+1 / 本机派生的雪花 workerId ──
+// next 必须是字符串: 19 位雪花 ID 过一遍 JSON number 会被 double 截掉精度
+export async function fetchNextId(id: string, database: string, table: string, column: string): Promise<string> {
+  const r = await postJSON<{ ok: boolean; next?: string; error?: string }>('/api/dbmanager/next-id', { id, database, table, column })
+  if (!r.ok) throw new Error(r.error || '取号失败')
+  return r.next || ''
+}
+
+let idWorkerCache: number | null = null
+export async function fetchIdWorker(): Promise<number> {
+  if (idWorkerCache !== null) return idWorkerCache
+  const r = await getJSON<{ workerId: number }>('/api/dbmanager/id-worker')
+  idWorkerCache = r.workerId
+  return idWorkerCache
 }
