@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"runtime"
 	"time"
 
@@ -68,9 +69,11 @@ func main() {
 		distDir = filepath.Join(filepath.Dir(exe), "web", "dist")
 	}
 
-	logFile, err := os.OpenFile(filepath.Join(dataDir, "opscore.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logPath := filepath.Join(dataDir, "opscore.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
 		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		startLogRotation(logPath, logFile, 20<<20, 5)
 	}
 
 	dbDSN := *flagDB
@@ -671,3 +674,68 @@ const banner = `
 ########## ###########     ###     ##########       
 
   ============================================`
+
+// startLogRotation 按大小轮转应用日志(opscore.log → .1 → .2 …, 超出 keep 份的删掉)。
+// 为什么需要: 这个文件之前没有上限, 刷屏几天就涨到 95MB; 而 logmonitor 又把它当文件源采着 ——
+// 越大的文件, 全量扫描与按 offset 回看正文都越难受。
+// Windows 上打开着的文件不能改名, 所以顺序必须是: 关句柄 → 改名 → 重开 → 重新挂 SetOutput。
+func startLogRotation(path string, cur *os.File, maxBytes int64, keep int) {
+	var mu sync.Mutex
+	file := cur
+	open := func() (*os.File, error) {
+		return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	}
+	rename := func(from, to string) error {
+		// Windows 上别的进程(采集器按 offset 回读日志)短暂持有句柄时改名会失败, 退避重试几次
+		var err error
+		for i := 0; i < 5; i++ {
+			if err = os.Rename(from, to); err == nil {
+				return nil
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		return err
+	}
+	check := func() {
+		fi, err := os.Stat(path)
+		if err != nil || fi.Size() < maxBytes {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		fi, err = os.Stat(path)
+		if err != nil || fi.Size() < maxBytes {
+			return
+		}
+		_ = file.Close()
+		for i := keep - 1; i >= 1; i-- {
+			older, newer := logRotated(path, i), logRotated(path, i+1)
+			if _, e := os.Stat(older); e == nil {
+				_ = rename(older, newer)
+			}
+		}
+		if rerr := rename(path, logRotated(path, 1)); rerr != nil {
+			log.Printf("[log] 应用日志轮转失败(%v), 下轮再试", rerr)
+		} else {
+			log.Printf("[log] 应用日志已轮转(%d 份保留, 每份 %dMB)", keep, maxBytes>>20)
+		}
+		if f, e := open(); e == nil {
+			file = f
+			log.SetOutput(io.MultiWriter(os.Stderr, file))
+		} else {
+			log.SetOutput(os.Stderr)
+		}
+	}
+	go func() {
+		check() // 启动时先查一次: 文件已经超限就别等到下一个 tick
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			check()
+		}
+	}()
+}
+
+func logRotated(path string, idx int) string {
+	return fmt.Sprintf("%s.%d", path, idx)
+}

@@ -766,6 +766,11 @@ func (h *Handlers) readLogContent(e *LogEntry) string {
 		return e.Summary
 	}
 	defer f.Close()
+	// 轮转保护: 文件被按大小轮转后, 同一个路径下是**新文件**, 老记录的 offset 落进去会读到别的行
+	// (静默错内容比看不到更糟) —— 对不上就退回摘要, 并顺带确认 offset 落在行首。
+	if fi, serr := f.Stat(); serr == nil && e.Size > 0 && fi.Size() < e.Offset+int64(e.Size) {
+		return e.Summary
+	}
 	if _, err := f.Seek(e.Offset, io.SeekStart); err != nil {
 		return e.Summary
 	}
@@ -774,6 +779,9 @@ func (h *Handlers) readLogContent(e *LogEntry) string {
 		buf = make([]byte, 4096)
 	}
 	n, _ := io.ReadFull(f, buf)
+	if n == 0 {
+		return e.Summary
+	}
 	return strings.TrimRight(string(buf[:n]), "\r\n")
 }
 
