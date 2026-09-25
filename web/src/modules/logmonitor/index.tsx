@@ -376,6 +376,9 @@ export default function LogMonitorModule() {
   const [scanPath, setScanPath] = useState('')
   const [scanSvc, setScanSvc] = useState('')
   const [scanIdx, setScanIdx] = useState('')
+  // 扫描是整个文件一次读完的同步请求(95MB 的日志要几十分钟), 中途没有任何进度上报 ——
+  // 不给"进行中"状态的话用户会以为没反应、再点一次, 叠加扫描只会互相锁库 + 多存一份
+  const [scanBusy, setScanBusy] = useState(false)
   const [srcOpen, setSrcOpen] = useState(false)
   const [srcDraft, setSrcDraft] = useState<LogSource>({ id: '', name: '', type: 'file', path: '', service: '', enabled: true, follow: false })
 
@@ -872,10 +875,12 @@ const [selCluster, setSelCluster] = useState('1')
   }
 
   async function doScan() {
+    if (scanBusy) return
     if (!scanPath.trim()) {
       pushToast('err', '请输入要扫描的文件路径')
       return
     }
+    setScanBusy(true)
     try {
       const r = await postJSON('/api/logmonitor/scan', { path: scanPath, service: scanSvc, source: 'file', indexId: scanIdx })
       pushToast('ok', `扫描完成, 共入库 ${r.scanned} 条日志`)
@@ -884,6 +889,8 @@ const [selCluster, setSelCluster] = useState('1')
       runSearch()
     } catch (e: any) {
       pushToast('err', '扫描失败: ' + (e?.message || ''))
+    } finally {
+      setScanBusy(false)
     }
   }
 
@@ -1598,14 +1605,8 @@ function clearFilters() {
                     <>
                       <div className="kib-docs-scroll">
                         <table className="kib-docs-table">
-                          <colgroup>
-                            <col style={{ width: '15%' }} />
-                            <col style={{ width: '4%' }} />
-                            <col style={{ width: '42%' }} />
-                            <col style={{ width: '12%' }} />
-                            <col style={{ width: '13%' }} />
-                            <col style={{ width: '14%' }} />
-                          </colgroup>
+                          {/* 列宽不再写死(原来 colgroup 里 时间 15%/级别 4%/内容 42%…): 级别被压到 17px、
+                              连 INFO 都放不下。现在由内容决定: 小列按最宽单元格自适应, 日志内容列吃剩下的空间。 */}
                           <thead>
                             <tr>
                               <th>时间</th>
@@ -2476,31 +2477,36 @@ function clearFilters() {
 
       {/* 通用表单: 扫描入库 (替换 window.prompt) */}
       {scanOpen && (
-        <div className="kib-modal-mask" onClick={() => setScanOpen(false)}>
+        <div className="kib-modal-mask" onClick={() => { if (!scanBusy) setScanOpen(false) }}>
           <div className="kib-modal" onClick={(e) => e.stopPropagation()}>
             <h3>扫描文件入库</h3>
             <div className="kib-inline-form">
               <div className="kib-form-row">
                 <label htmlFor="scan-path">日志文件绝对路径 *</label>
-                <input id="scan-path" value={scanPath} onChange={(e) => setScanPath(e.target.value)} placeholder="/var/log/syslog" />
+                <input id="scan-path" value={scanPath} onChange={(e) => setScanPath(e.target.value)} placeholder="/var/log/syslog" disabled={scanBusy} />
               </div>
               <div className="kib-form-row">
                 <label htmlFor="scan-svc">归属服务</label>
-                <input id="scan-svc" value={scanSvc} onChange={(e) => setScanSvc(e.target.value)} placeholder="留空自动提取" />
+                <input id="scan-svc" value={scanSvc} onChange={(e) => setScanSvc(e.target.value)} placeholder="留空自动提取" disabled={scanBusy} />
               </div>
               <div className="kib-form-row">
                 <label htmlFor="scan-idx">归属索引(可选, 双写到归档)</label>
-                <select id="scan-idx" value={scanIdx} onChange={(e) => setScanIdx(e.target.value)}>
+                <select id="scan-idx" value={scanIdx} onChange={(e) => setScanIdx(e.target.value)} disabled={scanBusy}>
                   <option value="">未归属</option>
                   {allIndexes.map((ix) => (
                     <option key={ix.id} value={ix.id}>{ix.name || ix.id}</option>
                   ))}
                 </select>
               </div>
+              {scanBusy && (
+                <div style={{ color: 'var(--text-dim)', fontSize: 12, lineHeight: '18px' }}>
+                  扫描中…整个文件要一次读完(95MB 的日志可能要几十分钟)，中途没有进度上报，请勿重复点击。
+                </div>
+              )}
             </div>
             <div className="kib-modal-actions">
-              <button className="kib-btn kib-btn-bare" onClick={() => setScanOpen(false)}>取消</button>
-              <button className="kib-btn kib-btn-primary" onClick={doScan}>开始扫描</button>
+              <button className="kib-btn kib-btn-bare" onClick={() => setScanOpen(false)} disabled={scanBusy}>取消</button>
+              <button className="kib-btn kib-btn-primary" onClick={doScan} disabled={scanBusy}>{scanBusy ? '扫描中…' : '开始扫描'}</button>
             </div>
           </div>
         </div>

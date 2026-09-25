@@ -92,7 +92,10 @@ func defaultParserRules() []ParserRule {
 			Name:  "default",
 			Match: RuleMatch{},
 			Time: TimeRule{
-				Regex: `(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)`,
+				// 日期分隔符同时吃 - 和 / —— Go 标准库 log 默认写 "2026/09/24 12:27:06"，
+				// 只认短横线时这类行时间匹配不上，ts 会退化成"入库时刻"，一整批日志全堆在同一秒
+				// (实测: 采我们自己 data/opscore.log 的 19,204 行全部落到同一时刻)。
+				Regex: `(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)`,
 			},
 			Level: LevelRule{
 				Regex:   `\b(ERROR|WARN|INFO|DEBUG|FATAL)\b`,
@@ -144,6 +147,9 @@ func compileRules(src []ParserRule) ([]compiledRule, error) {
 var builtinTimeFormats = []string{
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02 15:04:05",
+	// Go 标准库 log 的默认布局(斜杠日期), 见 defaultParserRules 的说明
+	"2006/01/02 15:04:05.999999999",
+	"2006/01/02 15:04:05",
 	"2006-01-02T15:04:05.999999999Z07:00",
 	"2006-01-02T15:04:05Z07:00",
 }

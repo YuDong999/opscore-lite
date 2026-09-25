@@ -257,7 +257,11 @@
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.kib-docs-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* 列宽按内容自适应(原来 fixed + 写死百分比: 级别列只剩 17px, 连 INFO 都放不下):
+   小列取"最宽单元格"的宽度, 日志内容列吃剩下空间。max-width:0 + overflow:hidden
+   是让 ellipsis 在 auto 布局下生效、且超长行不会把整张表撑宽的关键。 */
+.kib-docs-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+.kib-docs-table .kib-docs-sum { width: 100%; max-width: 0; }
 .kib-docs-table th {
   text-align: left;
   padding: 0.4375rem 0.75rem;
@@ -801,3 +805,80 @@
   border-color: var(--danger) !important;
   background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
 }
+
+/* ── 工具条控件统一尺寸 ──
+   此前同一排里四种高度、两种字号(实测: 数据视图 select 30px / Live 19px / kib-btn 26px / 搜索框 32px,
+   字号 10.16px 与 9.375px 混用): 每个控件各写各的 rem 内边距, 而数据视图 select 与搜索 input 连 class 都没有,
+   直接落到元素默认样式。这里统一成"高 28px + 字 12px + 行高撑满内容盒", 全部用 px 不跟根字号漂;
+   横向内边距保留各自的值(下拉右侧要留箭头位)。 */
+.kib-topbar .kib-dataview select,
+.kib-topbar .kib-time,
+.kib-topbar .kib-search input,
+.kib-topbar .kib-btn,
+.kib-topbar .kib-live {
+  height: 28px;
+  min-height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+  line-height: 26px;
+  box-sizing: border-box;
+}
+.kib-topbar .kib-live { line-height: 1; }
+
+/* ── 全模块表单控件尺寸统一 ──
+   这个模块混用了三套类族: 自己的 kib-* 、全局的 btn-glass/.input/log-* 、以及裸元素。每套各写各的
+   rem 内边距, 于是同一页里控件高度 19/23/26/28/32/41px、字号 9.375/10.156/12px 混排(实测) ——
+   "服务过滤"那行的输入框比旁边的按钮高一头就是这么来的。
+   统一到一套: 高 28px、字 12px、行高撑满内容盒, 全用 px 不跟根字号漂。
+   勾选框/单选框/文件框/文本域保持原样 —— 它们本来就该是别的尺寸。 */
+.kib-page input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.kib-page select,
+.kib-page .btn-glass,
+.kib-page .btn-glass-soft,
+.kib-page .kib-btn,
+.kib-page .kib-live {
+  height: 28px;
+  min-height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+  line-height: 26px;
+  box-sizing: border-box;
+}
+.kib-page .kib-live { line-height: 1; }
+
+/* .compact-tabs 之前在 JSX 上挂着、CSS 里从没定义过(死类名): 于是那排页签用的是全局 .tab,
+   文字一换行就撑到 56px, 和下面 28px 的控件排在一起高低不齐。这里补上定义 —— 紧凑页签, 与全模块控件同高,
+   并且不许换行(5 个页签的标题长短不一, 换行会让它们各自不一样高)。 */
+.kib-page .compact-tabs { gap: 6px; }
+.kib-page .compact-tabs .tab {
+  height: 28px; min-height: 28px; padding: 0 10px;
+  font-size: 12px; line-height: 26px; white-space: nowrap; box-sizing: border-box;
+  display: inline-flex; align-items: center;
+}
+
+/* ── 表格文字尺寸统一 ──
+   同一行里混了三种字号: .log-table 0.8125rem(10.16px) / .log-mono 0.75rem(9.375px) / .kib-badge 0.6875rem(8.59px),
+   内边距也全是 rem 值 —— 分片表那行"名字小、类型大、时间又小、状态标签更小"就是这么来的。
+   统一成: 单元格与等宽字体 12px(与控件同档), 标签 11px; 内边距全部 px。 */
+.kib-page .log-table,
+.kib-page .log-table th, .kib-page .log-table td,
+.kib-page .log-mono,
+.kib-page .kib-docs-table th, .kib-page .kib-docs-table td,
+.kib-page .kib-docs-sum, .kib-page .kib-ts,
+.kib-page .kib-docs-src, .kib-page .kib-docs-svc {
+  font-size: 12px;
+}
+.kib-page .log-table th, .kib-page .log-table td { padding: 6px 8px; }
+.kib-page .kib-docs-table th, .kib-page .kib-docs-table td { padding: 6px 8px; }
+.kib-page .kib-badge {
+  height: 18px; min-width: 24px; padding: 0 6px; border-radius: 9px;
+  font-size: 11px; line-height: 18px;
+}
+
+/* 单元格不折行 + 卡片横向滚动 ——
+   这几个表都没有 .log-table-wrap 容器, 一提字号就会在窄窗口里把每列压缩、文字折行, 行高从 40 涨到 75。
+   让单元格保持一行(数据表本来就该这样), 需要横向空间时由卡片滚动。 */
+.kib-page .log-table th, .kib-page .log-table td { white-space: nowrap; }
+.kib-page .glass.log-card { overflow-x: auto; }

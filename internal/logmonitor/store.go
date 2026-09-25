@@ -1386,9 +1386,13 @@ func (s *Store) termsUncached(q *LogTermsQuery) (*TermsResult, error) {
 	if field == "" {
 		field = "service" // 默认按 service 聚合
 	}
-	// 只允许安全的字段
+	// 只允许安全的字段。indexId 是前端传来的 API 名, 物理列叫 index_id —— 必须映射,
+	// 否则拼出 GROUP BY indexId, SQLite 直接 "no such column: indexId"(实测 Discover 页那个
+	// "按索引" 面板就是 500)。
 	switch field {
-	case "service", "level", "source", "indexId":
+	case "service", "level", "source":
+	case "indexId", "index_id":
+		field = "index_id"
 	default:
 		return nil, fmt.Errorf("unsupported terms field: %s", field)
 	}

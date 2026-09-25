@@ -35,6 +35,8 @@ type Service struct {
 	cancel   chan struct{}
 	// 采集状态
 	inFlight atomic.Int64
+	// 采集失败日志限流(同一条故障不刷屏, 见 pollerrs.go)
+	pollErrs pollErrLimiter
 }
 
 func NewService(store *Store, archiver *Archiver) *Service {
@@ -261,24 +263,27 @@ func (s *Service) pollContainer(src *LogSource) {
 	lines, err := CollectDockerLogsSince(src.Path, src.LastTs)
 	if err != nil {
 		// 采集命令已带 15s 硬超时, 不会永久挂起; 失败必须留痕(此前静默 return, 故障不可见)
-		log.Printf("[logmonitor] poll 容器 %s 失败: %v", src.Path, err)
+		s.pollFail("容器 "+src.Path, err.Error())
 		return
 	}
+	s.pollErrs.recover("容器 " + src.Path)
 	s.ingestIncremental(src, lines, "container")
 }
 
 func (s *Service) pollK8s(src *LogSource) {
 	kc := kubeconfigPathFor(s.dataDir, src.Cluster)
 	if kc == "" {
-		log.Printf("[logmonitor] poll pod %s/%s 失败: 集群 %s 无 kubeconfig", src.Namespace, src.Path, src.Cluster)
+		// 无 kubeconfig 是集群级故障: 按集群报一条就够, 否则该集群下每个 pod 各刷一行
+		s.pollFail("集群 "+src.Cluster+" (k8s)", "无 kubeconfig, 该集群下的 pod 源本轮全部跳过")
 		return
 	}
 	// 首采(lastTs=0)不带 since-time，取尾巴后续增量; 已有游标则增量
 	lines, err := CollectK8sPodLogsSince(kc, src.Namespace, src.Path, src.LastTs)
 	if err != nil {
-		log.Printf("[logmonitor] poll pod %s/%s 失败: %v", src.Namespace, src.Path, err)
+		s.pollFail(fmt.Sprintf("pod %s/%s", src.Namespace, src.Path), err.Error())
 		return
 	}
+	s.pollErrs.recover(fmt.Sprintf("pod %s/%s", src.Namespace, src.Path))
 	s.ingestIncremental(src, lines, "k8s")
 }
 
