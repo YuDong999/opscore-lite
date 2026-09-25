@@ -9,6 +9,7 @@ import { FilterWorkbench } from './FilterWorkbench'
 import { useConfirm } from '../../lib/hooks/useConfirm'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import { buildFilter, buildWhere, type FilterCond } from './filterSql'
+import { humanizeDbError } from './dbErrors'
 
 type ViewMode = 'table' | 'json' | 'text'
 
@@ -189,7 +190,13 @@ export default function DataPanel({
         okText: '提交', danger: true, maxWidth: 680,
       }))) return { ok: true, cancelled: true }
       const r = await applyBatch(conn.id, database, table, pkCols, ops, true)
-      if (!r.ok) return { ok: false, error: r.error || '提交失败' }
+      if (!r.ok) {
+        // 后端已回滚并给出 failedAt(第几条); 把库的原文翻成人话, 并点名到那条对应的单元格
+        const bad = r.failedAt && changes[r.failedAt - 1]?.col !== undefined
+          ? [{ row: changes[r.failedAt - 1].row, col: changes[r.failedAt - 1].col! }]
+          : undefined
+        return { ok: false, error: humanizeDbError(r.error || '提交失败'), badCells: bad }
+      }
       load()
       return { ok: true, affected: r.affected }
     } catch (e: any) {
@@ -220,7 +227,7 @@ export default function DataPanel({
       let done = 0
       for (const ch of changes) {
         const r = await applyCellEdit(conn.id, database, table, pkCols, rowObjAt(ch.row), visibleColumns[ch.col], ch.newValue, true)
-        if (!r.ok) throw new Error(r.error || '写入失败')
+        if (!r.ok) throw new Error(humanizeDbError(r.error || '写入失败'))
         done += r.affected ?? 0
       }
       toast.success(`已更新 ${changes.length} 个单元格 (影响 ${done} 行)`)
