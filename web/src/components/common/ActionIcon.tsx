@@ -1,9 +1,37 @@
 // 通用操作图标集(SVG, 禁止 emoji/dingbat) —— L2 公共层(自 DbIcons 提取, 引擎品牌图标仍在 DatabaseManager/DbIcons)
 /** 小操作图标(全部为 SVG, 禁止 emoji/dingbat): 测试/编辑/删除/刷新/关闭/新建查询/查看数据/复制/齿轮/表结构 */
-export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right' | 'eye' | 'eye-off'
+export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right' | 'eye' | 'eye-off' | 'filter' | 'sort-asc' | 'sort-desc' | 'wand'
 export function ActionIcon({ kind, size = 13 }: { kind: ActionIconKind; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (kind) {
+    case 'wand':
+      return (
+        <svg {...common}>
+          <path d="M12 3l2.2 6.5L21 12l-6.8 2.5L12 21l-2.2-6.5L3 12l6.8-2.5z" />
+        </svg>
+      )
+    case 'filter':
+      return (
+        <svg {...common}>
+          <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+        </svg>
+      )
+    case 'sort-asc':
+      return (
+        <svg {...common}>
+          <path d="m3 8 4-4 4 4" />
+          <path d="M7 4v16" />
+          <path d="M13 6h8M13 11h5M13 16h2" />
+        </svg>
+      )
+    case 'sort-desc':
+      return (
+        <svg {...common}>
+          <path d="m3 16 4 4 4-4" />
+          <path d="M7 20V4" />
+          <path d="M13 6h2M13 11h5M13 16h8" />
+        </svg>
+      )
     case 'test':
       return (
         <svg {...common}>

@@ -15,7 +15,7 @@ interface MigrationResult {
 }
 
 export default function SettingsModule() {
-  const { theme, setTheme, meta } = useTheme()
+  const { theme, setTheme, meta, surface, setSurface, corner, setCorner } = useTheme()
   const [token, setToken] = useState('')
   const [configured, setConfigured] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -113,6 +113,56 @@ export default function SettingsModule() {
                 }} />
               </div>
               <span style={{ fontSize:'0.8125rem', fontWeight: 600 }}>{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20, marginBottom: 24 }}>
+        <h2 style={{ fontSize:'1.125rem', fontWeight: 700, marginBottom: 4 }}>界面质感</h2>
+        <p style={{ fontSize:'0.8125rem', color: 'var(--text-dim)', marginBottom: 16 }}>
+          主题管强调色，扁平档会把表面换成中性灰（dbx 风格）；圆角尺度独立可调。
+        </p>
+        <div style={{ display:'flex', gap:'0.5rem', flexWrap:'wrap', marginBottom: 14 }}>
+          {([
+            { id: 'glass', label: '玻璃', hint: '半透明 + 背景模糊 + 渐变底，保留主题色调' },
+            { id: 'flat', label: '扁平', hint: '中性灰实色 + 无模糊无渐变' },
+          ] as const).map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSurface(s.id)}
+              title={s.hint}
+              style={{
+                padding: '0.5rem 0.875rem', cursor: 'pointer', textAlign: 'left',
+                borderRadius: 'var(--radius-sm)',
+                border: `2px solid ${surface === s.id ? 'var(--accent)' : 'var(--border)'}`,
+                background: surface === s.id ? 'var(--surface-tint)' : 'var(--surface-solid)',
+                color: 'var(--text)',
+              }}
+            >
+              <div style={{ fontSize:'0.8125rem', fontWeight: 600 }}>{s.label}</div>
+              <div style={{ fontSize:'0.6875rem', color: 'var(--text-dim)' }}>{s.hint}</div>
+            </button>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:'0.5rem', flexWrap:'wrap' }}>
+          {([
+            { id: 'round', label: '圆角 · 柔和', hint: '.75rem 基准' },
+            { id: 'compact', label: '圆角 · 紧凑', hint: '4/6px，工具型密度' },
+          ] as const).map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setCorner(c.id)}
+              title={c.hint}
+              style={{
+                padding: '0.5rem 0.875rem', cursor: 'pointer',
+                borderRadius: 'var(--radius-sm)',
+                border: `2px solid ${corner === c.id ? 'var(--accent)' : 'var(--border)'}`,
+                background: corner === c.id ? 'var(--surface-tint)' : 'var(--surface-solid)',
+                color: 'var(--text)', fontSize:'0.8125rem', fontWeight: 600,
+              }}
+            >
+              {c.label}
             </button>
           ))}
         </div>

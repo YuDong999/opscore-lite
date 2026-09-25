@@ -29,6 +29,9 @@ export interface ContextMenuItem {
 /** 兼容别名类型(cicd 版导出名) */
 export type CtxMenuItem = ContextMenuItem
 
+/** 子菜单展开所需预留宽度(px): 与 .db-ctx-menu-subpanel 的 min-width 对齐, 用于越界判定 */
+const SUB_W = 200
+
 export function ContextMenu({
   x,
   y,
@@ -45,6 +48,8 @@ export function ContextMenu({
   const items = rawItems || []
   // 标准定位: 光标点=菜单左上角; 渲染后实测尺寸, 视口边缘翻转(下→上, 右→左), 保证完整可见
   const [pos, setPos] = useState({ x, y })
+  // 二级子菜单默认挂右侧; 根菜单右缘留给子菜单的宽度不够时改挂左侧(否则贴右边界的列展开就看不见)
+  const [subLeft, setSubLeft] = useState(false)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -56,6 +61,7 @@ export function ContextMenu({
     if (x + r.width > window.innerWidth - margin) nx = Math.max(margin, x - r.width)
     if (y + r.height > window.innerHeight - margin) ny = Math.max(margin, y - r.height)
     setPos((prev) => (prev.x === nx && prev.y === ny ? prev : { x: nx, y: ny }))
+    setSubLeft(nx + r.width + SUB_W > window.innerWidth - margin)
   }, [x, y, items.length])
 
   useEffect(() => {
@@ -132,7 +138,7 @@ export function ContextMenu({
 
   // portal 到 body: 脱离 .db-side 层叠上下文, 否则被兄弟 .db-main 盖住
   return createPortal(
-    <div className="db-ctx-menu" ref={ref} style={style}>
+    <div className={`db-ctx-menu${subLeft ? ' db-ctx-menu-sub-left' : ''}`} ref={ref} style={style}>
       {renderItems(items, false)}
     </div>,
     document.body,

@@ -23,7 +23,7 @@
 **L2 `components/common/` + `lib/`** —— 认识业务，但不挑模块
 - `Modal.tsx` 统一弹层（`Modal` / `ConfirmModal`）—— **已建并完成全仓接入**
 - `OptSelect.tsx` 可选值下拉（**已提升** 2026-09-19，LogMonitor/Cicd/TrafficTab 共用）
-- `DataGrid.tsx` 数据表格（**已提升** 2026-09-19：类型单一事实源随组件，后端交互经 `backend` prop 注入（onExport/runWrite），L2 不再依赖模块 api 层；api.ts 反向 re-export 类型）
+- `DataGrid.tsx` 数据表格（**已提升** 2026-09-19：类型单一事实源随组件，后端交互经 `backend` prop 注入（onExport/applyRowWrite），L2 不再依赖模块 api 层；api.ts 反向 re-export 类型）
 - `ActionIcon.tsx` 通用操作图标（**已提升** 2026-09-19，自 DbIcons 提取）
 - **位置变更（09-19）**：DatabaseManager 全家（22 文件）已从 `components/DatabaseManager/` 迁入 `modules/dbmanager/`——L3 私有组件不再占用 L1/L2 目录位；引擎品牌图标随迁至 `modules/dbmanager/DbIcons.tsx`
 - `GaugeCard.tsx` 百分比仪表盘卡片（**已建** 2026-09-19）。~~收编资源页 CPU / K8s Ready 率两处~~ 现实际消费者仅 K8s Ready 率一处（资源页 CPU 已按主理人指示恢复内联实现）——单人 L2，保留原因：承载 canvas 几何自适应的成套教训，且百分比 gauge 预期会再出现。

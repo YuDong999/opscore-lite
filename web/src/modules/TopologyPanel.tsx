@@ -1,9 +1,14 @@
 // ── 网络拓扑: 主机实体 / 网卡 / 网关 / 主机发现 / LLDP 设备 ──
 // 图模式: ECharts force 图; 树模式: 从实体/self 出发按边层级展开
+// 2026-09-20 优化: 轮询内容签名比对(拓扑不变不触发力导向重排, 拖动布局不再被打断);
+// 广播/组播/链路本地噪音节点过滤(默认隐藏, 可切换); label/legend 主题色(cssVar 解析,
+// canvas 不认 CSS 变量); 边按类型着色(路由/网卡/上联/可达); 首扫 skeleton;
+// 重新扫描防连点; labelLayout.hideOverlap 防标注重叠。
 
 import { useEffect, useMemo, useState } from 'react'
 import { getJSON } from '../api/client'
 import { useHost } from '../components/HostContext'
+import { cssVar } from '../lib/theme'
 import EChart from '../charts/EChart'
 
 interface Segment { cidr: string; gateway?: string; iface?: string; via: string; localIp?: string; remoteOf?: string }
@@ -12,6 +17,13 @@ interface Link { from: string; to: string; type: string }
 interface Topology { segments: Segment[]; devices: Device[]; links: Link[]; scanned: boolean; elapsed: string }
 
 const keyOf = (d: Device) => d.type === 'entity' ? `entity:${d.hostname || '本机'}` : d.ip || `lldp:${d.hostname || ''}`
+
+// 拓扑内容签名(剔除 elapsed): 轮询返回与现况一致时保持旧引用, 避免 ECharts setOption 重跑力导向
+const topoSig = (d: Topology) => JSON.stringify([d.segments, d.devices, d.links])
+
+// 噪音地址: 广播(.255/255.255.255.255) / 组播(224/239) / 链路本地(169.254)
+const isNoiseIp = (ip?: string) =>
+  !!ip && (ip === '255.255.255.255' || /\.255$/.test(ip) || /^(224|239)\./.test(ip) || /^169\.254\./.test(ip))
 
 const NODE_STYLE: Record<string, { size: number; color: string; symbol: string }> = {
   entity:  { size: 34, color: '#8f7ce0', symbol: 'circle' },
@@ -62,6 +74,14 @@ const treeKind = (d: Device) => {
 
 const CATEGORIES = ['主机实体', '本机', '网关/路由', '交换机', '网卡', '在线主机', '离线']
 
+// 边类型 → 视觉: 路由黄实线 / 网卡蓝实线 / 上联紫虚线 / 可达灰细线
+const EDGE_STYLE: Record<string, { color: string; width: number; opacity: number; type?: string }> = {
+  route:  { color: '#e6b450', width: 1.6, opacity: 0.85 },
+  iface:  { color: '#59b8e8', width: 1.6, opacity: 0.8 },
+  uplink: { color: '#8f7ce0', width: 1.4, opacity: 0.7, type: 'dashed' },
+  reach:  { color: '#98a2b3', width: 1, opacity: 0.3 },
+}
+
 export default function TopologyPanel() {
   const { selected } = useHost()
   const url = selected?.id
@@ -70,8 +90,10 @@ export default function TopologyPanel() {
   const [data, setData] = useState<Topology | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [scanning, setScanning] = useState(false)
   const [view, setView] = useState<'graph' | 'dir'>('graph')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [showNoise, setShowNoise] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -79,27 +101,35 @@ export default function TopologyPanel() {
       getJSON<Topology>(url)
         .then((d) => {
           if (!alive) return
-          setData(d)
+          setData((prev) => (prev && topoSig(prev) === topoSig(d) ? prev : d))
           setError(null)
         })
         .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)))
         .finally(() => alive && setLoading(false))
     load()
-    const t = setInterval(load, 5000)
+    const t = setInterval(load, 30000) // 对齐后端 30s 缓存 TTL; 内容签名比对保证拓扑不变时图不重排
     return () => { alive = false; clearInterval(t) }
   }, [url])
 
   const rescan = () => {
+    if (scanning) return
+    setScanning(true)
     setLoading(true)
     getJSON<Topology>(`${url}${url.includes('?') ? '&' : '?'}force=1`)
-      .then((d) => { setData(d); setError(null) })
+      .then((d) => { setData((prev) => (prev && topoSig(prev) === topoSig(d) ? prev : d)); setError(null) })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
+      .finally(() => { setScanning(false); setLoading(false) })
   }
 
+  // 噪音过滤后的设备列表(图/树/表三处同源); showNoise=true 时还原全量
+  const devices = useMemo(
+    () => (data ? (showNoise ? data.devices : data.devices.filter((d) => !isNoiseIp(d.ip))) : []),
+    [data, showNoise],
+  )
+
   const option = useMemo(() => {
-    if (!data) return {}
-    const nodes = data.devices.map((d) => {
+    if (!data || devices.length === 0) return {}
+    const nodes = devices.map((d) => {
       const { st, cat } = nodeStyle(d)
       return {
         id: keyOf(d),
@@ -118,42 +148,47 @@ export default function TopologyPanel() {
     const ids = new Set(nodes.map((n) => n.id))
     const links = data.links
       .filter((l) => ids.has(l.from) && ids.has(l.to))
-      .map((l) => ({ source: l.from, target: l.to, lineStyle: { opacity: 0.5 } }))
+      .map((l) => ({ source: l.from, target: l.to, lineStyle: { ...EDGE_STYLE[l.type] } }))
     return {
       tooltip: {
         formatter: (p: any) => p.dataType === 'node' ? `<b>${p.name}</b><br/>${p.value ?? ''}` : '',
       },
-      legend: { data: CATEGORIES, top: 0, textStyle: { fontSize: 11, color: '#999' } },
+      legend: { data: CATEGORIES, top: 0, textStyle: { fontSize: 11, color: cssVar('--text-dim') } },
       series: [{
         type: 'graph',
         layout: 'force',
         roam: true,
+        scaleLimit: { min: 0.25, max: 5 },
         draggable: true,
         data: nodes,
         links,
         categories: CATEGORIES.map((name) => ({ name })),
         force: { repulsion: 150, edgeLength: 90, gravity: 0.1, friction: 0.6 },
-        label: { show: true, fontSize: 10, color: '#ccc' },
+        label: { show: true, fontSize: 10, color: cssVar('--text') },
+        labelLayout: { hideOverlap: true },
         emphasis: { focus: 'adjacency', lineStyle: { width: 2 } },
       }],
     }
-  }, [data])
+  }, [data, devices])
 
   // ===== 树视图 =====
   const tree = useMemo(() => {
-    if (!data) return []
+    if (!data || devices.length === 0) return []
     const byKey = new Map<string, Device>()
-    data.devices.forEach((d) => byKey.set(keyOf(d), d))
+    devices.forEach((d) => byKey.set(keyOf(d), d))
+    const kept = new Set(byKey.keys())
+    // 噪音节点被过滤后, 涉及它们的边一并剔除, 防止树里出现只有键名的幽灵节点
+    const liveLinks = data.links.filter((l) => kept.has(l.from) && kept.has(l.to))
     // 根: 本机实体 (source=entity), 无则 self (source=local 无 iface)
-    let root: Device | undefined = data.devices.find((d) => d.type === 'entity')
-    if (!root) root = data.devices.find((d) => d.source === 'local' && d.type === 'host' && !d.iface)
+    let root: Device | undefined = devices.find((d) => d.type === 'entity')
+    if (!root) root = devices.find((d) => d.source === 'local' && d.type === 'host' && !d.iface)
     if (!root) return []
     let selfKey: string | null = null
     // 远程主机视角 (无实体节点, 根为 self): 将 self 的 route 网关提升为树根,
     // 使同网段主机(含 self)成为网关的平级子节点; self 保留高亮并标注「(当前)」
     if (root.type === 'host' && root.source === 'local' && !root.iface) {
       selfKey = keyOf(root)
-      const gwLink = data.links.find((l) => (l.from === selfKey || l.to === selfKey) && l.type === 'route')
+      const gwLink = liveLinks.find((l) => (l.from === selfKey || l.to === selfKey) && l.type === 'route')
       if (gwLink) {
         const gwKey = gwLink.from === selfKey ? gwLink.to : gwLink.from
         const gw = byKey.get(gwKey)
@@ -168,17 +203,17 @@ export default function TopologyPanel() {
       adj.get(a)!.push({ to: b, type: t })
       adj.get(b)!.push({ to: a, type: t })
     }
-    data.links.forEach((l) => pushEdge(l.from, l.to, l.type))
+    liveLinks.forEach((l) => pushEdge(l.from, l.to, l.type))
 
     const EDGE_PRIO: Record<string, number> = { iface: 0, route: 1, reach: 2, uplink: 3 }
     // 树层级辅助: 实体根键 / 本机网卡键 / 每个主机归属的网关键
     // (route 边优先定归属, 缺失时按网关 reach 边补; 归属网段的主机只允许挂在网关下)
-    const entityDev = data.devices.find((d) => d.type === 'entity')
+    const entityDev = devices.find((d) => d.type === 'entity')
     const entityK = entityDev ? keyOf(entityDev) : null
     const isLocalIface = new Set<string>()
     const isGateway = new Set<string>()
     const subnetOf = new Map<string, string>()
-    data.devices.forEach((d) => {
+    devices.forEach((d) => {
       const k = keyOf(d)
       if (d.source === 'local' && d.iface) isLocalIface.add(k)
       if (d.type === 'gateway') isGateway.add(k)
@@ -186,14 +221,14 @@ export default function TopologyPanel() {
     const setSubnet = (host: string, gw: string) => {
       if (!subnetOf.has(host) && host !== gw) subnetOf.set(host, gw)
     }
-    data.links.forEach((l) => {
+    liveLinks.forEach((l) => {
       if (l.type !== 'route') return
       const a = byKey.get(l.from)
       const b = byKey.get(l.to)
       if (a && a.type === 'gateway') setSubnet(l.to, l.from)
       else if (b && b.type === 'gateway') setSubnet(l.from, l.to)
     })
-    data.links.forEach((l) => {
+    liveLinks.forEach((l) => {
       if (l.type !== 'reach') return
       if (isGateway.has(l.from)) setSubnet(l.to, l.from)
       if (isGateway.has(l.to)) setSubnet(l.from, l.to)
@@ -231,7 +266,7 @@ export default function TopologyPanel() {
       return tn
     }
     return [build(keyOf(root))].filter(Boolean) as TN[]
-  }, [data])
+  }, [data, devices])
 
   // ===== 目录树视图 (tree /F 制表符连线) =====
   interface DLine { key: string; node: TN; prefix: string; isLast: boolean }
@@ -255,11 +290,20 @@ export default function TopologyPanel() {
     <div>
       <div className="flex-between" style={{ marginBottom: 8 }}>
         <div className="btn-row">
-          <button className="btn-glass-soft btn-glass-soft-sm" onClick={rescan}>重新扫描</button>
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={rescan} disabled={scanning} title={scanning ? '扫描进行中(约 10~30 秒)' : '强制重新扫描(忽略缓存)'}>
+            {scanning ? '扫描中…' : '重新扫描'}
+          </button>
           <button className={`btn-glass-soft btn-glass-soft-sm ${view === 'graph' ? 'btn-active' : ''}`} onClick={() => setView('graph')}>图</button>
           <button className={`btn-glass-soft btn-glass-soft-sm ${view === 'dir' ? 'btn-active' : ''}`} onClick={() => setView('dir')}>目录树</button>
-          {loading && <span className="dim" style={{ fontSize: 12 }}>扫描中…</span>}
-          {data && <span className="dim" style={{ fontSize: 12 }}>{selected?.label ? `视角: ${selected.label} · ` : ''}耗时 {data.elapsed} · {data.devices.length} 设备 · {data.links.length} 连接</span>}
+          <button
+            className={`btn-glass-soft btn-glass-soft-sm ${showNoise ? 'btn-active' : ''}`}
+            onClick={() => setShowNoise((v) => !v)}
+            title="广播/组播/链路本地地址默认隐藏"
+          >
+            {showNoise ? '噪音: 显示' : '噪音: 隐藏'}
+          </button>
+          {loading && !scanning && <span className="dim" style={{ fontSize: 12 }}>加载中…</span>}
+          {data && <span className="dim" style={{ fontSize: 12 }}>{selected?.label ? `视角: ${selected.label} · ` : ''}耗时 {data.elapsed} · {devices.length}{showNoise ? '' : `/${data.devices.length}`} 设备 · {data.links.length} 连接</span>}
         </div>
       </div>
 
@@ -268,11 +312,17 @@ export default function TopologyPanel() {
         <div className="banner banner-err small">非 root / 无原始套接字权限：已降级为只读 ARP 表，仅显示与本机通信过的设备。以 root 运行可主动扫描整个网段。</div>
       )}
 
-      {view === 'graph' ? (
-        <Cardless height={460}><EChart option={option} height={460} /></Cardless>
+      {!data && loading ? (
+        // 首扫骨架: 后端扫描(含 SSH 远程汇聚)可长达 10~30 秒, 不能留白卡
+        <div className="card" style={{ height: 460, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <span className="spinner" />
+          <span className="dim" style={{ fontSize: 13 }}>正在扫描网段并汇聚远程主机（含清单 SSH 拉取），首次约需 10~30 秒…</span>
+        </div>
+      ) : view === 'graph' ? (
+        data && <Cardless height={460}><EChart option={option} height={460} /></Cardless>
       ) : (
         <div className="card topo-dirtree" style={{ maxHeight:'28.75rem', overflow: 'auto', padding: '0.625rem 0.875rem' }}>
-          {dirLines.length === 0 && <div className="dim" style={{ padding: 8 }}>无可用树结构</div>}
+          {dirLines.length === 0 && <div className="dim" style={{ padding: 8 }}>{loading ? '扫描中…' : '无可用树结构'}</div>}
           {dirLines.map((l) => {
             const hasKids = l.node.children.length > 0
             const isRoot = l.prefix === ''
@@ -291,6 +341,12 @@ export default function TopologyPanel() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {view === 'graph' && data && (
+        <div className="dim" style={{ fontSize: 11, marginTop: 6 }}>
+          边: <span style={{ color: '#e6b450' }}>━ 路由</span> · <span style={{ color: '#59b8e8' }}>━ 网卡</span> · <span style={{ color: '#8f7ce0' }}>╌ 上联</span> · <span style={{ color: cssVar('--text-dim') }}>━ 可达</span>（拖动节点固定视角, 滚轮缩放）
         </div>
       )}
 
@@ -323,7 +379,7 @@ export default function TopologyPanel() {
               <table className="data-table">
                 <thead><tr><th>IP</th><th>MAC</th><th>名称</th><th>类型</th><th>来源</th><th>状态</th></tr></thead>
                 <tbody>
-                  {data.devices.map((d, i) => (
+                  {devices.map((d, i) => (
                     <tr key={i}>
                       <td className="mono">{d.type === 'entity' ? '—' : d.ip || `lldp:${d.hostname}`}</td>
                       <td className="mono small">{d.mac || '—'}</td>
@@ -333,7 +389,7 @@ export default function TopologyPanel() {
                       <td><span className={`status-dot ${d.online ? 'online' : 'offline'}`} /></td>
                     </tr>
                   ))}
-                  {data.devices.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-dim)' }}>未发现设备</td></tr>}
+                  {devices.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-dim)' }}>{loading ? '扫描中…' : '未发现设备'}</td></tr>}
                 </tbody>
               </table>
             </div>

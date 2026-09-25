@@ -132,6 +132,53 @@ export default function ServicesModule() {
     return () => clearInterval(t)
   }, [load])
 
+  // ── 自定义纵向滑块: 只覆盖数据行区(列头以下), 不侵入列头带 ──
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const [bar, setBar] = useState<{ show: boolean; top: number; h: number }>({ show: false, top: 0, h: 0 })
+  const syncBar = useCallback(() => {
+    const w = wrapRef.current
+    if (!w) return
+    const thead = w.querySelector('thead') as HTMLElement | null
+    const headH = thead ? thead.getBoundingClientRect().height : 0
+    const pad = 4
+    const trackH = w.clientHeight - headH - pad * 2
+    if (w.scrollHeight <= w.clientHeight + 4 || trackH < 40) {
+      setBar((b) => (b.show ? { ...b, show: false } : b))
+      return
+    }
+    const thumbH = Math.max(36, trackH * (w.clientHeight / w.scrollHeight))
+    const maxScroll = w.scrollHeight - w.clientHeight
+    const top = headH + pad + (w.scrollTop / Math.max(1, maxScroll)) * (trackH - thumbH)
+    setBar({ show: true, top, h: thumbH })
+  }, [])
+  useEffect(() => { syncBar() }) // 每次渲染后校准(数据/过滤/尺寸变化)
+  useEffect(() => {
+    const w = wrapRef.current
+    if (!w) return
+    const ro = new ResizeObserver(syncBar)
+    ro.observe(w)
+    return () => ro.disconnect()
+  }, [syncBar])
+  const barDrag = useRef<{ y: number; top: number } | null>(null)
+  const onBarDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const w = wrapRef.current
+    if (!w) return
+    barDrag.current = { y: e.clientY, top: w.scrollTop }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onBarMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const w = wrapRef.current
+    const d = barDrag.current
+    if (!w || !d) return
+    const thead = w.querySelector('thead') as HTMLElement | null
+    const headH = thead ? thead.getBoundingClientRect().height : 0
+    const trackH = w.clientHeight - headH - 8
+    const thumbH = Math.max(36, trackH * (w.clientHeight / w.scrollHeight))
+    const maxScroll = w.scrollHeight - w.clientHeight
+    w.scrollTop = d.top + ((e.clientY - d.y) / Math.max(1, trackH - thumbH)) * maxScroll
+  }
+  const onBarUp = () => { barDrag.current = null }
+
   const act = async (id: string, action: string) => {
     setBusy(`${id}:${action}`)
     setMsg('')
@@ -183,8 +230,9 @@ export default function ServicesModule() {
       {msg && <div className={`banner ${msg.startsWith('✗') ? 'banner-err' : 'banner-ok'}`}>{msg}</div>}
 
       <Card title="运行中的服务 / 进程" subtitle="启停 / 重启 · 位置 / 日志" className="svc-card">
-        <div className="table-wrap">
-          <table className="data-table svc-table">
+        <div className="svc-scrollbox">
+        <div className="table-wrap" ref={wrapRef} onScroll={syncBar}>
+          <table className="data-table svc-table ops-right">
             <thead>
               <tr>
                 <th>名称</th>
@@ -208,31 +256,31 @@ export default function ServicesModule() {
             <tbody>
               {visible.map((s) => (
                 <tr key={s.id}>
-                  <td className="mono">
+                  <td className="mono" title={s.recognized ? `${s.recognized}（${s.name}）` : s.name}>
                     {s.icon && <span className="svc-icon">{s.icon}</span>}
                     {s.recognized
                       ? <><b>{s.recognized}</b><div className="dim small">{s.name}</div></>
                       : s.name}
                   </td>
-                  <td>
+                  <td title={`${s.status}${s.subStatus ? ' · ' + s.subStatus : ''}`}>
                     <span className={`badge ${/active|running/i.test(s.status) ? 'badge-ok' : 'badge-off'}`}>
                       {s.status}
                     </span>
                     {s.subStatus && <span className="dim"> · {s.subStatus}</span>}
                   </td>
-                  <td className="dim">
+                  <td className="dim" title={`${s.category ? s.category + ' · ' : ''}${s.description || ''}`}>
                     {s.recognized && s.category && <span className="tag">{s.category}</span>}
                     <span>{s.description}</span>
                   </td>
                   <td className="mono small">{fmtPct(s.cpuPercent)}</td>
                   <td className="mono small">{fmtPct(s.memPercent)}</td>
-                  <td className="mono small">{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
+                  <td className="mono small" title={s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : ''))}>{s.isProcess ? `PID ${s.pid}` : (s.unitFile || (s.pid ? `PID ${s.pid}` : '—'))}</td>
                   <td className="mono small dim">
                     {s.logCommand
-                      ? <><button className="btn-glass-soft btn-glass-soft-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span style={{ marginLeft:'0.375rem', cursor: 'copy' }} title="双击复制命令" onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
+                      ? <><button className="btn-glass-soft btn-glass-soft-sm btn-log" onClick={() => setLogTarget(s)}>查看</button> <span className="svc-logcmd" style={{ marginLeft:'0.375rem', cursor: 'copy' }} title={`双击复制: ${s.logCommand}`} onDoubleClick={() => copyCmd(s.logCommand!)}>{s.logCommand}</span></>
                       : '—'}
                   </td>
-                  <td>
+                  <td className="row-ops">
                     <div className="btn-row">
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'start')}>启动</button>
                       <button className="btn-glass-soft btn-glass-soft-sm" disabled={!data.managed || busy !== null} onClick={() => act(s.id, 'stop')}>停止</button>
@@ -244,6 +292,17 @@ export default function ServicesModule() {
               ))}
             </tbody>
           </table>
+        </div>
+        {bar.show && (
+          <div
+            className="svc-vbar"
+            style={{ top: bar.top, height: bar.h }}
+            onPointerDown={onBarDown}
+            onPointerMove={onBarMove}
+            onPointerUp={onBarUp}
+            onPointerCancel={onBarUp}
+          />
+        )}
         </div>
       </Card>
 

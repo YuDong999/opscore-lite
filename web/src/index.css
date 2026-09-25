@@ -9,6 +9,124 @@
 @plugin "@tailwindcss/forms";
 @import "tw-animate-css";
 
+/* ── Geist 字体 (dbx 视觉基线) ───────────────────────────────────────
+   字体文件与 OFL 许可证一并 vendored 于 public/fonts/。
+   "Geist Variable Tabular" 是 dbx 给数据网格另起的别名: 同一份字形 + font-feature-settings:"tnum",
+   让数字等宽对齐, 不与 UI 文本共用特性开关。 */
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Variable Tabular";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-feature-settings: "tnum";
+  src: url("/fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Variable Tabular";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-feature-settings: "tnum";
+  src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── db 管理模块的 dbx 对齐令牌 ──────────────────────────────────────
+   刻意收在 .db-module 作用域内: 全局 --shadcn-radius / 系统字体栈保持原样,
+   其它模块(logmonitor/k8s/cicd/概览)观感零变化。
+   每个数值的出处标注在行尾, 便于逐条比对 dbx 活体(http://192.168.207.10:4224) 。 */
+.db-module {
+  --db-font-ui: "Geist Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; /* dbx tokens.css:41 */
+  --db-font-grid: "Geist Variable Tabular", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;                       /* dbx globals.css:1584 */
+
+  /* 数据网格几何: DOM 与 canvas 两套渲染器共用同一组值。一律 px —— 本应用 html 是
+     clamp(12.5px,1vw,16px) 的响应式根字号, rem 会随窗口宽度在 0.78~1.0 间漂移,
+     而 dbx 的 rem 基准恒为 16px(它的 1.625rem 就是 26px)。 */
+  --db-row-h: 26px;      /* DataGrid.vue:9210 / canvasDataGridRenderer.ts:11 */
+/* 列头 38px: 我们是"列名+类型"两行头(dbx 单行 28px), 15+12 行高 + 2 间距 + 上下 4px 内边距 + 1px 下边框 */
+  --db-header-h: 38px;
+  --db-cell-fs: 13px;    /* DataGrid.vue:15056 (clamp 8~16, 默认 13) */
+  --db-cell-lh: 16px;    /* DataGrid.vue:13858 */
+  --db-cell-pad-x: 12px; /* 同上 */
+  --db-cell-pad-y: 4px;  /* 同上 */
+  --db-num-col-min: 48px;/* useDataGridColumnResize.ts:21 (max(48, 文字宽+16)) */
+  --db-status-h: 26px;   /* DataGrid.vue:14529 */
+
+  /* 侧栏对象树 */
+  --db-tree-row-h: 28px; /* useFlatTree.ts:3 */
+  --db-tree-indent: 16px;/* sidebarTreeItemLayout.ts:72 (每级) */
+  --db-tree-pad-x: 8px;  /* TreeItem.vue:1463 */
+  --db-icon-tree: 14px;  /* TreeItem.vue:1503 */
+  --db-sidebar-w: 260px; --db-sidebar-min: 180px; --db-sidebar-max: 800px; /* usePanelResize.ts:3-4 */
+
+  /* 工作区标签与工具栏 */
+  --db-tabbar-h: 40px;    /* AppTabBar.vue:642 */
+  --db-tab-h: 28px;       /* AppTabBar.vue:810 */
+  --db-tab-min-w: 152px;  /* AppTabBar.vue:813 */
+  --db-tab-fs: 12px;      /* AppTabBar.vue:805 */
+  --db-toolbar-h: 32px;   /* DataGrid.vue:12531 */
+  --db-btn-h: 20px;       /* DataGridToolbar.vue:264 */
+  --db-btn-fs: 12px;      /* DataGridToolbar.vue:266 */
+
+  --db-ease-collapse: 340ms cubic-bezier(0.22, 1, 0.36, 1); /* DataGridToolbar.vue:281 */
+
+  /* 表面色一律引用本主题令牌: 借 dbx 的"扁平", 不借它的"灰"。
+     (类型前景色是功能性色板, 与主题无关, 保留 dbx 原值) */
+  --db-header-bg: var(--surface-solid);
+  --db-row-striped: var(--surface-tint);
+  --db-frozen-sep: var(--border);           /* 冻结列 2px 分隔, 用本主题边框色 */
+  --db-scrollbar-thumb: color-mix(in srgb, var(--text) 30%, transparent);        /* DataGrid.vue:14830 */
+  --db-scrollbar-thumb-hover: color-mix(in srgb, var(--text) 48%, transparent);  /* DataGrid.vue:14831 */
+  --db-type-integer: #1d4ed8;          /* globals.css:80-100 九组类型前景色 */
+  --db-type-numeric: #0e7490;
+  --db-type-string: #166534;
+  --db-type-boolean: #c2410c;
+  --db-type-temporal: #7e22ce;
+  --db-type-structured: #be185d;
+  --db-type-identifier: #92400e;
+  --db-type-binary: #b91c1c;
+  --db-type-spatial: #047857;
+
+  /* 单元悬停: 用本主题的 hover 色(深色主题即它自己的档) */
+  --db-cell-hover: var(--row-hover);
+
+  font-family: var(--db-font-ui);
+}
+
+/* 表面色与质感不在这里定: 走全局 data-surface / data-corner-style 开关(见文件上方),
+   db 模块只保留下面这份"dbx 度量 + 功能性类型色板"。 */
+
+/* 深色主题只需覆盖"类型前景色"这一组功能性色板(浅色档太暗, 深色档要提亮) */
+[data-theme='obsidian'] .db-module,
+[data-theme='twilight'] .db-module {
+  --db-type-integer: #93c5fd;
+  --db-type-numeric: #67e8f9;
+  --db-type-string: #86efac;
+  --db-type-boolean: #fdba74;
+  --db-type-temporal: #d8b4fe;
+  --db-type-structured: #f9a8d4;
+  --db-type-identifier: #fcd34d;
+  --db-type-binary: #fca5a5;
+  --db-type-spatial: #6ee7b7;
+}
+
 @layer base {
   *, ::before, ::after {
     border: 0 solid;
@@ -18,6 +136,7 @@
 :root {
   --shadcn-radius: 0.75rem;
 }
+
 
 @theme inline {
   --color-background: var(--surface-solid);
@@ -52,6 +171,34 @@
 }
 
 /* ── 响应式根字号: 视口 1600px 以上满尺寸(16px), 线性缩小, 下限 12.5px(≈78%) ── */
+/* ── 表面风格开关: data-surface = glass(默认) | flat ────────────────────
+   玻璃观感来自四件事: 半透明表面、backdrop-filter 模糊、渐变底、内描边高光。
+   flat 档把它们全部换成"叠加结果算成的实色"—— 基准取各主题自己的 --bg/--accent/--text,
+   所以五套主题共用这一份公式, 换主题仍是换主题的颜色, 换风格才是换质感。
+   (dbx 自身也是属性开关式的风格档位: 它的圆角就是 :root[data-corner-style]) */
+:root[data-surface='flat'] {   /* :root 前缀抬特异度: 主题块是 [data-theme=...](0,1,0), 不靠书写顺序压 */
+  --blur: 0px;
+  --border-glow: color-mix(in srgb, var(--text) 10%, var(--bg));
+  --surface: color-mix(in srgb, #fff 38%, var(--bg));            /* 原 rgba(255,255,255,.38) 叠底 */
+  --surface-solid: color-mix(in srgb, #fff 62%, var(--bg));
+  --surface-soft: color-mix(in srgb, var(--text) 4%, var(--bg));
+  --surface-tint: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  --bg-soft: color-mix(in srgb, var(--text) 4.5%, var(--bg));
+  --border: color-mix(in srgb, var(--text) 10%, var(--bg));
+  --row-hover: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* flat 下不再用渐变底与渐变按钮 */
+[data-surface='flat'] body { background-image: none; }
+[data-surface='flat'] .btn-glass-soft-accent { background: var(--accent); border-color: var(--accent); }
+[data-surface='flat'] .btn-glass-soft-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+[data-surface='flat'] .btn-glass-soft, [data-surface='flat'] .card { box-shadow: none; }
+
+/* ── 圆角档位: data-corner-style = round(默认 .75rem) | compact(dbx 档) ── */
+:root[data-corner-style='compact'] {
+  --shadcn-radius: 6px;
+  --radius-sm: 4px; --radius-md: 4px; --radius-lg: 6px; --radius-xl: 6px;
+}
+
 html {
   font-size: clamp(12.5px, 1vw, 16px);
   -webkit-font-smoothing: antialiased;
@@ -407,7 +554,7 @@ body {
 .topbar-title { font-weight: 600; font-size: 0.8125rem; color: var(--text-dim); }
 
 .content {
-  padding: 1.5rem;
+  padding: 1.5rem 1.5rem 0.5rem;
   overflow-y: auto;
   flex: 1;
   display: flex;
@@ -446,20 +593,89 @@ body {
 /* ── Cards ── */
 .card {
   padding: 1rem 1.25rem;
-  background: rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--card-bg);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: var(--card-shadow), inset 0 1px 0 var(--card-glow);
   overflow: clip;
 }
-:root.dark .card,
-[data-theme='obsidian'] .card,
-[data-theme='twilight'] .card {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+/* 卡片表面走令牌(默认值 = 原来写死的玻璃值, 玻璃档逐像素不变; flat 档见上方开关块) */
+:root {
+  --card-bg: rgba(255, 255, 255, 0.2);
+  --card-border: rgba(255, 255, 255, 0.15);
+  --card-shadow: 0 4px 30px rgba(0, 0, 0, 0.12);
+  --card-glow: rgba(255, 255, 255, 0.25);
+  --card-blur: blur(20px) saturate(150%);
+}
+:root.dark, [data-theme='obsidian'], [data-theme='twilight'] {
+  --card-bg: rgba(255, 255, 255, 0.04);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+  --card-glow: rgba(255, 255, 255, 0.06);
+}
+/* flat 档 = dbx 那套中性灰阶(去蓝调) + 无玻璃: 表面/背景/边框/文字全部中性化,
+   强调色仍是主题色 —— 玻璃档才是各主题的彩色玻璃。 */
+:root[data-surface='flat'] {
+  --bg: rgb(255 255 255);
+  --bg-grad-1: rgb(255 255 255);
+  --bg-grad-2: rgb(255 255 255);
+  --surface: rgb(255 255 255);
+  --surface-solid: rgb(255 255 255);
+  --surface-soft: rgb(250 250 250);
+  --surface-tint: rgb(245 245 245);
+  --bg-soft: rgb(243 243 243);
+  --border: rgb(229 229 229);
+  --border-glow: rgb(229 229 229);
+  --row-hover: rgb(245 245 245);
+  --text: rgb(10 10 10);
+  --text-dim: rgb(115 115 115);
+  --text-secondary: rgb(115 115 115);
+  --shadow: none;
+  /* 强调色一并中性化(否则按钮/选中页签仍是主题色); 语义色(危险/警告/正常/日志级别)保留 —— 那是状态, 不是主题 */
+  --accent: rgb(24 24 27);
+  --accent-2: rgb(82 82 91);
+  --card-bg: var(--surface-solid);
+  --card-border: var(--border);
+  --card-shadow: none;
+  --card-glow: transparent;
+  --card-blur: 0px;
+}
+/* 深色主题在 flat 档走 dbx 深色那套灰阶(否则白底配紫字没法看) */
+:root.dark[data-surface='flat'],
+[data-theme='obsidian'][data-surface='flat'],
+[data-theme='twilight'][data-surface='flat'] {
+  --bg: rgb(9 9 11);
+  --bg-grad-1: rgb(9 9 11);
+  --bg-grad-2: rgb(9 9 11);
+  --surface: rgb(24 24 27);
+  --surface-solid: rgb(24 24 27);
+  --surface-soft: rgb(24 24 27);
+  --surface-tint: rgb(39 39 42);
+  --bg-soft: rgb(39 39 42);
+  --border: rgb(39 39 42);
+  --border-glow: rgb(39 39 42);
+  --row-hover: rgb(39 39 42);
+  --text: rgb(250 250 250);
+  --text-dim: rgb(161 161 170);
+  --text-secondary: rgb(161 161 170);
+  --accent: rgb(113 113 122);
+  --accent-2: rgb(161 161 170);
+}
+[data-surface='flat'] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+[data-surface='flat'] .btn-glass {
+  background: var(--surface-solid);
+  border-color: var(--border);
+  box-shadow: none;
+}
+[data-surface='flat'] .btn-glass::before { display: none; }
+[data-surface='flat'] .k8s-side {
+  background: var(--surface-solid);
+  border-color: var(--border);
 }
 
 .card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.625rem; }
@@ -546,15 +762,29 @@ body {
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .small { font-size: 0.75rem; }
 
-/* ── Service table column widths ── */
-.data-table.svc-table th:nth-child(1) { width: 18%; }
-.data-table.svc-table th:nth-child(2) { width: 10%; }
-.data-table.svc-table th:nth-child(3) { width: 20%; }
-.data-table.svc-table th:nth-child(4) { width: 7%; }
-.data-table.svc-table th:nth-child(5) { width: 7%; }
-.data-table.svc-table th:nth-child(6) { width: 16%; }
-.data-table.svc-table th:nth-child(7) { width: 12%; }
-.data-table.svc-table th:nth-child(8) { width: 10%; }
+/* ── Service table column widths ──
+   对齐容器管理 ctable 思路: auto 自适宽 + 文本列 ch 上限 + overflow-wrap:anywhere
+   (min-content 塌缩 → 任何缩放/窗口宽度表格恒贴合容器, 不横向溢出);
+   操作列不加宽度约束 → 恰好包住三按钮, 配合 ops-right 贴右对齐, 富余空间全给左侧文本列 */
+.data-table.svc-table { table-layout: auto; }
+/* 操作列 width:1px 技巧: auto 布局下收缩到 min-content = 恰好包住三按钮,
+   富余空间分配给左侧文本列; ops-right 负责按钮贴右, 但「操作」列名保持原位不贴右 */
+.data-table.svc-table.ops-right thead th:last-child { text-align: left; }
+.data-table.svc-table th:last-child, .data-table.svc-table td:last-child { width: 1px; }
+/* 日志命令列同样按实际内容占宽(width:1px), 命令尽量完整显示, 34ch 兜底 + title 悬停全文 */
+.data-table.svc-table th:nth-child(7), .data-table.svc-table td:nth-child(7) { width: 1px; }
+.data-table.svc-table th:nth-child(1), .data-table.svc-table td:nth-child(1) { max-width: 18ch; }
+.data-table.svc-table th:nth-child(2), .data-table.svc-table td:nth-child(2) { max-width: 14ch; }
+.data-table.svc-table th:nth-child(3), .data-table.svc-table td:nth-child(3) { max-width: 26ch; }
+.data-table.svc-table th:nth-child(6), .data-table.svc-table td:nth-child(6) { max-width: 22ch; }
+.data-table.svc-table td:not(.row-ops) { overflow-wrap: anywhere; }
+/* 按钮禁压缩: 防不同字体渲染/DPI 下被 flex 压扁再溢出单元格 */
+.data-table.svc-table td.row-ops .btn-row { flex-wrap: nowrap; }
+.data-table.svc-table td.row-ops .btn-row .btn-glass-soft-sm { flex-shrink: 0; white-space: nowrap; }
+/* 名称列两行结构(识别名 + 单元名): 子块各自省略, 避免无省略号硬裁切 */
+.data-table.svc-table td > div { overflow: hidden; text-overflow: ellipsis; }
+/* 日志命令长串: 34ch 兜底省略 + title 悬停全文; width:1px 列内不参与撑宽 */
+.svc-logcmd { display: inline-block; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* ── Service filter bar ── */
 .svc-filter-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
@@ -876,8 +1106,15 @@ body {
 .mini-table tr.row-open { background: var(--surface); }
 .caret { display: inline-block; width: 0.875rem; color: var(--text-dim); font-size: 1.25rem; }
 .usage-cell { display: flex; align-items: center; gap: 0.5rem; }
+/* 一格两行(空间 / inode): 磁盘卡片固定 ~425px 宽, 再加一列放不下, 只能竖向叠 —— 横向零增长 */
+.usage-cell-stack { flex-direction: column; align-items: stretch; gap: 3px; }
+.usage-line { display: flex; align-items: center; gap: 6px; }
 .usage-bar { flex: 1; min-width: 5.625rem; height: 0.375rem; border-radius: 999px; background: rgba(255,255,255,0.1); overflow: hidden; }
 .usage-bar.sm { height: 0.25rem; min-width: 4.375rem; }
+/* 数值排在条前面时给条一个上限: 否则列一宽, 条就把数值顶到列的另一头去了 */
+.usage-bar-cap { flex: 0 1 7rem; }
+/* 两行的数字(空间/inode)要落在同一条竖线上: 给徽标一个下限, 条就不会跟着数字长短左右跳 */
+.usage-line > .badge { min-width: 4.2rem; }
 .usage-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.2s ease; }
 .bg-ok { background: var(--ok); }
 .bg-warn { background: var(--warn); }
@@ -1662,10 +1899,16 @@ body {
 .module { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .module > .card + .card { margin-top: 1rem; }
 
-/* 服务发现卡片: 填满剩余高度, 表内滚动, 表头吸顶 */
+/* 服务发现卡片: 模块根定高 → 卡片填满 → 表内滚动(单滚动容器), 表头吸顶不越顶栏 */
 .module > .card.svc-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .module > .card.svc-card > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.module > .card.svc-card .table-wrap { flex: 1; min-height: 0; max-height: none; overflow: auto; }
+.svc-scrollbox { position: relative; flex: 1; min-height: 0; display: flex; }
+.module > .card.svc-card .table-wrap { flex: 1; min-height: 0; max-height: none; overflow: auto; overscroll-behavior: contain; }
+/* 纵向滑块用自定义 .svc-vbar(只覆盖数据行区), 原生纵向条隐藏; 横向保留 4px */
+.module > .card.svc-card .table-wrap { scrollbar-width: none; }
+.module > .card.svc-card .table-wrap::-webkit-scrollbar { width: 0; height: 4px; }
+.svc-vbar { position: absolute; right: 2px; width: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 28%, transparent); cursor: grab; z-index: 11; touch-action: none; }
+.svc-vbar:hover { background: color-mix(in srgb, var(--text) 48%, transparent); }
 .module > .card.svc-card .data-table thead th { position: sticky; top: 0; background: var(--surface-solid, #15131e); z-index: 10; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
 
 /* 侧栏小图标 */
@@ -1677,10 +1920,11 @@ body {
 .db-module { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .db-layout { display: flex; flex: 1; min-height: 0; gap: 0; }
 .db-side {
-  width: 21rem; min-width: 16rem; flex-shrink: 0;
+  /* 吃 .db-module 令牌层的 260/180px(原先是 21rem/16rem: 根字号 12.5px 时 262px, 拉满窗口 16px 时胖到 336px) */
+  width: var(--db-sidebar-w); min-width: var(--db-sidebar-min); flex-shrink: 0;
   display: flex; flex-direction: column; gap: 0.75rem;
   min-height: 0;
-  background: transparent;
+  background: var(--surface-soft); /* dbx --sidebar: 侧栏比内容区低一档灰度, 形成分层 */
   border: none;
   border-right: 1px solid var(--border);
   border-radius: 0;
@@ -1868,8 +2112,8 @@ body {
   z-index: 1;
 }
 .db-table tbody tr:hover { background: var(--row-hover); }
-.db-col-num { width: 50px; text-align: right; color: var(--text-dim); }
-.db-table-result td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+/* 单元格字号取 --db-cell-fs(13px): 早先这里靠 0.75rem 继承, 根字号一缩就掉到 9.4px */
+.db-table-result td { font-family: var(--db-font-grid); font-size: var(--db-cell-fs); }
 
 /* 表结构文档 */
 .db-doc {
@@ -1957,16 +2201,6 @@ body {
 }
 .db-overview-title h1 { margin: 0; font-size: 1.25rem; font-weight: 700; }
 .db-overview-title p { margin: 2px 0 0; font-size: 0.8125rem; }
-
-.db-overview-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; }
-.db-stat-card {
-  padding: 1rem 1rem;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  display: flex; flex-direction: column; gap: 0.25rem;
-}
-.db-stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1; }
-.db-stat-label { font-size: 0.75rem; color: var(--text-dim); }
 
 .db-overview-section { display: flex; flex-direction: column; gap: 0.75rem; }
 .db-overview-section-title { font-size: 0.8125rem; font-weight: 600; color: var(--text-dim); padding-left: 0.25rem; }
@@ -2259,18 +2493,21 @@ body {
 /* 数据网格滚动条(09-19 用户要求): 4px 贴边细条, 默认隐形, 悬停/聚焦浮现 —— 与侧栏同语言。
    用 ::-webkit-scrollbar 定制才能到 4px(标准 scrollbar-width:thin ≈ 11px 且会禁用 webkit 定制);
    覆盖两处滚动容器: .db-table-grid(数据/查询结果网格) 与 .table-wrap(其他结果容器) */
-.db-table-grid::-webkit-scrollbar, .table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
-.db-table-grid::-webkit-scrollbar-track, .table-wrap::-webkit-scrollbar-track { background: transparent; }
-.db-table-grid::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.db-table-grid::-webkit-scrollbar, .table-wrap::-webkit-scrollbar, .db-main::-webkit-scrollbar { width: 4px; height: 4px; }
+.db-table-grid::-webkit-scrollbar-track, .table-wrap::-webkit-scrollbar-track, .db-main::-webkit-scrollbar-track { background: transparent; }
+.db-table-grid::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb, .db-main::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
 .db-table-grid:hover::-webkit-scrollbar-thumb, .db-table-grid:focus-within::-webkit-scrollbar-thumb,
-.table-wrap:hover::-webkit-scrollbar-thumb, .table-wrap:focus-within::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 30%, transparent); }
-.db-table-grid::-webkit-scrollbar-corner, .table-wrap::-webkit-scrollbar-corner { background: transparent; }
+.table-wrap:hover::-webkit-scrollbar-thumb, .table-wrap:focus-within::-webkit-scrollbar-thumb,
+.db-main:hover::-webkit-scrollbar-thumb, .db-main:focus-within::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 30%, transparent); }
+.db-table-grid::-webkit-scrollbar-corner, .table-wrap::-webkit-scrollbar-corner, .db-main::-webkit-scrollbar-corner { background: transparent; }
+/* Firefox 侧同款悬停显隐(webkit 已由上方规则覆盖) */
+.table-wrap, .db-main { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.table-wrap:hover, .table-wrap:focus-within, .db-main:hover, .db-main:focus-within { scrollbar-color: color-mix(in srgb, var(--text) 30%, transparent) transparent; }
 .db-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
 .db-table th, .db-table td { padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .db-table th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 600; cursor: pointer; user-select: none; z-index: 1; }
 .db-table th:hover { color: var(--accent); }
 .db-table tbody tr:hover { background: var(--row-hover); }
-.db-col-num { color: var(--text-dim); width: 2.5rem; text-align: right; }
 .db-edit-controls { display: flex; gap: 0.25rem; }
 .db-edit-input { width: 100%; box-sizing: border-box; font-size: 0.75rem; }
 
@@ -2302,10 +2539,10 @@ body {
 .db-overview-title h1 { margin: 0; font-size: 1.25rem; }
 .db-overview-title p { margin: 0.125rem 0 0; font-size: 0.8125rem; }
 .db-overview-ico { display: flex; color: var(--accent); }
-.db-overview-stats { display: grid; gap: 0.5rem; }
-.db-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; }
-.db-stat-value { font-size: 1.375rem; font-weight: 700; }
-.db-stat-label { font-size: 0.75rem; color: var(--text-dim); }
+.db-overview-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.5rem; }
+.db-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.db-stat-value { font-size: 1.375rem; font-weight: 700; line-height: 1; }
+.db-stat-label { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .db-overview-section { display: flex; flex-direction: column; gap: 0.5rem; }
 .db-overview-section-title { font-size: 0.8125rem; font-weight: 600; }
 .db-conn-quick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.5rem; }
@@ -2339,27 +2576,9 @@ body {
 .db-tree { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.5rem; display: flex; flex-direction: column; gap: 0.375rem; flex: 1; min-height: 12rem; }
 .db-tree-search input { font-size: 0.75rem; padding: 0.25rem 0.5rem; }
 .db-tree-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 0.25rem; }
-.db-tree-node { display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0.375rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.75rem; min-width: 0; user-select: none; }
-.db-tree-node:hover { background: var(--row-hover); }
-.db-tree-caret { width: 0; height: 0; border-left: 0.9rem solid transparent; border-top: 0.9rem solid transparent; position: relative; display: inline-block; flex-shrink: 0; }
-/* caret 用更稳的三角形 */
-.db-tree-caret { border: none; width: 0.85rem; text-align: center; flex-shrink: 0; }
-.db-tree-caret::before { content: '▸'; color: var(--text-dim); font-size: 0.625rem; display: inline-block; transition: transform .12s; }
-.db-tree-caret.open::before { transform: rotate(90deg); }
-.db-tree-caret.leaf::before { content: '·'; }
-.db-tree-icon { width: 0.9rem; height: 0.9rem; border-radius: 0.25rem; flex-shrink: 0; display: inline-block; }
-.icon-conn { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
-.icon-db { background: var(--surface-tint); border: 1px solid var(--border); }
-.db-tree-node .db-tree-icon { box-sizing: border-box; }
-.db-tree-node[class*="lv-db"] .db-tree-icon { border-radius: 50%; }
-.db-tree-node[class*="lv-group"] .db-tree-icon { background: transparent; border: 1px dashed var(--border); }
-.db-tree-node[class*="lv-table"] .db-tree-icon { background: var(--accent); opacity: 0.55; }
-.db-tree-node[class*="lv-view"] .db-tree-icon { background: var(--warn); opacity: 0.55; }
-.db-tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.lv-conn > .db-tree-label { font-weight: 600; }
-.lv-db > .db-tree-label { color: var(--text-secondary); }
-.lv-group > .db-tree-label { color: var(--text-dim); font-size: 0.75rem; }
-.db-tree-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--ok); margin-left: auto; flex-shrink: 0; }
+/* caret / db-tree-icon / lv-* / db-tree-dot 的旧补丁层已删除:
+   这几组类名没有任何组件渲染过(纯死规则), 却带着 !important 的 rem 值, 会盖住真实现的规则。
+   现在 caret 由下方唯一一处 .db-tree-caret 定义(真 <button> + SVG chevron); 标签在唯一一处 .db-tree-label。 */
 
 /* ── 标签工作台 ── */
 .db-worktab-kind { font-size: 0.625rem; color: var(--accent); font-weight: 700; }
@@ -2369,8 +2588,15 @@ body {
 /* ── 数据浏览面板 ── */
 /* .db-data-panel 统一定义见下方第 2415 行附近(已合并去卡片化, 仅一处) */
 /* 数据工具栏(原 3 处定义合并为 1 处并集: 基础 flex + v2 的 padding/border-bottom + v3 的 gap 0.375rem, 计算样式零变化) */
-.db-data-toolbar { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; padding: 0 1rem 0.5rem; border-bottom: 1px solid var(--border); }
-.db-data-title { font-size: 0.8125rem; font-weight: 600; }
+.db-data-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: var(--db-toolbar-h); padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
+/* 带 .db-module 前缀: 文件尾 `.db-module * { min-height: 0 }` 会按顺序压掉裸类名上的 min-height */
+.db-module .db-data-toolbar { min-height: var(--db-toolbar-h); }
+/* 工具栏/分页器内的按钮统一 20px/12px(dbx 的工具栏尺度); 限定在这两块里, 不动别处同理的 .btn-glass-soft */
+.db-data-toolbar .btn-glass-soft, .db-data-pager .btn-glass-soft { height: var(--db-btn-h); min-height: var(--db-btn-h); padding: 0 8px; font-size: var(--db-btn-fs); line-height: 1; display: inline-flex; align-items: center; box-sizing: border-box; }
+.db-data-toolbar .input, .db-data-pager .input { font-size: var(--db-btn-fs); height: var(--db-btn-h); padding: 0 4px; }
+.db-data-title { font-size: 13px; font-weight: 600; }
+.db-data-toolbar .db-engine-badge { font-size: 10px; padding: 1px 5px; }
+.db-data-toolbar .db-toolbar-stat { font-size: 11px; }
 .db-data-spacer { flex: 1; }
 .db-data-pager { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; justify-content: flex-end; }
 
@@ -2379,7 +2605,7 @@ body {
 /* ── 引擎图标 / 节点图标 ── */
 .dbx-engine-icon { display: inline-flex; align-items: center; justify-content: center; border-radius: 0.25rem; border: 1px solid; flex-shrink: 0; box-sizing: border-box; }
 .dbx-node-icon { flex-shrink: 0; display: inline-block; }
-.dbx-node-icon.icon-db { color: var(--accent-2); }
+.dbx-node-icon.icon-db { color: var(--text-dim); }
 .dbx-node-icon.icon-group { color: var(--warn); }
 .dbx-node-icon.icon-table { color: var(--accent); }
 .dbx-node-icon.icon-view { color: var(--ok); }
@@ -2397,20 +2623,25 @@ body {
 .db-tree-add { width: 1.7rem; height: 1.7rem; flex-shrink: 0; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-tint); color: var(--accent); font-size: 1rem; font-weight: 700; cursor: pointer; line-height: 1; }
 .db-tree-add:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .db-tree-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 0.25rem; padding: 0.125rem; }
-.db-tree-node { display: flex; align-items: center; gap: 0.375rem; padding: 0.25rem 0.375rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.75rem; min-width: 0; user-select: none; position: relative; line-height: 1.35; background: var(--surface-solid); border: 1px solid var(--border); transition: background-color 90ms ease-out, border-color 90ms ease-out, transform 60ms ease-out; }
-.db-tree-node:hover { background: var(--row-hover); border-color: var(--accent); transform: translateX(1px); }
-.db-tree-node.selected { background: var(--surface-tint); border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
-.lv-conn.db-tree-node { background: var(--surface-tint); font-weight: 650; }
-.lv-conn.db-tree-node:hover { background: var(--row-hover); }
-.db-tree-caret { width: 1rem; height: 1rem; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--surface-tint); color: var(--text-dim); font-size: 0.625rem; line-height: 1; transition: transform .15s ease, color .15s ease, border-color .15s ease; }
-.db-tree-caret::before { content: '▸'; display: inline-block; transition: transform .15s; }
-.db-tree-caret.open { color: var(--accent); border-color: var(--accent); }
-.db-tree-caret.open::before { transform: rotate(90deg); }
-.db-tree-caret.leaf { visibility: hidden; }
-.db-tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.lv-conn > .db-tree-label { font-weight: 650; }
-.lv-db > .db-tree-label { color: var(--text-secondary); }
-.lv-group > .db-tree-label { color: var(--text-secondary); font-size: 0.75rem; }
+/* 树行: dbx 是无边框的平铺行(28px 定高/13px 字/悬停灰底), 不是每条一个卡片。
+   一律 px —— 本应用 html 根字号随窗口宽度在 12.5~16px 之间漂, rem 会让树行在 21~28px 间变。
+   选中态直接吃组件已有的 aria-selected, 不再要求额外类名。 */
+.db-tree { font-size: 13px; }
+/* 选择器带 .db-module 前缀(而非裸 .db-tree-node): 文件尾那条 `.db-module * { min-height: 0 }`
+   边界铁律是 0,1,0 且写在本规则之后, 裸类名会被它按顺序压掉 → 行高恒定 16px。加前缀后 0,2,0 稳赢。 */
+.db-module .db-tree-node { display: flex; align-items: center; gap: 8px; min-height: var(--db-tree-row-h); padding: 0 var(--db-tree-pad-x); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; line-height: 16px; min-width: 0; user-select: none; position: relative; background: transparent; border: none; }
+.db-tree-node:hover { background: var(--surface-tint); }
+.db-tree-node[aria-selected="true"] { background: var(--row-hover); font-weight: 600; }
+.lv-conn.db-tree-node { font-weight: 600; }
+/* caret: 只有裸 SVG chevron, 没有边框/底色/伪元素 —— 与 8088 版一致。
+   历史上这里有 5 组互相覆盖的 rem 补丁(带 !important), 已在本次 P2 收成这一处。
+   尺寸一律 px: 本应用 html 根字号随窗口宽度在 12.5~16px 之间漂, rem 会让行高在 21~28px 间抖。 */
+.db-tree-caret { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; border-radius: var(--radius-sm); color: var(--text-dim); cursor: pointer; }
+.db-tree-caret:hover { color: var(--text); }
+.db-tree-caret-leaf { width: 16px; height: 16px; visibility: hidden; flex-shrink: 0; }
+/* 标签: 省略号三件套不能少, 否则长表名把树撑破; 字号/行高跟行高 28px 配套 */
+.db-tree-label { font-size: 13px; line-height: 16px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon { width: 14px; height: 14px; flex-shrink: 0; }
 .db-tree-count { margin-left: 0.3rem; background: var(--surface-tint); border: 1px solid var(--border); color: var(--text-dim); border-radius: 0.75rem; font-size: 0.625rem; padding: 0 0.35rem; line-height: 1.3; flex-shrink: 0; }
 .db-tree-actions { margin-left: auto; display: none; gap: 0.25rem; flex-shrink: 0; }
 .db-tree-node:hover > .db-tree-actions { display: inline-flex; }
@@ -2420,31 +2651,35 @@ body {
 
 /* ── 标签工作台 v2 ── */
 /* 单行标签带(dbx 同款): 超宽不换行, 原生横向滚动 + 隐藏滚动条(滚轮由 onWheel 转横向) */
-.db-worktabs { display: flex; gap: 0.25rem; align-items: center; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--border); padding: 0 1rem; scrollbar-width: none; }
+/* 标签带定高 40px, 标签 28px 沉底 —— dbx 的量; 一律 px, 免得跟随根字号漂 */
+.db-worktabs { display: flex; gap: 2px; align-items: flex-end; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; height: var(--db-tabbar-h); border-bottom: 1px solid var(--border); padding: 0 8px; scrollbar-width: none; }
 .db-worktabs::-webkit-scrollbar { display: none; }
 /* 标签带横向滑块(dbx 同款): 溢出时出现的细轨+可拖拽滑块 */
 .db-tab-scrollbar { height: 4px; display: flex; align-items: stretch; touch-action: none; }
 .db-tab-thumb { border-radius: 2px; background: color-mix(in srgb, var(--text) 24%, transparent); cursor: grab; }
 .db-tab-thumb:hover, .db-tab-thumb:active { background: color-mix(in srgb, var(--text) 42%, transparent); }
 .db-tab-thumb:active { cursor: grabbing; }
-.db-worktab { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.5rem 0.375rem 0.75rem; border-radius: 0; cursor: pointer; font-size: 0.75rem; border: 1px solid transparent; border-bottom: none; max-width: 16rem; margin-bottom: -1px; flex-shrink: 0; }
+.db-worktab { display: inline-flex; align-items: center; gap: 6px; height: var(--db-tab-h); min-width: 0; max-width: 200px; padding: 0 8px 0 10px; border-radius: 0; cursor: pointer; font-size: var(--db-tab-fs); border: 1px solid transparent; border-bottom: none; margin-bottom: -1px; flex-shrink: 0; box-sizing: border-box; }
+/* 152px 是"够长表名的下限": 用 min-width 而非 width, 长名靠 label 的省略号截, 短名不吃满。
+   必须带 .db-module 前缀: 文件尾 `.db-module * { min-width: 0 }` 是 0,1,0 且写在后面, 裸类名会被压成 0。 */
+.db-module .db-worktab { min-width: var(--db-tab-min-w); }
 .db-worktab:hover { background: var(--row-hover); }
 .db-worktab.active { background: var(--surface-solid); border-color: var(--border); font-weight: 600; }
-.db-worktab-kind { font-size: 0.625rem; color: var(--accent); font-weight: 800; letter-spacing: 0.03em; }
+.db-worktab-kind { font-size: 10px; color: var(--accent); font-weight: 800; letter-spacing: 0.03em; }
 .db-worktab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.db-worktab-close { appearance: none; background: none; border: none; font-family: inherit; color: var(--text-dim); border-radius: 0.25rem; padding: 0 0.32rem; font-size: 0.875rem; line-height: 1; min-width: 1.25rem; min-height: 1.25rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.db-worktab-close { appearance: none; background: none; border: none; font-family: inherit; color: var(--text-dim); border-radius: var(--radius-sm); padding: 0; font-size: 13px; line-height: 1; width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .db-worktab-close:hover { background: var(--row-hover); color: var(--danger); }
 .db-worktab-close:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-.db-worktabs-fixed { margin-left: auto; display: flex; gap: 0.25rem; padding-bottom: 0.375rem; }
+.db-worktabs-fixed { margin-left: auto; display: flex; gap: 4px; padding-bottom: 6px; align-items: center; }
 
 /* ── 数据浏览 v2 ── */
 /* 数据面板: 透明容器(去卡片化), 只保留一层 flex 布局, 不再套外框/底色/阴影, 与内层表格的一层边界叠加即"去层化" */
 /* 网格上下缘直接贴合上/下分割线(toolbar 边线与 pager 边线): 面板 gap 归零 */
 .db-data-panel { display: flex; flex-direction: column; gap: 0; min-height: 0; flex: 1; }
-.db-data-title { font-size: 0.875rem; font-weight: 650; }
+.db-data-title { font-size: 13px; font-weight: 650; }
 .db-data-title .db-crumb-db { color: var(--text-dim); font-weight: 500; }
 .db-data-spacer { flex: 1; }
-.db-data-pager { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; justify-content: flex-end; padding: 0.5rem 1rem 0; border-top: 1px solid var(--border); }
+.db-data-pager { display: flex; align-items: center; gap: 6px; font-size: 12px; justify-content: flex-end; padding: 8px 12px 0; border-top: 1px solid var(--border); }
 .db-data-pager .dim { margin-right: auto; }
 
 /* ── 结果网格 v2: 双行列头/斑马纹/行高 ── */
@@ -2453,9 +2688,10 @@ body {
 .db-table th:hover { color: var(--accent); }
 .db-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--row-hover) 45%, transparent); }
 .db-table tbody tr:hover { background: var(--row-hover); }
-.db-th-two-line { display: flex; flex-direction: column; gap: 0.25rem; line-height: 1.25; }
-.db-th-name { font-size: 0.75rem; }
-.db-th-type { font-size: 0.625rem; color: var(--text-dim); font-weight: 400; font-family: 'JetBrains Mono', Consolas, monospace; }
+/* 列头两行(名 + 类型): 尺寸走 px, 行高恒定 → --db-header-h 就是它撑出来的真实高度(15+12+2+上下 4×2) */
+.db-th-two-line { display: flex; flex-direction: column; gap: 2px; line-height: 1; }
+.db-th-name { font-size: 12px; line-height: 15px; }
+.db-th-type { font-size: 10px; line-height: 12px; color: var(--text-dim); font-weight: 400; font-family: var(--db-font-grid); }
 .db-table td .dim { font-style: italic; opacity: 0.6; }
 .db-table td { font-size: 0.75rem; height: 2rem; }
 .db-export-controls button { min-width: 2.6rem; }
@@ -2463,9 +2699,7 @@ body {
 /* 查询编辑器卡片化 */
 .db-query-textarea { min-height: 9rem; }
 
-/* V2.1 caret 修复: 清除 V1 残留 border, 放大图标 */
-.db-tree-caret { border: none !important; width: 0.85rem !important; height: auto !important; background: none !important; }
-.db-tree-caret::before { content: '▸'; font-size: 0.75rem !important; line-height: 1; }
+/* V2.1 caret 修复已废弃: caret 现在是真 <button>+SVG, 尺寸由上面的 .db-tree-caret 统一给 */
 .dbx-engine-icon svg, .dbx-node-icon svg { display: block; }
 .db-tree-actions button svg { width: 0.8rem; height: 0.8rem; }
 
@@ -2521,7 +2755,10 @@ body {
 .db-module label > input, .db-module label > select, .db-module label > textarea { width: 100%; flex-shrink: 1; }
 .db-module label > input[type="checkbox"], .db-module label > input[type="radio"] { width: auto; flex-shrink: 0; }
 /* 滚动容器边界 */
-.db-side, .db-main { overflow: hidden; display: flex; flex-direction: column; }
+/* db-main 不可 hidden: 会裁掉概览底部(引擎清单后段/tips)且不可达; 恢复 1711 的纵向滚动
+   (此前 2547 的 overflow:hidden 与 1711 的 overflow-y:auto 冲突, 后者胜出导致概览被硬裁) */
+.db-side { overflow: hidden; display: flex; flex-direction: column; }
+.db-main { overflow-x: hidden; }
 .db-side > *, .db-main > * { flex-shrink: 0; }
 .db-conn-panel-card { flex-shrink: 1 !important; min-height: 0; overflow: hidden; }
 .db-tree { flex-shrink: 1 !important; min-height: 0; }
@@ -2656,97 +2893,7 @@ body {
   overflow-y: auto; flex: 1; min-height: 0;
   padding: 0.25rem;
 }
-.db-tbl-card {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 0.8125rem;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, transform 60ms ease-out;
-  position: relative;
-}
-.db-tbl-card:hover {
-  background: var(--row-hover); border-color: var(--accent);
-  transform: translateX(1px);
-}
-.db-tbl-card-active {
-  background: var(--surface-tint); border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.db-tbl-card-icon {
-  font-size: 0.875rem; color: var(--accent); flex-shrink: 0;
-  width: 1.25rem; text-align: center;
-}
-.db-tbl-card-name {
-  font-weight: 600; flex-shrink: 0;
-  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.db-tbl-card-db {
-  font-size: 0.75rem; color: var(--text-dim);
-  padding: 0.125rem 0.375rem;
-  background: var(--surface-tint);
-  border-radius: 0.25rem;
-  flex-shrink: 0;
-}
-.db-tbl-card-comment {
-  font-size: 0.75rem; color: var(--text-dim);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
-}
-.db-tbl-card-close {
-  display: none; align-items: center; justify-content: center;
-  width: 1.125rem; height: 1.125rem;
-  border: none; background: none; color: var(--text-dim);
-  cursor: pointer; font-size: 0.75rem; flex-shrink: 0;
-  border-radius: 0.25rem;
-}
-.db-tbl-card:hover .db-tbl-card-close { display: inline-flex; }
-.db-tbl-card-close:hover { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
-
-/* 节点弹窗式卡片 */
-.db-tree-cards {
-  display: flex; flex-direction: column; gap: 0.25rem;
-  padding: 0.25rem 0 0.25rem 1.25rem;
-  border-left: 1px solid var(--border);
-  margin-left: 0.625rem;
-}
-.db-tree-card {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 0.8125rem;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, transform 60ms ease-out;
-}
-.db-tree-card:hover {
-  background: var(--row-hover); border-color: var(--accent);
-  transform: translateX(1px);
-}
-.db-tree-card-icon {
-  font-size: 0.875rem; color: var(--accent); flex-shrink: 0;
-  width: 1.25rem; text-align: center;
-}
-.db-tree-card-label {
-  font-weight: 600; flex-shrink: 0;
-  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.db-tree-card-db {
-  font-size: 0.75rem; color: var(--text-dim);
-  padding: 0.125rem 0.375rem;
-  background: var(--surface-tint);
-  border-radius: 0.25rem; flex-shrink: 0;
-}
-.db-tree-card-close {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.25rem; height: 1.25rem;
-  border: none; background: none; color: var(--text-dim);
-  cursor: pointer; font-size: 0.75rem; flex-shrink: 0;
-  border-radius: 0.25rem; margin-left: auto;
-  opacity: 0; transition: opacity 90ms ease-out;
-}
-.db-tree-card:hover .db-tree-card-close { opacity: 1; }
-.db-tree-card-close:hover { background: rgba(59,130,246,0.15); color: var(--accent); }
+/* .db-tbl-card* / .db-tree-card* 死规则已删除(无任何组件渲染这些类名) */
 
 /* 连接编辑弹层 */
 .db-conn-overlay {
@@ -3233,24 +3380,9 @@ body {
 
 /* ═══ V7: 树风格对齐 GoNavi/dbx — 干净列表(无边框胶囊), 统一行高 ═══ */
 /* 月牙根因: 每行 border+圆角胶囊的左边缘连成弧线链; 树行应无边框透明, 仅 hover 高亮 */
-.db-tree-node { border: none !important; background: transparent !important; border-radius: 0.5rem !important; height: 1.9rem; padding: 0 0.45rem !important; box-shadow: none !important; transform: none !important; transition: background-color .12s; }
-.db-tree-node:hover { background: var(--row-hover) !important; border-color: transparent !important; }
-.db-tree-node.selected { background: var(--surface-tint) !important; box-shadow: inset 2px 0 0 var(--accent) !important; }
-.lv-conn.db-tree-node { background: transparent !important; }
-.lv-conn.db-tree-node:hover { background: var(--row-hover) !important; }
 /* caret: 无边框小箭头 */
-.db-tree-caret { width: 0.85rem !important; height: 0.85rem !important; border: none !important; background: transparent !important; border-radius: 0 !important; display: inline-flex !important; align-items: center; justify-content: center; }
-.db-tree-caret::before { content: '▸' !important; font-size: 0.625rem !important; color: var(--text-dim) !important; }
-.db-tree-caret.open::before { transform: rotate(90deg) !important; color: var(--accent) !important; }
-.db-tree-caret.leaf { visibility: hidden !important; }
 /* 行内元素垂直居中统一 */
-.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon { flex-shrink: 0; }
-.db-tree-label { line-height: 1.4 !important; }
 /* 表卡片(分组展开)与行高一致 */
-.db-tree-cards { display: flex; flex-direction: column; gap: 0.25rem; }
-.db-tree-card { height: 1.9rem; border: none !important; background: transparent !important; border-radius: 0.5rem !important; box-shadow: none !important; display: flex; align-items: center; gap: 0.375rem; padding: 0 0.45rem !important; cursor: pointer; }
-.db-tree-card:hover { background: var(--row-hover) !important; }
-.db-tree-card-label { font-size: 0.75rem; }
 /* 行间无重叠弧线 */
 .db-tree-body { gap: 0 !important; }
 
@@ -3259,21 +3391,10 @@ body {
 .db-ctx-menu-divider-heavy { height: 1px; margin: 0.35rem 0.15rem; background: color-mix(in srgb, var(--text-dim) 45%, transparent); }
 
 /* ═══ V9: 树最终样式 — dbx 式干净列表, 单一选中行, 28px 统一行高 ═══ */
-.db-tree-node, .db-tree-card { height: 1.75rem !important; min-height: 1.75rem; padding: 0 0.5rem !important; border: none !important; background: transparent !important; border-radius: 0.25rem !important; box-shadow: none !important; transform: none !important; display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; transition: background-color 0.12s; }
-.db-tree-node:hover, .db-tree-card:hover { background: var(--row-hover) !important; }
 /* 选中=仅当前点击行: 浅底+左侧 accent 竖条 */
-.db-tree-node.selected, .db-tree-card.selected { background: var(--surface-tint) !important; box-shadow: inset 2px 0 0 var(--accent) !important; }
 /* 连接行微强调: 仅字重, 无底色 */
-.lv-conn > .db-tree-label { font-weight: 650; font-size: 0.875rem; }
 /* caret: 无框小箭头, leaf 占位对齐 */
-.db-tree-caret { width: 0.8rem !important; height: 0.8rem !important; border: none !important; background: transparent !important; border-radius: 0 !important; display: inline-flex !important; align-items: center; justify-content: center; flex-shrink: 0; }
-.db-tree-caret::before { content: '▸' !important; font-size: 0.625rem !important; color: var(--text-dim) !important; line-height: 1; }
-.db-tree-caret.open::before { transform: rotate(90deg) !important; color: var(--accent) !important; }
-.db-tree-caret.leaf { visibility: hidden !important; }
 /* 图标尺寸统一 15px, 与文字垂直居中 */
-.db-tree-node .dbx-engine-icon { width: 1rem !important; height: 1rem !important; }
-.db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.95rem !important; height: 0.95rem !important; }
-.db-tree-label { line-height: 1 !important; }
 /* 缩进步长 0.9rem/层; 表卡片随分组缩进 */
 .db-tree-body { gap: 0.25rem !important; }
 
@@ -3289,24 +3410,7 @@ body {
 .db-tree-body { padding: 0 !important; }
 
 /* ═══ V11: 月牙真因 = '▸'字符字体缺字形 fallback 渲染成弧形 → 改纯 CSS 三角形(零字体依赖) ═══ */
-.db-tree-node, .db-tree-card { height: 2rem !important; min-height: 2rem; }
-.db-tree-caret::before {
-  content: '' !important;
-  width: 0 !important; height: 0 !important;
-  border-left: 0.3rem solid var(--text-dim) !important;
-  border-top: 0.26rem solid transparent !important;
-  border-bottom: 0.26rem solid transparent !important;
-  transform: none !important;
-  transition: border-color .15s;
-  font-size: 0 !important;
-}
-.db-tree-caret.open::before {
-  border-left-color: var(--accent) !important;
-  transform: rotate(90deg) !important;
-  -webkit-transform: rotate(90deg) !important;
-}
 /* 空分组(无子级)不显示箭头 */
-.db-tree-caret.leaf::before { border-left-color: transparent !important; }
 
 /* ═══ V12: 向导横向化(dbx 式宽对话框) + 引擎卡品牌图标 ═══ */
 .db-conn-panel { width: min(62rem, 94vw) !important; max-height: 86vh; }
@@ -3326,52 +3430,16 @@ body {
    行: min-h 28px / py-1(4px) / px-2(8px) / gap-2(8px) / contain layout style
    caret: 16px 按钮内 14px lucide chevron; 不可展开行 14px 占位
    图标: 14×14; 选中: 浅灰底(dbx tree-item-active) */
-.db-tree-node, .db-tree-card { min-height: 1.75rem !important; height: auto !important; padding: 0.25rem 0.5rem !important; gap: 0.5rem !important; contain: layout style; }
-.db-tree-caret, .db-tree-caret-leaf { width: 0.875rem !important; height: 0.875rem !important; flex-shrink: 0; display: inline-flex !important; align-items: center; justify-content: center; border: none !important; background: transparent !important; }
-.db-tree-caret { border-radius: 0.25rem !important; color: var(--text-dim) !important; cursor: pointer; }
-.db-tree-caret:hover { background: var(--row-hover) !important; color: var(--text) !important; }
-.db-tree-caret::before { content: none !important; }
-.db-tree-caret-leaf { visibility: hidden; }
-.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.875rem !important; height: 0.875rem !important; }
-.db-tree-label { font-size: 0.8125rem !important; line-height: 1.25 !important; }
 /* 选中: dbx tree-item-active = 浅灰底, 无竖条 */
-.db-tree-node.selected, .db-tree-card.selected { background: rgb(235 235 235) !important; box-shadow: none !important; }
-[data-theme='obsidian'] .db-tree-node.selected, [data-theme='obsidian'] .db-tree-card.selected { background: rgb(36 36 36) !important; }
 
 /* 行: k8s-side-item 值 — 28px、0.4rem 圆角、hover 灰 8% */
-.db-tree-node, .db-tree-card {
-  min-height: 1.75rem !important; height: auto !important;
-  padding: 0.25rem 0.5rem !important;
-  border-radius: 0.5rem !important;
-  border: none !important; background: transparent !important; box-shadow: none !important;
-  display: flex; align-items: center; gap: 0.375rem !important;
-  font-size: 0.8125rem !important; font-weight: 500 !important;
-  transition: background-color 100ms ease, color 100ms ease;
-}
-.db-tree-node:hover, .db-tree-card:hover { background: rgba(127, 127, 127, 0.08) !important; }
 /* 选中: k8s-side-item.active = accent 12% 底 + accent 字色 + 600 字重 */
-.db-tree-node.selected, .db-tree-card.selected {
-  background: color-mix(in srgb, var(--accent, #7c6cf6) 12%, transparent) !important;
-  color: var(--accent, #7c6cf6) !important;
-  font-weight: 600 !important;
-  box-shadow: none !important;
-}
-.db-tree-node.selected .db-tree-label, .db-tree-card.selected .db-tree-card-label { color: var(--accent, #7c6cf6) !important; }
 /* caret: k8s-fold-arrow 同款(细箭头, 低透明度, hover 加深) */
-.db-tree-caret, .db-tree-caret-leaf { width: 0.875rem !important; height: 0.875rem !important; }
-.db-tree-caret { color: var(--text-dim) !important; opacity: 0.6; border-radius: 0.25rem !important; }
-.db-tree-caret:hover { opacity: 1; background: transparent !important; }
-.db-tree-caret:hover::before { border-left-color: var(--text) !important; }
 /* 图标/标签字号统一 */
-.db-tree-node .dbx-engine-icon, .db-tree-node .dbx-node-icon, .db-tree-card .dbx-node-icon { width: 0.9375rem !important; height: 0.9375rem !important; }
-.db-tree-label, .db-tree-card-label { font-size: 0.8125rem !important; line-height: 1.3 !important; }
-.db-tree-count { background: rgba(127, 127, 127, 0.12) !important; border: none !important; }
 /* 搜索条: 填充式, 与卡片融合 */
 .db-tree-search { background: rgba(127, 127, 127, 0.08) !important; border: none !important; }
 .db-tree-search:focus { background: var(--surface-solid) !important; }
 /* 库行字色层级(k8s-side-item 同款 inherit) */
-.lv-db > .db-tree-label { color: inherit !important; opacity: 0.92; }
-.lv-group > .db-tree-label { color: inherit !important; opacity: 0.65; font-weight: 600 !important; }
 
 /* 主侧栏: 不显示滚动条(用户明确要求; 滚轮仍可滚动) */
 .sidebar { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
@@ -3394,11 +3462,13 @@ body {
 .db-sync-dialog { width: min(46rem, 94vw) !important; max-height: 88vh; overflow-y: auto; }
 
 /* 行过滤栏 */
-.db-row-filter { display: flex; flex-direction: column; gap: 0.375rem; padding: 0.375rem; background: var(--surface-tint); border-radius: var(--radius-sm); }
-.db-row-filter-row { display: flex; gap: 0.375rem; align-items: center; min-width: 0; }
-.db-row-filter-row .input { height: 1.7rem; font-size: 0.75rem; padding: 0.125rem 0.375rem; }
+/* 过滤工作台: 与工具栏同一套尺度(20px 控件 / 12px 字 / 8px 控件间距), px 不跟随根字号 */
+.db-row-filter { display: flex; flex-direction: column; gap: 6px; padding: 6px; background: var(--surface-tint); border-radius: var(--radius-sm); }
+.db-row-filter-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.db-row-filter-row .input { height: var(--db-btn-h); font-size: var(--db-btn-fs); padding: 0 6px; box-sizing: border-box; }
 .db-row-filter-row select.input { width: auto; min-width: 0; flex: 0 1 auto; }
-.db-row-filter-row input.input { flex: 1; min-width: 4rem; }
+.db-row-filter-row input.input { flex: 1; min-width: 64px; }
+.db-row-filter .btn-glass-soft { height: var(--db-btn-h); min-height: var(--db-btn-h); padding: 0 8px; font-size: var(--db-btn-fs); line-height: 1; display: inline-flex; align-items: center; box-sizing: border-box; }
 
 /* 单元格详情弹层 */
 .db-cell-detail { width: min(36rem, 90vw); max-height: 70vh; background: var(--surface-solid); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
@@ -3421,7 +3491,7 @@ body {
 .db-toolbar-stat { font-size: 0.75rem; color: var(--text-dim); font-variant-numeric: tabular-nums; padding: 0.125rem 0.5rem; background: var(--surface-tint); border-radius: 0.5rem; }
 .db-data-toolbar .btn-glass-soft { transition: background-color 120ms ease; }
 .db-view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.db-view-toggle button { border: none; border-radius: 0 !important; justify-content: center; min-width: 3.5rem; }
+.db-view-toggle button { border: none; border-radius: 0 !important; justify-content: center; min-width: 56px; height: var(--db-btn-h); padding: 0 8px; font-size: var(--db-btn-fs); box-sizing: border-box; }
 .db-view-toggle button + button { border-left: 1px solid var(--border); }
 
 /* ── 详情卡片(单元格/行/列) ── */
@@ -3441,21 +3511,85 @@ body {
 /* 网格化表格: dbx DataGrid 同构 —— 全边框单元 + 粘性表头 + 斑马悬停 */
 /* 表格层减化: 去掉外框与圆角, 只保留上/下各一条 1px 分隔线(单元格自身仍有行列线), 与外层 data-panel 的"单边界"目标一致 */
 .db-table-grid { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow: auto; max-height: 60vh; }
-.db-table-grid table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.75rem; }
-.db-table-grid th, .db-table-grid td { height: 22px; padding: 0.375rem 0.625rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
+.db-table-grid table { width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--db-font-grid); font-size: var(--db-cell-fs); table-layout: fixed; }
+/* 两阶段布局测量态: 列集变化后先 auto 实测自然宽(全列写入 colW), 再回落 fixed */
+.db-table-grid table.db-measuring { table-layout: auto; }
+/* 几何全部取自 dbx 活体值(见 .db-module 令牌层出处注释): 26px 行 / 12px×4px 单元 / 16px 行高 */
+.db-table-grid th, .db-table-grid td { height: var(--db-row-h); padding: var(--db-cell-pad-y) var(--db-cell-pad-x); line-height: var(--db-cell-lh); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
 .db-table-grid th:last-child, .db-table-grid td:last-child { border-right: none; }
-.db-table-grid thead th { position: sticky; top: 0; background: var(--surface-solid); font-weight: 650; z-index: 2; cursor: pointer; user-select: none; }
-.db-table-grid thead th.db-col-num { background: var(--surface-tint); }
-/* 键列着色: 主键淡红 / 索引(UNI/MUL)淡绿 —— 与 surface-solid 实色混合保证 sticky 表头不透底 */
-.db-table-grid thead th.db-th-pri { background: color-mix(in srgb, var(--danger) 11%, var(--surface-solid)); }
-.db-table-grid thead th.db-th-idx { background: color-mix(in srgb, var(--ok) 13%, var(--surface-solid)); }
-.db-table-grid tbody tr:nth-child(even) { background: var(--surface-tint); }
-.db-table-grid tbody tr:hover { background: var(--row-hover); }
-.db-table-grid td.db-col-num { color: var(--text-dim); text-align: right; background: var(--surface-tint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
-.db-table-grid .db-th-type { display: block; font-size: 0.625rem; font-weight: 400; color: var(--text-dim); }
+.db-table-grid thead th { height: var(--db-header-h); position: sticky; top: 0; background: var(--db-header-bg); font-weight: 600; z-index: 2; cursor: pointer; user-select: none; }
+.db-table-grid thead th.db-col-num { background: var(--db-header-bg); }
+/* 键列着色: 主键淡红 / 索引(UNI/MUL)淡绿 —— 与表头实底混合保证 sticky 不透底 */
+.db-table-grid thead th.db-th-pri { background: color-mix(in srgb, var(--danger) 11%, var(--db-header-bg)); }
+.db-table-grid thead th.db-th-idx { background: color-mix(in srgb, var(--ok) 13%, var(--db-header-bg)); }
+.db-table-grid tbody tr:nth-child(even) { background: var(--db-row-striped); }
+.db-table-grid tbody tr:hover { background: var(--db-cell-hover); }
+/* 数值列右对齐 + 行号列: dbx 行号列居中、12px、底色恒为实底(横滚时压在数据上不透字) */
+.db-table-grid td.db-numr { text-align: right; }
+.db-table-grid td.db-col-num { color: var(--text-dim); width: var(--db-num-col-min); text-align: center; background: var(--surface-solid); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* null 与 dbx 同: muted 前景 + 斜体(类型着色对 null 不生效) */
+.db-table-grid td.db-isnull { font-style: italic; }
+
+/* 列冻结(sticky left): 背景必须不透明, zebra/hover 用「色层叠实底」渐变保证横滚不透字 */
+.db-table-grid .db-col-frozen { position: sticky; }
+.db-table-grid td.db-col-frozen { background: var(--surface-solid); z-index: 1; }
+.db-table-grid td.db-col-num.db-col-frozen { background: linear-gradient(var(--db-row-striped), var(--db-row-striped)), var(--surface-solid); }
+.db-table-grid tbody tr:nth-child(even) td.db-col-frozen { background: linear-gradient(var(--db-row-striped), var(--db-row-striped)), var(--surface-solid); }
+.db-table-grid tbody tr:hover td.db-col-frozen { background: linear-gradient(var(--row-hover), var(--row-hover)), var(--surface-solid); }
+.db-table-grid thead th.db-col-frozen { background: var(--db-header-bg); z-index: 3; }
+/* 冻结列右缘分隔: dbx 用 2px 石板灰实线标出冻结边界 */
+.db-table-grid td.db-col-frozen:last-of-type, .db-table-grid .db-col-frozen-sep { border-right: 2px solid var(--db-frozen-sep); }
+
+/* 按列类型着色(九组): 类别判定见 src/lib/dataGridTypes.ts, 与 dbx 同一套归一化规则 */
+.db-table-grid td.db-t-integer { color: var(--db-type-integer); }
+.db-table-grid td.db-t-numeric { color: var(--db-type-numeric); }
+.db-table-grid td.db-t-string { color: var(--db-type-string); }
+.db-table-grid td.db-t-boolean { color: var(--db-type-boolean); }
+.db-table-grid td.db-t-temporal { color: var(--db-type-temporal); }
+.db-table-grid td.db-t-structured { color: var(--db-type-structured); }
+.db-table-grid td.db-t-identifier { color: var(--db-type-identifier); }
+.db-table-grid td.db-t-binary { color: var(--db-type-binary); }
+.db-table-grid td.db-t-spatial { color: var(--db-type-spatial); }
+
+/* 网格滚动条: dbx 隐藏原生, 自绘 10px 轨道 / 4px 滑块(悬停 6px) / 最短 24px / 全圆 */
+.db-table-grid { scrollbar-width: thin; }
+.db-table-grid::-webkit-scrollbar { width: 10px; height: 10px; }
+.db-table-grid::-webkit-scrollbar-thumb { background: var(--db-scrollbar-thumb); border-radius: 999px; min-height: 24px; min-width: 24px; }
+.db-table-grid::-webkit-scrollbar-thumb:hover { background: var(--db-scrollbar-thumb-hover); }
+.db-table-grid::-webkit-scrollbar-corner { background: transparent; }
+
+/* 编辑落库前的 SQL 预览(公共确认弹窗的内容块): 可读、可选中、可复制 */
+.db-sql-preview { display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.25rem; }
+.db-sql-preview-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.75rem; }
+/* 有界预览的折叠提示: 头尾 code 块中间那一行 */
+.db-sql-preview-omitted {
+  padding: 0.25rem 0.625rem; text-align: center;
+  background: var(--surface-tint); border: 1px dashed var(--border); border-radius: var(--radius-sm);
+  font-size: 0.6875rem; color: var(--text-dim);
+}
+/* 雪花 workerId 选择面板(经 portal 挂在 body 上, 不在 .db-module 内, 所以只用全局令牌 + px) */
+.db-worker-cfg { display: flex; flex-direction: column; gap: 8px; min-width: 260px; }
+.db-worker-row { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.db-worker-row.active { border-color: var(--accent); background: var(--surface-tint); }
+.db-worker-name { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.db-worker-hint { font-size: 11px; line-height: 15px; color: var(--text-dim); }
+.db-worker-input { margin-top: 4px; width: 100px; }
+.db-worker-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.db-sql-preview-sql {
+  margin: 0; padding: 0.5rem 0.625rem; max-height: 12rem; overflow: auto;
+  background: var(--surface-tint); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 0.75rem; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
+/* 虚拟滚动垫片行: 无边框零内容, 只撑总高 */
+.db-table-grid .db-vspacer td { border: none; padding: 0; line-height: 0; }
+/* 列宽拖柄: th 右缘 7px 热区(sticky th 即定位上下文), 双击恢复均分 */
+.db-col-resize { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; touch-action: none; z-index: 5; }
+.db-col-resize:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.db-table-grid .db-th-type { display: block; font-size: 10px; line-height: 12px; font-weight: 400; color: var(--text-dim); }
 
 /* 树: 行数徽标 + 对象类型彩色图标(dbx 配色) */
-.dbx-node-icon { flex-shrink: 0; }
 .icon-table { color: var(--ok); }
 .icon-view { color: #0ea5e9; }
 .icon-schema { color: var(--warn); }
@@ -3549,20 +3683,22 @@ body {
 
 /* 第二层: GoNavi 类别页签(过滤树对象) — 无框, 与第一行搜索条风格一致 */
 .db-tree-catbar {
-  display: flex; gap: 0.25rem; padding: 0 0.15rem; flex-wrap: nowrap; overflow-x: auto;
+  display: flex; gap: 2px; padding: 0 2px; flex-wrap: nowrap; overflow-x: auto;
   scrollbar-width: none;
 }
 .db-tree-catbar::-webkit-scrollbar { display: none; }
+/* 按内容定宽, 不均分: 7 个标签均分时每个 32px, 而"存储包"三个字在任何 ≥13px 的字号下都超过 32px →
+   直接被切(实测根字号 12.5px 时侥幸没切, 16px 就露馅)。字号与间距一律 px, 不跟根字号漂。 */
 .db-tree-catbar button {
-  flex: 1; min-width: 0; white-space: nowrap; border: none; background: transparent;
-  font-size: 0.75rem; line-height: 1.1; padding: 0.25rem 0.125rem; cursor: pointer;
+  flex: 0 0 auto; min-width: 0; white-space: nowrap; border: none; background: transparent;
+  font-size: 11px; line-height: 16px; padding: 2px 4px; cursor: pointer;
   color: var(--text-dim); border-radius: var(--radius-sm); text-align: center;
 }
 .db-tree-catbar button:hover { color: var(--text); }
 .db-tree-catbar button.cat-on { color: var(--accent); font-weight: 700; }
 
 /* 侧栏收纳: 窄轨(仅展开按钮, dbx/goNavi 同款) */
-.db-side-collapsed { width: 2.6rem !important; min-width: 2.6rem !important; padding: 0.5rem 0.25rem !important; }
+.db-side-collapsed { width: 34px !important; min-width: 34px !important; padding: 6px 3px !important; }
 .db-side-rail { display: flex; flex-direction: column; align-items: center; gap: 0.375rem; }
 .db-side-rail-btn {
   width: 2rem; height: 2rem; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
@@ -3627,9 +3763,11 @@ body {
 /* 右键二级子菜单(dbx 同款): hover 父项右侧展开, 纯 CSS 无状态 */
 .db-ctx-menu-subwrap { position: relative; display: block; width: 100%; }
 .db-ctx-menu-subwrap > .db-ctx-menu-item { width: 100%; }
-.db-ctx-menu-subpanel { display: none; position: absolute; left: calc(100% - 4px); top: -4px; min-width: 11rem; padding: 0.3rem; flex-direction: column; }
+.db-ctx-menu-subpanel { display: none; position: absolute; left: calc(100% - 4px); top: -4px; min-width: 176px; padding: 0.3rem; flex-direction: column; }
 .db-ctx-menu-subwrap:hover > .db-ctx-menu-subpanel { display: flex; }
 .db-ctx-menu-subwrap:hover > .db-ctx-menu-item { background: var(--row-hover); }
+/* 根菜单右缘留给子菜单的空间不够时(表格最右几列的右键), 子菜单翻挂左侧 —— 由 ContextMenu 实测后打类 */
+.db-ctx-menu-sub-left .db-ctx-menu-subpanel { left: auto; right: calc(100% - 4px); }
 
 /* 同步视图 源/目标左右分栏(dbx transfer 同构) */
 .db-transfer-grid { display: grid; grid-template-columns: 1fr 44px 1fr; gap: 8px; align-items: start; }
