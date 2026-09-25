@@ -17,6 +17,10 @@ export function humanizeDbError(raw: string): string {
     return `外键约束：${e?.[1] || '该字段'} 的值必须在 ${e?.[2] || '父表'}.${e?.[3] || '主键'} 里已经存在`
   }
   if (code(1451)) return '外键约束：这行还被其它表引用，不能修改/删除'
+  if (code(1364)) {
+    const e = /Field '([^']+)' doesn't have a default value/.exec(s)
+    return `字段 ${e?.[1] || ''} 没有默认值，必须显式填（该列 NOT NULL 且无默认）`
+  }
   if (code(1048)) {
     const e = /Column '([^']+)' cannot be null/.exec(s)
     return `字段 ${e?.[1] || ''} 不允许为空（该列是 NOT NULL）`

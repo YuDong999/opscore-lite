@@ -1,7 +1,10 @@
 package dbmanager
 
 // apply-batch: 数据网格"待提交变更"整批落库(一个事务里做, 对应 dbx 的 保存/回滚 那排按钮)。
-// 契约: POST {id, database, table, pkCols[], ops:[{kind:update|delete, row{}, setCol?, setValue?}], confirm}
+// 契约: POST {id, database, table, pkCols[], ops:[
+//         {kind:update, row{}, setCol, setValue} | {kind:delete, row{}} | {kind:insert, values{}}
+//       ], confirm}
+//   insert 的 values 只带用户填过的列(键=列名), 未给的列交给表默认值/AUTO_INCREMENT。
 //   - confirm=false → 只回将执行的语句列表(预览), 不落库;
 //   - confirm=true  → 走 interceptWrite 写安全链后, 在**一个事务**里逐条执行, 任一条失败整体回滚。
 //
@@ -17,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	gonaviDB "opscore/internal/dbmanager/gonavi/db"
@@ -27,10 +31,11 @@ import (
 const maxBatchOps = 500
 
 type batchOp struct {
-	Kind     string         `json:"kind"` // update | delete
-	Row      map[string]any `json:"row"`  // 主键定位(必须带齐 pkCols 的每个值)
+	Kind     string         `json:"kind"` // update | delete | insert
+	Row      map[string]any `json:"row"`  // update/delete: 主键定位(必须带齐 pkCols 的每个值)
 	SetCol   string         `json:"setCol,omitempty"`
 	SetValue any            `json:"setValue,omitempty"`
+	Values   map[string]any `json:"values,omitempty"` // insert: 用户填过的列(其余走表默认值)
 }
 
 type applyBatchBody struct {
@@ -60,7 +65,14 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Sprintf("一次最多 %d 条变更", maxBatchOps), http.StatusBadRequest)
 		return
 	}
-	if len(body.PkCols) == 0 {
+	needPK := false
+	for _, op := range body.Ops {
+		if op.Kind != "insert" {
+			needPK = true
+			break
+		}
+	}
+	if needPK && len(body.PkCols) == 0 {
 		writeErr(w, "无主键列, 无法唯一定位行, 拒绝批量写入", http.StatusBadRequest)
 		return
 	}
@@ -78,8 +90,20 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "delete":
+		case "insert":
+			if len(op.Values) == 0 {
+				writeErr(w, fmt.Sprintf("第 %d 条 insert 没有任何列值", i+1), http.StatusBadRequest)
+				return
+			}
+			for col := range op.Values {
+				if !validIdentifier(col) {
+					writeErr(w, fmt.Sprintf("第 %d 条列名非法: %s", i+1, col), http.StatusBadRequest)
+					return
+				}
+			}
+			continue // insert 不需要主键定位
 		default:
-			writeErr(w, fmt.Sprintf("第 %d 条 kind 只支持 update/delete", i+1), http.StatusBadRequest)
+			writeErr(w, fmt.Sprintf("第 %d 条 kind 只支持 update/delete/insert", i+1), http.StatusBadRequest)
 			return
 		}
 		for _, pk := range body.PkCols {
@@ -116,6 +140,22 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	sqls := make([]string, 0, len(body.Ops))
 	for _, op := range body.Ops {
+		if op.Kind == "insert" {
+			cols := make([]string, 0, len(op.Values))
+			for col := range op.Values {
+				cols = append(cols, col)
+			}
+			sort.Strings(cols)
+			names := make([]string, len(cols))
+			vals := make([]string, len(cols))
+			for j, col := range cols {
+				names[j] = qi(col)
+				vals[j] = gonaviDB.FormatLiteralForDialect(engine, op.Values[col])
+			}
+			sqls = append(sqls, fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+				tn, strings.Join(names, ", "), strings.Join(vals, ", ")))
+			continue
+		}
 		var conds []string
 		for _, pk := range body.PkCols {
 			conds = append(conds, fmt.Sprintf("%s = %s", qi(pk), gonaviDB.FormatLiteralForDialect(engine, op.Row[pk])))

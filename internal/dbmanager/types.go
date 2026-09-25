@@ -381,6 +381,7 @@ type ColumnInfo struct {
 	Key      string `json:"key,omitempty"` // PRI / UNI / MUL
 	Default  string `json:"default,omitempty"`
 	Comment  string `json:"comment,omitempty"`
+	Extra    string `json:"extra,omitempty"` // auto_increment / on update CURRENT_TIMESTAMP 等
 }
 
 // IndexInfo 索引元数据（聚合后的形态）。

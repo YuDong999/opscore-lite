@@ -22,6 +22,7 @@ export interface ColumnInfo {
   key?: string
   default?: string
   comment?: string
+  extra?: string // auto_increment / on update ...(驱动侧附加信息)
 }
 
 export interface GridStatement { sql: string; type: string; rows: number; affected: number; durationMs: number; error?: string }
@@ -59,11 +60,13 @@ export interface DataGridBackend {
 // 网格内"待提交变更"(批量提交模式): 编辑/置 NULL/删行先攒着, 由底部变更条统一走 onCommitBatch。
 // 父级负责 SQL 预览/确认/执行/刷新 —— 这里同样不拼 SQL, 只报"哪行哪列改成什么/删哪行"。
 export interface GridChange {
-  kind: 'update' | 'delete'
-  row: number      // 当前页行下标(与 result.rows 同序)
+  kind: 'update' | 'delete' | 'insert'
+  row?: number     // update/delete: 当前页行下标(与 result.rows 同序); insert 没有行
   col?: number     // update 必填
   value?: any      // update 后的值(null = 置为 NULL)
   oldValue?: any
+  values?: Record<string, any> // insert: 用户填过的列(其余走表默认值)
+  id?: string      // 待提交项身份(同一格重复改只留最后一次; insert 各自独立)
 }
 
 // 分页档位唯一来源: DataPanel 数据页 pager 与 DataGrid 查询结果 footer 共用,
@@ -174,6 +177,66 @@ function DetailOverlay({ title, onClose, head, children }: {
   )
 }
 
+// 「插入行」表单: 列出网格现有列, 留空 = 走表默认值; NOT NULL 且无默认值的列必须填。
+function InsertRowOverlay({ columns, meta, draft, setDraft, onCancel, onSubmit }: {
+  columns: string[]
+  meta?: ColumnInfo[]
+  draft: Record<string, string>
+  setDraft: (d: Record<string, string>) => void
+  onCancel: () => void
+  onSubmit: (values: Record<string, any>) => void
+}) {
+  const [err, setErr] = useState('')
+  const info = (c: string) => (meta || []).find(m => m.name === c)
+  const submit = () => {
+    const values: Record<string, any> = {}
+    for (const c of columns) {
+      const raw = draft[c]
+      if (raw === undefined || raw === '') continue
+      const t = (info(c)?.type || '').toLowerCase().trim()
+      values[c] = /^(int|bigint|smallint|tinyint|mediumint|decimal|numeric|float|double|real)/.test(t)
+        ? Number(raw)
+        : raw
+    }
+    if (Object.keys(values).length === 0) { setErr('至少要填一列'); return }
+    for (const c of columns) {
+      const m = info(c)
+      if (!m) continue
+      const auto = /auto_increment|nextval|identity|serial/i.test(m.extra || '')
+      const isPK = /^(pri|primary)$/i.test(m.key || '')
+      if (!m.nullable && !m.default && !auto && !isPK && !(c in values)) {
+        setErr(`列 ${c} 不允许为空(NOT NULL)且没有默认值, 必须填`)
+        return
+      }
+    }
+    onSubmit(values)
+  }
+  return (
+    <DetailOverlay title="插入行 · 新增一行" onClose={onCancel}>
+      <div className="dg-insert-form">
+        {columns.map(c => {
+          const m = info(c)
+          return (
+            <label key={c} className="dg-insert-field">
+              <span className="dg-insert-label">
+                <b className="mono">{c}</b>
+                <span className="dim small">{m?.type || ''}{m?.nullable === false ? ' · NOT NULL' : ''}{m?.default ? ` · 默认 ${m.default}` : ''}{/auto_increment/i.test(m?.extra || '') ? ' · 自增' : ''}</span>
+              </span>
+              <input className="input" value={draft[c] ?? ''} placeholder="留空 = 表默认值"
+                onChange={e => setDraft({ ...draft, [c]: e.target.value })} />
+            </label>
+          )
+        })}
+      </div>
+      {err && <div className="banner banner-err small">{err}</div>}
+      <div className="btn-row" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
+        <button className="btn-glass-soft btn-glass-soft-sm" onClick={onCancel}>取消</button>
+        <button className="btn-glass-soft btn-glass-soft-sm btn-accent" onClick={submit}>加入待提交</button>
+      </div>
+    </DetailOverlay>
+  )
+}
+
 function renderCell(v: any): string {
   if (v === null || v === undefined) return ''
   if (typeof v === 'object') {
@@ -232,14 +295,21 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   const [savingBatch, setSavingBatch] = useState(false)
   // 父级校验失败时点名的单元格(如列长度超限): 标红, 用户改一下就清掉
   const [badCells, setBadCells] = useState<Set<string>>(new Set())
+  // 「插入行」表单(列取自网格现成列, 留空 = 走表默认值)
+  const [insertOpen, setInsertOpen] = useState(false)
+  const [insertDraft, setInsertDraft] = useState<Record<string, string>>({})
+  const seqRef = useRef(0)
   // 同一个格子改了多次只留最后一次; 删行覆盖该行所有单元格改动
   const markPending = useCallback((c: GridChange) => {
     setBadCells(prev => { const n = new Set(prev); n.delete(`${c.row}:${c.col}`); return n })
-    setPending(prev => [
-      ...prev.filter(p => !(p.row === c.row && p.kind === c.kind && (c.kind === 'delete' || p.col === c.col))),
-      c,
-    ])
+    setPending(prev => {
+      let next = prev
+      if (c.kind === 'delete') next = prev.filter(p => p.row !== c.row)       // 删行覆盖该行所有改动
+      else if (c.kind === 'update') next = prev.filter(p => !(p.kind === 'update' && p.row === c.row && p.col === c.col))
+      return [...next, { ...c, id: c.id || `c${++seqRef.current}` }]
+    })
   }, [])
+  const dropPending = useCallback((id?: string) => setPending(prev => prev.filter(p => p.id !== id)), [])
   const pendingCell = useCallback((row: number, col: number): GridChange | null => {
     for (let i = pending.length - 1; i >= 0; i--) {
       const c = pending[i]
@@ -656,6 +726,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     const applyRowWrite = backend?.applyRowWrite
 
     const items: ContextMenuItem[] = [
+      ...(batchMode && isEditable ? [{ label: '插入行（新增一行）', icon: <ActionIcon kind="plus" />, onClick: () => { setInsertDraft({}); setInsertOpen(true) } } as ContextMenuItem] : []),
       // ── 排序 / 筛选 / 复制(二级) ──
       { label: '排序', icon: <ActionIcon kind="sort-asc" />, children: sortChildren },
       ...(filterChildren.length ? [{ label: '筛选', icon: <ActionIcon kind="filter" />, children: filterChildren } as ContextMenuItem] : []),
@@ -676,6 +747,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       })),
       // 单元格编辑入口(右键): 打开详情弹窗并直接进入编辑模式(无主键表/查询页不可编辑时隐藏)
       ...(isEditable && onEdit ? [{ label: '编辑单元格', icon: <ActionIcon kind="edit" />, onClick: () => { setDetail({ r: row, c: col }); openDetailEdit(row, col) } }] : []),
+      ...(batchMode && isEditable ? [{ label: '插入行', icon: <ActionIcon kind="plus" />, title: '新增一行(填完进待提交, 与其它改动同事务提交)', onClick: () => { setInsertDraft({}); setInsertOpen(true) } } as ContextMenuItem] : []),
       ...(genChildren.length ? [{ label: '生成值', icon: <ActionIcon kind="wand" />, children: genChildren } as ContextMenuItem] : []),
       ...(tableFromSql && pkCols.length && !pkCols.includes(colName) && (applyRowWrite || batchMode) ? [{
         label: '置为 NULL',
@@ -975,6 +1047,19 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
               </tr>
               )
             })}
+            {batchMode && pending.filter(p => p.kind === 'insert').map(pi => (
+              <tr key={pi.id} className="dg-row-new">
+                <td className="db-col-num db-col-frozen" style={{ left: 0 }}>
+                  <button className="btn-glass-soft btn-glass-soft-sm" style={{ padding: '0 6px' }}
+                    title="移除这条新增" onClick={() => dropPending(pi.id)}>✕</button>
+                </td>
+                {result.columns.map((c2, j) => (
+                  <td key={j}>{pi.values && c2 in pi.values
+                    ? (pi.values[c2] === null ? <span className="dim">NULL</span> : renderCell(pi.values[c2]))
+                    : <span className="dim">默认</span>}</td>
+                ))}
+              </tr>
+            ))}
             {virtualize && visEnd < pageIdx.length && (
               <tr className="db-vspacer" style={{ height: (pageIdx.length - visEnd) * rowH }}><td colSpan={result.columns.length + 1} /></tr>
             )}
@@ -995,16 +1080,31 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
           </div>
         )}
       </div>
-      {batchMode && pending.length > 0 && (
+      {batchMode && (
+        // 批量模式下常驻: 空表也要能"插入行"(那时没有行可右键)
         <div className="dg-pending-bar">
-          <span>待提交 <b>{pending.length}</b> 处变更</span>
-          <span className="dim">改动只暂存在本页, 点保存才写库</span>
-          <span style={{ marginLeft: 'auto' }} />
-          <button className="btn-glass-soft btn-glass-soft-sm" disabled={savingBatch}
-            onClick={() => { setPending([]); setBadCells(new Set()); toast.success('已回滚本页未提交的改动') }}>回滚</button>
-          <button className="btn-glass-soft btn-glass-soft-sm btn-accent" disabled={savingBatch} onClick={saveBatch}>
-            {savingBatch ? '提交中…' : '保存'}
-          </button>
+          <button className="btn-glass-soft btn-glass-soft-sm"
+            onClick={() => { setInsertDraft({}); setInsertOpen(true) }}>+ 插入行</button>
+          {pending.length > 0 ? (
+            <>
+              <span>待提交 <b>{pending.length}</b> 处变更{(() => {
+                const u = pending.filter(p => p.kind === 'update').length
+                const d = pending.filter(p => p.kind === 'delete').length
+                const i = pending.filter(p => p.kind === 'insert').length
+                const parts = [u && `改 ${u}`, d && `删 ${d}`, i && `新增 ${i}`].filter(Boolean)
+                return parts.length ? `（${parts.join(' · ')}）` : ''
+              })()}</span>
+              <span className="dim">改动只暂存在本页, 点保存才写库</span>
+              <span style={{ marginLeft: 'auto' }} />
+              <button className="btn-glass-soft btn-glass-soft-sm" disabled={savingBatch}
+                onClick={() => { setPending([]); setBadCells(new Set()); toast.success('已回滚本页未提交的改动') }}>回滚</button>
+              <button className="btn-glass-soft btn-glass-soft-sm btn-accent" disabled={savingBatch} onClick={saveBatch}>
+                {savingBatch ? '提交中…' : '保存'}
+              </button>
+            </>
+          ) : (
+            <span className="dim">没有未提交的改动</span>
+          )}
         </div>
       )}
       {!hidePager && (
@@ -1225,6 +1325,20 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
             </div>
           </div>
         </DetailOverlay>
+      )}
+      {insertOpen && (
+        <InsertRowOverlay
+          columns={result.columns}
+          meta={columnMeta}
+          draft={insertDraft}
+          setDraft={setInsertDraft}
+          onCancel={() => setInsertOpen(false)}
+          onSubmit={(values) => {
+            markPending({ kind: 'insert', values })
+            setInsertOpen(false)
+            toast.success('已加入待提交（新增 1 行）—— 点底部「保存」一起写库')
+          }}
+        />
       )}
       {confirmEl}
     </div>

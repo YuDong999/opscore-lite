@@ -149,6 +149,18 @@ export default function DataPanel({
   // 在界面上直接点名到单元格(列名 + 实际/上限字符数)。
   const precheck = useCallback((changes: GridChange[]): { error?: string; badCells?: Array<{ row: number; col: number }> } => {
     for (const [i, c] of changes.entries()) {
+      // 新增行: 检查用户填过的字符串列是否超长(新增没有单元格可点名, 只给消息)
+      if (c.kind === 'insert' && c.values) {
+        for (const [name, v] of Object.entries(c.values)) {
+          const meta = (colMeta ?? []).find(m => m.name === name)
+          const m2 = /^\s*(?:var)?char\((\d+)\)/i.exec(meta?.type || '')
+          const val = typeof v === 'string' ? v : String(v ?? '')
+          if (m2 && Number(m2[1]) > 0 && val.length > Number(m2[1])) {
+            return { error: `新增行: ${name} 是 ${meta?.type}, 你填了 ${val.length} 个字符(上限 ${m2[1]}) —— 未提交任何内容` }
+          }
+        }
+        continue
+      }
       if (c.kind !== 'update' || c.value === null || c.col === undefined) continue
       const name = visibleColumns[c.col]
       const meta = (colMeta ?? []).find(m => m.name === name)
@@ -171,7 +183,8 @@ export default function DataPanel({
   const runBatch = useCallback(async (changes: GridChange[]): Promise<{ ok: boolean; cancelled?: boolean; error?: string; affected?: number; badCells?: Array<{ row: number; col: number }> }> => {
     if (!data?.rows || !data.columns) return { ok: false, error: '数据未就绪' }
     const pkCols = (colMeta ?? []).filter(c => c.key === 'PRI').map(c => c.name)
-    if (pkCols.length === 0) return { ok: false, error: '该表无主键, 无法安全定位行' }
+    // 只有改/删需要主键定位; 纯新增一批(无主键表也能用)不拦
+    if (pkCols.length === 0 && changes.some(c => c.kind !== 'insert')) return { ok: false, error: '该表无主键, 无法安全定位行' }
     const rowObjAt = (rowIdx: number) => {
       const obj: Record<string, any> = {}
       data.columns.forEach((name, i) => { obj[name] = data.rows![rowIdx]?.[i] })
@@ -179,9 +192,11 @@ export default function DataPanel({
     }
     const pre = precheck(changes)
     if (pre.error) return { ok: false, error: pre.error, badCells: pre.badCells }
-    const ops = changes.map(c => c.kind === 'delete'
-      ? { kind: 'delete' as const, row: rowObjAt(c.row) }
-      : { kind: 'update' as const, row: rowObjAt(c.row), setCol: visibleColumns[c.col!], setValue: c.value })
+    const ops = changes.map(c => c.kind === 'insert'
+      ? { kind: 'insert' as const, values: c.values || {} }
+      : c.kind === 'delete'
+        ? { kind: 'delete' as const, row: rowObjAt(c.row!) }
+        : { kind: 'update' as const, row: rowObjAt(c.row!), setCol: visibleColumns[c.col!], setValue: c.value })
     try {
       const preview = await applyBatch(conn.id, database, table, pkCols, ops, false)
       if (!preview.ok) return { ok: false, error: preview.error || '生成预览失败' }

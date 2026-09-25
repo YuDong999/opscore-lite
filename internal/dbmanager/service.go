@@ -242,6 +242,7 @@ func (s *GonaviService) DescribeTable(ctx context.Context, connID, database, tab
 			Nullable: strings.EqualFold(c.Nullable, "YES"),
 			Key:      c.Key,
 			Comment:  c.Comment,
+			Extra:    c.Extra, // 自增等驱动侧附加信息: 新增行表单靠它判断"可以留空"
 		}
 		if c.Default != nil {
 			ci.Default = *c.Default
