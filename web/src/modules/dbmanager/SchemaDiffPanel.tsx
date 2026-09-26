@@ -5,8 +5,8 @@
 // "比哪两侧 + 勾选了哪几条变更的 key" —— 一次 SQL 文本都不发出去。
 //
 // 三个刻意的取舍:
-//  1) 预览里的 SQL **不可编辑**: 一旦允许改, 就得把改后的 SQL 发回后端执行, 前面建立的
-//     "后端拼 + 风险拦截 + 审计"整条链就绕过去了。要手工改, 用「执行计划」/查询页走 SQL 那条路。
+//  1) 预览默认**不可编辑**, 要改才切到编辑态: 改过的文本会原样发到目标库(仍走写锁/风险链/审计),
+//     但"按 key 重算"这条默认路径不因此松动 —— 见下面 editOpen 的注释。
 //  2) 破坏性项(删列/删索引/删表)**默认不勾**, 勾上才进批次。
 //  3) 执行后自动重比一次: 只有"再比 = 0 差异"才算真收敛, 残差会原样列出来(不报"成功")。
 
@@ -33,7 +33,9 @@ const ACTION_GROUPS: Array<{ key: string; title: string; hint: string }> = [
   { key: 'delete', title: '仅目标侧存在', hint: '删除会丢数据, 默认不勾' },
 ]
 
-function SidePickers({ label, conns, connId, setConnId, db, setDb, schema, setSchema, dbs, schemas }: {
+// 导出给「数据对比」复用: 两端选择器的语义完全一样(连接/库/模式, 模式列表为空=两级引擎),
+// 两处各写一遍迟早会漂成两套口径。
+export function SidePickers({ label, conns, connId, setConnId, db, setDb, schema, setSchema, dbs, schemas }: {
   label: string; conns: ConnectionInfo[]
   connId: string; setConnId: (v: string) => void
   db: string; setDb: (v: string) => void

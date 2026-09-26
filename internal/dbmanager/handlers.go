@@ -31,7 +31,7 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit := NewAuditLog(store.Central)
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
-	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool)}
+	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool), diffs: newDataDiffRegistry()}
 	module := &registry.Module{
 		Manifest: registry.Manifest{
 			ID:          PluginID,
@@ -79,6 +79,10 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/apply-alter", Handler: h.handleApplyAlter},
 			{Path: "/api/dbmanager/schema-diff", Handler: h.handleSchemaDiff},
 			{Path: "/api/dbmanager/schema-diff/apply", Handler: h.handleSchemaDiffApply},
+			{Path: "/api/dbmanager/data-diff", Handler: h.handleDataDiff},
+			{Path: "/api/dbmanager/data-diff/job", Handler: h.handleDataDiffJob},
+			{Path: "/api/dbmanager/data-diff/cancel", Handler: h.handleDataDiffCancel},
+			{Path: "/api/dbmanager/data-diff/apply", Handler: h.handleDataDiffApply},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
@@ -115,6 +119,7 @@ type Handlers struct {
 	unlock *WriteUnlockManager
 	audit  *AuditLog
 	sync   *syncpkg.Runner
+	diffs  *dataDiffRegistry // 数据对比任务(内存, 结果只活 30 分钟)
 }
 
 var (

@@ -715,6 +715,74 @@ export async function schemaDiffApply(
   return postJSON('/api/dbmanager/schema-diff/apply', { src, dst, tables, options, keys, sqls, confirm: true })
 }
 
+// ── 数据对比(行级) ──
+// 比对是**任务制**的: 大表要两遍扫描, 一次请求挂不住。前端拿 jobId 轮询进度,
+// 结果里的 rows 供勾选, apply 只回传**键** —— 语句由后端按此刻读到的行重新生成。
+export interface DataDiffEnd { id: string; database: string; schema?: string }
+export interface DataDiffOptions { batchRows?: number; maxRows?: number; maxDiffs?: number }
+export interface DataCellDiff { column: string; src: string; dst: string; differs?: boolean; isKey?: boolean }
+export interface DataRowDiff {
+  id: string
+  kind: 'insert' | 'update' | 'delete'
+  key: DataCellDiff[]
+  cells: DataCellDiff[]
+  sqls: string[]
+}
+export interface DataTableDiff {
+  table: string
+  status: 'same' | 'different' | 'partial' | 'error'
+  error?: string
+  keyColumns: string[]
+  keySource?: string
+  columns: string[]
+  skipped: string[]
+  srcRows: number
+  dstRows: number
+  scannedSrc: number
+  scannedDst: number
+  summary: { inserts: number; updates: number; deletes: number }
+  rows: DataRowDiff[]
+  notes: string[]
+  partial: boolean
+  reason?: string
+}
+export interface DataDiffJob {
+  ok: boolean
+  error?: string
+  expired?: boolean
+  id?: string
+  status?: string
+  current?: string
+  tables?: number
+  doneTables?: number
+  scannedSrc?: number
+  scannedDst?: number
+  diffs?: number
+  results?: DataTableDiff[]
+}
+
+export async function dataDiffStart(
+  src: DataDiffEnd, dst: DataDiffEnd, tables: string[], keyColumns: string[],
+  ignoreColumns: string[], options: DataDiffOptions,
+): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+  return postJSON('/api/dbmanager/data-diff', { src, dst, tables, keyColumns, ignoreColumns, options })
+}
+
+export async function fetchDataDiffJob(id: string): Promise<DataDiffJob> {
+  return getJSON(`/api/dbmanager/data-diff/job?id=${encodeURIComponent(id)}`)
+}
+
+export async function dataDiffCancel(id: string): Promise<{ ok: boolean; error?: string }> {
+  return postJSON('/api/dbmanager/data-diff/cancel', { id })
+}
+
+export async function dataDiffApply(
+  src: DataDiffEnd, dst: DataDiffEnd, table: string, keyColumns: string[],
+  rows: { key: { column: string; value: string }[] }[],
+): Promise<{ ok: boolean; count?: number; affected?: number; stale?: number; staleKeys?: string[]; error?: string; noop?: boolean; message?: string }> {
+  return postJSON('/api/dbmanager/data-diff/apply', { src, dst, table, keyColumns, rows, confirm: true })
+}
+
 // 终止会话(进程列表): 只报 pid, 语句由后端按引擎生成。confirm=false 先拿预览。
 export async function killSession(
   id: string, pid: number, confirm = false,
