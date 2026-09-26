@@ -132,7 +132,7 @@ func TestRepoName(t *testing.T) {
 }
 
 func TestCloneCommandSafetyGuard(t *testing.T) {
-	cmd := cloneCommand("https://git.example.com/team/app.git", "main", nil)
+	cmd := cloneCommand("https://git.example.com/team/app.git", "main", "", nil)
 	if !strings.Contains(cmd, "拒绝重置") {
 		t.Error("clone 命令必须包含远端同名校验护栏")
 	}

@@ -154,7 +154,7 @@ func TestParseCommitMarker(t *testing.T) {
 
 // TestCloneCommandCommitMarker clone 命令必须包含 commit 标记输出
 func TestCloneCommandCommitMarker(t *testing.T) {
-	cmd := cloneCommand("https://git.example.com/team/app.git", "main", nil)
+	cmd := cloneCommand("https://git.example.com/team/app.git", "main", "", nil)
 	if !strings.Contains(cmd, commitMarkerPrefix) {
 		t.Error("clone 命令应包含 commit 标记输出")
 	}
@@ -167,23 +167,29 @@ func TestCloneCommandCommitMarker(t *testing.T) {
 func TestCommitCapture(t *testing.T) {
 	e := newTestEngine(t)
 	// 建一个真实 git 仓库作为拉取目标
-	ws := t.TempDir()
-	run := func(args ...string) {
+	base := t.TempDir()
+	gitIn := func(d string, args ...string) {
 		c := exec.Command("git", args...)
-		c.Dir = ws
+		c.Dir = d
 		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
 	// 文件名用仓库名 app(护栏按远端名比对)
-	ws = filepath.Join(ws, "app")
+	ws := filepath.Join(base, "app")
 	os.MkdirAll(ws, 0755)
-	run("init", "-q", "-b", "main")
+	// origin 必须指向**本地 bare 仓库**。原先写的是 https://git.example.com/team/app.git —— 那个域名
+	// 不存在, `git fetch origin main` 必然失败, 而引擎在打印 @@CICD_COMMIT@@ 之前就先 exit,
+	// 所以这个断言其实从来没过过(整包测试又因 cloneCommand 签名漂移编译不过, 把这件事埋住了)。
+	remote := filepath.Join(base, "app.git")
+	gitIn(base, "init", "--bare", "-q", "--initial-branch=main", remote)
+	gitIn(ws, "init", "-q", "-b", "main")
 	os.WriteFile(filepath.Join(ws, "f.txt"), []byte("v1"), 0644)
-	run("add", ".")
-	run("commit", "-q", "-m", "初始提交")
-	run("remote", "add", "origin", "https://git.example.com/team/app.git")
+	gitIn(ws, "add", ".")
+	gitIn(ws, "commit", "-q", "-m", "初始提交")
+	gitIn(ws, "remote", "add", "origin", filepath.ToSlash(remote))
+	gitIn(ws, "push", "-q", "origin", "main")
 
 	e.Exec = func(ctx context.Context, hostID, workspace, command string, env []Var, onLine func(string)) (int, error) {
 		sh, _ := exec.LookPath("sh")

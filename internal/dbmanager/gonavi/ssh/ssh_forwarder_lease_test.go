@@ -15,7 +15,10 @@ func TestLocalForwarderRemoteDialFailureCanBeReadByLeaseAndWindow(t *testing.T) 
 	shared := &LocalForwarder{RemoteAddr: "127.0.0.1:21433"}
 	lease := &LocalForwarder{LocalAddr: "127.0.0.1:58228", RemoteAddr: shared.RemoteAddr, shared: shared}
 	failure := errors.New("connection refused")
-	startedAt := time.Now()
+	// 窗口起点必须**严格早于**事件: RemoteDialFailureSince 是 After(严格) 语义,
+	// 而 Windows 的时钟粒度到毫秒级 —— startedAt 与 OccurredAt 落在同一 tick 时,
+	// 这个断言就会假失败(2026-09-26 复核: 实现是对的, 测试取窗口的方式不对)。
+	startedAt := time.Now().Add(-time.Millisecond)
 
 	lease.recordRemoteDialFailure(failure)
 	got, ok := lease.LastRemoteDialFailure()
