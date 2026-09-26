@@ -62,20 +62,21 @@ echo "iptables_rules=$(iptables-save 2>/dev/null | wc -l | tr -d " ")"
 echo __OPSCORE_END__`
 
 type etcdMember struct {
-	Node          string  `json:"node"`
-	Reachable     bool    `json:"reachable"`
-	Source        string  `json:"source"` // metrics | files | none
-	Version       string  `json:"version,omitempty"`
-	QuotaBytes    uint64  `json:"quotaBytes,omitempty"`
-	DBBytes       uint64  `json:"dbBytes,omitempty"`
-	DBInUseBytes  uint64  `json:"dbInUseBytes,omitempty"`
-	FragPct       float64 `json:"fragPct"`
-	HasLeader     bool    `json:"hasLeader"`
-	LeaderChanges uint64  `json:"leaderChanges"`
-	DataDir       string  `json:"dataDir,omitempty"`
-	DataDirBytes  uint64  `json:"dataDirBytes,omitempty"`
-	DBFileBytes   uint64  `json:"dbFileBytes,omitempty"`
-	Note          string  `json:"note,omitempty"`
+	Node           string  `json:"node"`
+	Reachable      bool    `json:"reachable"`
+	Source         string  `json:"source"` // metrics | files | none
+	Version        string  `json:"version,omitempty"`
+	QuotaBytes     uint64  `json:"quotaBytes,omitempty"`
+	ConfQuotaBytes uint64  `json:"confQuotaBytes,omitempty"` // manifest 里写的期望值; 与 QuotaBytes(运行中)不等 = 配置未生效
+	DBBytes        uint64  `json:"dbBytes,omitempty"`
+	DBInUseBytes   uint64  `json:"dbInUseBytes,omitempty"`
+	FragPct        float64 `json:"fragPct"`
+	HasLeader      bool    `json:"hasLeader"`
+	LeaderChanges  uint64  `json:"leaderChanges"`
+	DataDir        string  `json:"dataDir,omitempty"`
+	DataDirBytes   uint64  `json:"dataDirBytes,omitempty"`
+	DBFileBytes    uint64  `json:"dbFileBytes,omitempty"`
+	Note           string  `json:"note,omitempty"`
 }
 
 type dplaneNode struct {
@@ -115,9 +116,9 @@ func K8sEtcdHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type nodeRef struct {
-		name          string
-		controlPlane  bool
-		target        masterTarget
+		name         string
+		controlPlane bool
+		target       masterTarget
 	}
 	refs := k8sEtcdNodeRefs(cluster, target)
 	if len(refs) == 0 {
@@ -257,7 +258,9 @@ func buildEtcdMember(node string, sec map[string][]string) etcdMember {
 	}
 	for _, ln := range sec["OPSCORE_ETCD_CONF"] {
 		if k, v, ok := strings.Cut(ln, "="); ok && strings.TrimSpace(k) == "quota-backend-bytes" {
-			m.QuotaBytes = parseUint64(strings.TrimSpace(v))
+			n := parseUint64(strings.TrimSpace(v))
+			m.ConfQuotaBytes = n // manifest 里的期望值(改完参数没重启 etcd 时, 它与运行值不同)
+			m.QuotaBytes = n     // 拿不到 /metrics 时的兜底, 下面 metrics 会覆盖
 		}
 	}
 	// /metrics: 只需几个键; 值可能是科学计数法, 也可能是带标签的样本

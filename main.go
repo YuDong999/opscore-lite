@@ -595,6 +595,8 @@ func registerCoreModules(r *registry.Registry) {
 			{Path: "/api/plugins/containers/k8s/yaml/save", Handler: handlers.K8sYamlSaveHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/nodes", Handler: handlers.K8sNodeMetricsHandler},
 			{Path: "/api/plugins/containers/k8s/etcd", Handler: handlers.K8sEtcdHandler},
+			{Path: "/api/plugins/containers/k8s/etcd-apply/preview", Handler: handlers.K8sEtcdApplyPreviewHandler},
+			{Path: "/api/plugins/containers/k8s/etcd-apply", Handler: handlers.K8sEtcdApplyHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/pods", Handler: handlers.K8sPodMetricsHandler},
 			{Path: "/api/plugins/containers/k8s/metrics/history", Handler: handlers.K8sMetricsHistoryHandler},
 			{Path: "/api/plugins/containers/k8s/resources", Handler: handlers.K8sResourcesHandler},

@@ -1196,6 +1196,12 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
 
   const [metricsDegraded, setMetricsDegraded] = useState<{ degraded: boolean; reason: string } | null>(null)
   const [etcd, setEtcd] = useState<any | null>(null)
+  const [etcdOp, setEtcdOp] = useState('')
+  // 单独刷 etcd 卡片: 操作完成后要立刻看到新值, 但不必把整页图表再拉一遍
+  const loadEtcd = () => {
+    getJSON<any>(`/api/plugins/containers/k8s/etcd?cluster=${clusterID}&_=${Date.now()}`)
+      .then((d) => setEtcd(d && d.ok ? d : null)).catch(() => setEtcd(null))
+  }
   const loadAll = () => {
     getJSON<Record<string, any>>(`/api/plugins/containers/k8s/overview?cluster=${clusterID}&_=${Date.now()}`)
       .then(setOv).catch((e) => setErr(String(e)))
@@ -1240,6 +1246,8 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
   const dangerC = cv('--danger', '#fb7185')
   const surf = cv('--surface-solid', '#15131e')
   const num = (v: any) => (typeof v === 'number' ? v : 0)
+  // manifest 里的期望值 != etcd 运行值 = 改动还没生效(kubelet 重建慢, 或干脆没重读文件)
+  const etcdStale = (etcd?.members || []).filter((m: any) => m.confQuotaBytes && m.quotaBytes && m.confQuotaBytes !== m.quotaBytes)
 
   // ── 趋势图(CPU毫核 + 内存MiB 双序列) ──
   const trendOption = {
@@ -1414,7 +1422,16 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
       </div>
 
       {etcd && (
-        <Card title="etcd 与数据面" subtitle="集群级隐形容量 · 只读 · 切换集群/刷新时采集">
+        <Card title="etcd 与数据面" subtitle="集群级隐形容量 · 切换集群/刷新时采集">
+          {/* 操作入口放在卡内而不是标题里: Card 没有 header 插槽, 且这几颗按钮只在有 etcd 时才有意义 */}
+          {!!etcd.members?.length && (
+            <div className="btn-row" style={{ marginBottom: '0.375rem' }}>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEtcdOp('quota')}>调整上限</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEtcdOp('defrag')}>碎片整理</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEtcdOp('quota-rollback')}>回到上次值</button>
+              <span className="dim small" style={{ marginLeft: 'auto' }}>改上限要重建 etcd，动手前会先给出预览</span>
+            </div>
+          )}
           {!etcd.members?.length ? (
             <div className="banner banner-warn small">{etcd.reason || '没采到 etcd 数据（控制面未在主机清单登记？）'}</div>
           ) : (
@@ -1449,6 +1466,15 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
               </tbody>
             </table>
           )}
+          {/* 配置与运行不一致 = manifest 已改但 etcd 还没用上新值(kubelet 重建要 70 秒~5 分钟) */}
+          {!!etcdStale?.length && (
+            <div className="banner banner-warn small" style={{ marginTop: 4 }}>
+              {etcdStale.map((m: any) => `${m.node}: 配置已改为 ${fmtBytes(m.confQuotaBytes)}，etcd 还在用 ${fmtBytes(m.quotaBytes)}`).join('；')}
+              {' —— '}
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEtcdOp('restart-etcd')}>立即生效</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setEtcdOp('restart-kubelet')}>重启 kubelet 生效</button>
+            </div>
+          )}
           {etcd.dataplane?.nodes?.length > 0 && (
             <div className="dim small" style={{ marginTop: 4, lineHeight: '16px' }}>
               数据面 <b>{PLANE_LABELS[etcd.dataplane.kind] || etcd.dataplane.kind}</b>
@@ -1461,7 +1487,148 @@ function K8sOverview({ clusterID, clusterName }: { clusterID: string; clusterNam
           )}
         </Card>
       )}
+      {etcdOp && (
+        <EtcdOpModal clusterID={clusterID} mode={etcdOp} members={etcd?.members || []}
+          onClose={() => setEtcdOp('')} onChanged={loadEtcd} />
+      )}
     </div>
+  )
+}
+
+// ── etcd 可视化操作 ────────────────────────────────────────────────────────
+// 前端只填参数与展示"将要改什么"; 命令一律由后端拼(见 internal/handlers/k8s_etcd_apply.go)。
+// 五个动作共用一个弹层: 预览(dry-run) → 用户确认 → 执行 → 按结果给下一步。
+const ETCD_OPS: Record<string, { title: string; verb: string; note: string }> = {
+  quota: { title: '调整 etcd 容量上限', verb: '应用', note: '同时改 manifest 与 kubeadm-config，两处不一致会让下次 kubeadm upgrade 覆写回去' },
+  'quota-rollback': { title: '回到上一次的上限', verb: '回滚', note: '把两处写回上一次改动前的值（预览里会先给出方向与备份文件）' },
+  // 后三档的"会中断多久"由后端预览给(它才知道当前状态), 这里不再重复一遍
+  defrag: { title: '碎片整理（defrag）', verb: '执行', note: '' },
+  'restart-etcd': { title: '让配置立即生效', verb: '重启 etcd', note: '' },
+  'restart-kubelet': { title: '重启 kubelet 后生效', verb: '重启 kubelet', note: '' },
+}
+const GIB = 1024 * 1024 * 1024
+
+function EtcdOpModal({ clusterID, mode, members, onClose, onChanged }: {
+  clusterID: string
+  mode: string
+  members: any[]
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const op = ETCD_OPS[mode] || ETCD_OPS.quota
+  // 上限的期望值与运行值分开取: 只有一台成员时也足够
+  const confBytes = Number(members[0]?.confQuotaBytes || members[0]?.quotaBytes || 0)
+  const runBytes = Number(members[0]?.quotaBytes || 0)
+  const dbBytes = Math.max(0, ...members.map((m) => Number(m.dbBytes || 0)))
+  // 硬下限由后端算(×1.2)，这里只把滑条的左端推到"至少能填的整数 GiB"
+  const floorGiB = Math.max(1, Math.ceil((dbBytes * 1.2) / GIB))
+  // 默认落在"比现在高一档": 打开就是当前值的话, 预览出来是 8GiB → 8GiB 的空改动
+  const [gib, setGib] = useState(() => Math.min(64, Math.max(floorGiB, Math.round(confBytes / GIB) + 1)))
+  const [pv, setPv] = useState<any | null>(null)
+  const [res, setRes] = useState<any | null>(null)
+  const [busy, setBusy] = useState(false)
+  const quotaBytes = mode === 'quota' ? Math.round(gib * GIB) : 0
+
+  useEffect(() => {
+    let dead = false
+    setPv(null)
+    const q = mode === 'quota' ? `&quotaBytes=${quotaBytes}` : ''
+    const t = setTimeout(() => {
+      getJSON<any>(`/api/plugins/containers/k8s/etcd-apply/preview?cluster=${clusterID}&action=${mode}${q}&_=${Date.now()}`)
+        .then((d) => { if (!dead) setPv(d || { ok: false, error: '预览无响应' }) })
+        .catch((e) => { if (!dead) setPv({ ok: false, error: String(e) }) })
+    }, mode === 'quota' ? 400 : 0) // 拖动时按 400ms 合并请求, 免得每格都去 SSH 一趟
+    return () => { dead = true; clearTimeout(t) }
+  }, [clusterID, mode, quotaBytes])
+
+  const run = async () => {
+    setBusy(true)
+    setRes(null)
+    try {
+      const d: any = await postJSON('/api/plugins/containers/k8s/etcd-apply',
+        { cluster: clusterID, action: mode, quotaBytes, confirm: true })
+      setRes(d || { ok: false, error: '无响应' })
+      onChanged()
+    } catch (e) {
+      setRes({ ok: false, error: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const blocked = !pv || pv.ok === false
+  const sameAsNow = mode === 'quota' && confBytes > 0 && quotaBytes === confBytes
+  return (
+    /* .modal 自带 width:min(35rem,100%), 只传 maxWidth 压不动它 —— 预览里那两行是完整文件路径,
+       必须在 35rem 里折行, 整个面板就挤成一团。这里显式给宽度, 并让警告/预览各占一段。 */
+    <Modal style={{ width: 'min(56rem, 100%)' }} onClose={onClose} title={op.title}
+      footer={
+        <div className="k8s-etcd-foot">
+          <span className="dim small">{sameAsNow ? '和当前配置一样，不用改' : op.note}</span>
+          <button className="btn-glass-soft btn-glass-soft-sm btn-accent" disabled={blocked || sameAsNow || busy} onClick={run}>
+            {busy ? '执行中，最长约 90 秒…' : op.verb}
+          </button>
+        </div>
+      }>
+      {mode === 'quota' && (
+        <div className="k8s-etcd-quota">
+          <div className="k8s-etcd-quota-head">
+            <span className="dim small">目标上限</span>
+            <input className="input" type="number" min={1} max={64} step={1} value={gib}
+              onChange={(e) => setGib(Math.max(1, Math.min(64, Number(e.target.value) || 1)))} />
+            <span className="dim small">GiB</span>
+            <span className="dim small">（可调 {floorGiB}~64 GiB，低于「已用 ×1.2」不让填）</span>
+          </div>
+          {/* 滑条左端就是硬下限(已用 ×1.2): 撞上限会让 etcd 转 NOSPACE、整个集群只读, 不该让人拖进去 */}
+          <input type="range" min={floorGiB} max={64} step={1} value={Math.max(floorGiB, gib)}
+            onChange={(e) => setGib(Number(e.target.value))} />
+          <div className="k8s-etcd-meta mono">
+            配置 {confBytes ? fmtBytes(confBytes) : '—'} · etcd 运行中 {runBytes ? fmtBytes(runBytes) : '—'} · 后端已用 {fmtBytes(dbBytes)}
+          </div>
+        </div>
+      )}
+      {pv && pv.ok === false && <div className="banner banner-err small">{pv.error}</div>}
+      {pv && pv.ok && (
+        <>
+          {!!pv.changes?.length && (
+            <div className="k8s-etcd-diff">{pv.changes.map((s: string, i: number) => <div key={i} className="mono small">{s}</div>)}</div>
+          )}
+          {!!pv.commands?.length && (
+            <pre className="k8s-etcd-cmd mono small">{pv.commands.join('\n')}</pre>
+          )}
+          {(pv.warnings || []).length > 0 && (
+            <div className="k8s-etcd-warns">
+              {(pv.warnings || []).map((s: string, i: number) => <div key={i}>{s}</div>)}
+            </div>
+          )}
+        </>
+      )}
+      {res && (
+        <div style={{ marginTop: '0.6rem' }}>
+          {res.ok && res.noop && <div className="banner small">{res.message || '无需改动'}</div>}
+          {res.ok && !res.noop && (
+            <div className="banner banner-ok small">
+              完成{res.duration ? ` · 用时 ${res.duration}` : ''}{res.quotaBytes ? ` · 现为 ${fmtBytes(res.quotaBytes)}` : ''}
+              {res.output ? ` · ${String(res.output).split('\n')[0]}` : ''}
+            </div>
+          )}
+          {res.pending && (
+            <div className="banner banner-warn small">
+              {res.message}
+              <div className="dim small" style={{ marginTop: 2 }}>
+                期望 {fmtBytes(res.quotaBytes)} · 运行中 {res.runningBytes ? fmtBytes(res.runningBytes) : '未知'}
+              </div>
+              {mode === 'restart-etcd' && (
+                <div className="dim small" style={{ marginTop: 2 }}>
+                  等一会儿刷新仍是旧值的话，用卡片下方的「重启 kubelet 生效」。
+                </div>
+              )}
+            </div>
+          )}
+          {!res.ok && !res.pending && <div className="banner banner-err small">{res.error}</div>}
+        </div>
+      )}
+    </Modal>
   )
 }
 

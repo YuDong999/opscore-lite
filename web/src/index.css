@@ -1666,6 +1666,26 @@ body {
 .k8s-ov-stack { display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
 .k8s-ov-stack > .card { flex: 1 1 auto; min-height: 0; }
 .k8s-ov-stack > .card .card-body { overflow-y: auto; min-height: 0; }
+
+/* ── etcd 操作弹层 ─────────────────────────────────────────────────────────
+   预览内容都是长路径/长命令(一行 60~90 字符), 面板必须给到 56rem; 再窄就要逐条折行, 一屏读不完。
+   纵向节奏统一走 gap, 不再各自 margin。 */
+.k8s-etcd-quota { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem; }
+.k8s-etcd-quota-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.k8s-etcd-quota-head .input { width: 5rem; text-align: right; font-variant-numeric: tabular-nums; }
+.k8s-etcd-meta { color: var(--text-dim); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
+.k8s-etcd-quota input[type='range'] { width: 100%; accent-color: var(--accent); }
+/* 预览的"改哪两处"与"要执行的命令": 单行 + 横向滚, 折行会把路径切成看不懂的碎片 */
+.k8s-etcd-diff { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem 0.625rem; margin-bottom: 0.5rem;
+  background: var(--surface-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.k8s-etcd-diff > div, .k8s-etcd-cmd { white-space: pre; overflow-x: auto; }
+.k8s-etcd-cmd { margin: 0 0 0.5rem; padding: 0.5rem 0.625rem;
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); line-height: 1.6; }
+/* 警告合成一块(而不是三条 banner 叠着), 行与行靠 gap 分开 */
+.k8s-etcd-warns { display: flex; flex-direction: column; gap: 0.3125rem; padding: 0.5rem 0.625rem;
+  background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  border-radius: var(--radius-sm); font-size: 0.75rem; line-height: 1.5; color: var(--text); }
+.k8s-etcd-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; width: 100%; }
 .k8s-ov-pods-card { display: flex; flex-direction: column; max-height: 68vh; }
 .k8s-ov-pods-card .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .k8s-ov-pods .table-wrap { flex: 1 1 0; min-height: 0; overflow-y: auto; }
