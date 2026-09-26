@@ -184,12 +184,22 @@ func TestCreateOnlyDiffCarriesComments(t *testing.T) {
 	if !strings.Contains(joined, `COMMENT ON COLUMN "public"."t"."b" IS '乙'`) {
 		t.Errorf("PG 目标的建表没带列注释, 差异不会收敛:\n%s", joined)
 	}
-	// MySQL 目标(同族)走 MODIFY 带注释
+	// MySQL 目标: 注释内联在列定义里(不再是建表后补一条 MODIFY)
 	cr2 := CreateOnlyDiff(TableSnapshot{Table: "t", Columns: []gonaviConnection.ColumnDefinition{withCmt}},
 		DialectMySQL, DialectMySQL, "mysql", "d", "t")
 	j2 := strings.Join(cr2.Sqls, "\n")
-	if !strings.Contains(j2, "COMMENT") {
-		t.Errorf("MySQL 目标的建表没带列注释:\n%s", j2)
+	if !strings.Contains(j2, "`b` varchar(20) COMMENT '乙'") {
+		t.Errorf("MySQL 目标的建表没内联列注释:\n%s", j2)
+	}
+	if len(cr2.Sqls) != 1 {
+		t.Errorf("MySQL 目标只需一条建表语句: %v", cr2.Sqls)
+	}
+	// 二级索引也随建表一起发: 以前被丢掉, 于是建完再比还剩一条"索引缺失"差异
+	withIdx := gonaviConnection.IndexDefinition{Name: "ix_b", ColumnName: "b", NonUnique: 1, SeqInIndex: 1}
+	cr3 := CreateOnlyDiff(TableSnapshot{Table: "t", Columns: []gonaviConnection.ColumnDefinition{withCmt}, Indexes: []gonaviConnection.IndexDefinition{withIdx}},
+		DialectMySQL, DialectMySQL, "mysql", "d", "t")
+	if !strings.Contains(strings.Join(cr3.Sqls, "\n"), "CREATE INDEX `ix_b`") {
+		t.Errorf("建表没带上二级索引: %v", cr3.Sqls)
 	}
 }
 

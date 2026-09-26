@@ -111,7 +111,8 @@ type TablePlan struct {
 	Target       string              `json:"target"`
 	CreateDDL    string              `json:"createDdl,omitempty"` // 目标建表语句
 	Columns      []ColumnMapping     `json:"columns"`
-	IndexDDL     []string            `json:"indexDdl,omitempty"` // 二级索引语句
+	IndexDDL     []string            `json:"indexDdl,omitempty"`   // 二级索引语句
+	CommentDDL   []string            `json:"commentDdl,omitempty"` // 建表后补发的列注释(PG 族用)
 	IncrStrategy IncrementalStrategy `json:"incrStrategy"`
 	IncrColumn   string              `json:"incrColumn,omitempty"`
 	SourcePK     string              `json:"sourcePk,omitempty"`

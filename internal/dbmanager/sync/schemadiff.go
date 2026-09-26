@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
-	gonaviDB "opscore/internal/dbmanager/gonavi/db"
 )
 
 // TableSnapshot 一张表在某一侧的结构事实(全部来自驱动反射)。
@@ -480,35 +479,13 @@ func orNone(s string) string {
 
 // CreateOnlyDiff 源有目标无 —— 整表新建。跨方言走 GenerateCreateDDL(它自带类型映射)。
 //
-// 一处必要的补刀: GenerateCreateDDL 不输出列注释(MySQL 的 COMMENT 在建表语句里、PG 的在表外,
-// 它两边都没管)。差异引擎不管这个, 就会"apply 完还剩一条注释差异", 比对永远收不了口 ——
-// 所以这里按目标方言把注释补上: PG 发 COMMENT ON COLUMN; MySQL 同族用 MODIFY 带注释。
+// 列注释不在这里拼了: GenerateCreateDDL 现在自己输出(MySQL 内联在列定义里, PG 走表外的
+// COMMENT ON COLUMN), 以前这里手写过一份补刀, 两处口径迟早会漂 —— 漂的结果是"apply 完还剩
+// 一条注释差异", 比对收不了口。
 func CreateOnlyDiff(src TableSnapshot, srcD, dstD Dialect, dstEngine, dstDatabase, dstTable string) TableDiff {
-	sql, _, _ := GenerateCreateDDL(dstDatabase, src.Table, src.Columns, src.Indexes, srcD, dstD)
-	sqls := []string{sql}
-	var commentAlters []ColumnAlter
-	qi := func(n string) string { return QuoteIdent(n, dstD) }
-	for _, c := range src.Columns {
-		cm := strings.TrimSpace(c.Comment)
-		if cm == "" {
-			continue
-		}
-		if dstD == DialectPostgres {
-			sqls = append(sqls, "COMMENT ON COLUMN "+qi(dstDatabase)+"."+qi(dstTable)+"."+qi(c.Name)+
-				" IS "+gonaviDB.FormatLiteralForDialect(dstEngine, cm))
-		} else if srcD == dstD {
-			alt := colToAlter(c)
-			alt.Kind = "modify"
-			commentAlters = append(commentAlters, alt)
-		}
-	}
-	if len(commentAlters) > 0 {
-		more, err := BuildColumnAlters(dstEngine, dstD, qi(dstDatabase)+"."+qi(dstTable), commentAlters)
-		if err != nil {
-			return TableDiff{Table: src.Table, Action: "create", Notes: []string{"建表后的注释语句生成失败: " + err.Error()}}
-		}
-		sqls = append(sqls, more...)
-	}
+	sql, idx, commentDDL, _ := GenerateCreateDDL(dstDatabase, src.Table, src.Columns, src.Indexes, srcD, dstD)
+	sqls := append([]string{sql}, commentDDL...)
+	sqls = append(sqls, idx...)
 	td := TableDiff{
 		Table:  src.Table,
 		Action: "create",

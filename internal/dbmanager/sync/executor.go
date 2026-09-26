@@ -126,6 +126,13 @@ func (r *Runner) execSchema(ctx context.Context, dstDB gonavibase.Database, tp T
 			return fmt.Errorf("建表失败: %w", err)
 		}
 	}
+	// 列注释先于索引: 两者都是"建表之外的附属语句", 注释更轻且失败不该影响表可用。
+	// 与索引一样按宽容处理 —— 真没写上, 下一次结构对比会把这条差异原样列出来, 不会悄悄过去。
+	for _, cm := range tp.CommentDDL {
+		if _, err := execSQL(ctx, dstDB, cm); err != nil {
+			_ = err
+		}
+	}
 	for _, idx := range tp.IndexDDL {
 		if _, err := execSQL(ctx, dstDB, idx); err != nil {
 			// 索引失败仅记录, 不中断

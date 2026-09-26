@@ -19,11 +19,16 @@ func quoteIdent(name string, d Dialect) string {
 
 // GenerateCreateDDL 从源列/索引定义生成目标方言 CREATE TABLE。
 // schema/table 名已由调用方清洗。返回完整 DDL(不带分号)。
-func GenerateCreateDDL(schema, table string, columns []gonaviConnection.ColumnDefinition, indexes []gonaviConnection.IndexDefinition, srcDialect, dstDialect Dialect) (string, []string, []string) {
+//
+// 返回值第四个是"建表后还要发的语句": 二级索引 + **列注释**。注释单独返回是因为方言差异 ——
+// MySQL 的 COMMENT 写在列定义里, PG 的只能是一条表外的 COMMENT ON COLUMN。
+// 之前两边都不输出注释, 跨库同步一直在悄悄丢列注释(结构对比那边为此单独补过一刀, 见 CreateOnlyDiff)。
+func GenerateCreateDDL(schema, table string, columns []gonaviConnection.ColumnDefinition, indexes []gonaviConnection.IndexDefinition, srcDialect, dstDialect Dialect) (string, []string, []string, []string) {
 	tn := qualifiedName(schema, table, dstDialect)
 	var pkCols []string
 	var colDefs []string
 	var notes []string
+	var commentDDL []string
 	seenIndex := map[string]bool{}
 
 	for _, col := range columns {
@@ -48,6 +53,15 @@ func GenerateCreateDDL(schema, table string, columns []gonaviConnection.ColumnDe
 			}
 		} else if m.Default != "" && !isExpressionDefault(m.Default) {
 			def += " DEFAULT " + normalizeDefault(m.Default, dstDialect, isBoolType(m.Target))
+		}
+
+		if cm := strings.TrimSpace(col.Comment); cm != "" {
+			if dstDialect == DialectMySQL {
+				def += " COMMENT '" + escapeLiteral(cm, dstDialect) + "'"
+			} else {
+				commentDDL = append(commentDDL, fmt.Sprintf("COMMENT ON COLUMN %s.%s IS '%s'", tn,
+					quoteIdent(col.Name, dstDialect), escapeLiteral(cm, dstDialect)))
+			}
 		}
 
 		if m.IsPK {
@@ -82,7 +96,7 @@ func GenerateCreateDDL(schema, table string, columns []gonaviConnection.ColumnDe
 				quoteIdent(idx.Name, dstDialect), tn, cn))
 		}
 	}
-	return ddl, idxDDL, notes
+	return ddl, idxDDL, commentDDL, notes
 }
 
 // qualifiedName 带库名的完整表名。

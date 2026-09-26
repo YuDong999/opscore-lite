@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	gonavibase "opscore/internal/dbmanager/gonavi/db"
 	gonaviConnection "opscore/internal/dbmanager/gonavi/connection"
+	gonavibase "opscore/internal/dbmanager/gonavi/db"
 )
 
 // Pool 同步模块对连接池的最小依赖(避免与 dbmanager 包循环导入)。
@@ -21,6 +21,9 @@ type Pool interface {
 type Runner struct {
 	pool Pool
 	jobs *JobRegistry
+	// OnFinish 任务进入终态后的回调(给审计用)。只挂一处: Start 的 goroutine 收尾时调用,
+	// 覆盖"正常完成 / 失败 / panic / 被取消"全部出口 —— 分散在各处记审计迟早会漏一条。
+	OnFinish func(*Job)
 }
 
 func NewRunner(pool Pool) *Runner {
@@ -103,9 +106,10 @@ func (r *Runner) BuildPlan(ctx context.Context, req SyncRequest) (*SyncPlan, err
 		}
 		tp.SourcePK = primaryKeyOf(cols)
 
-		ddl, idxDDL, notes := GenerateCreateDDL(EffectiveSchema(req, dstDialect), tr.target, cols, idx, srcDialect, dstDialect)
+		ddl, idxDDL, commentDDL, notes := GenerateCreateDDL(EffectiveSchema(req, dstDialect), tr.target, cols, idx, srcDialect, dstDialect)
 		tp.CreateDDL = ddl
 		tp.IndexDDL = idxDDL
+		tp.CommentDDL = commentDDL
 		tp.Notes = notes
 		if tr.target != tr.source {
 			tp.Notes = append(tp.Notes, fmt.Sprintf("目标表为自定义名 %s (源 %s), 将自动建表", tr.target, tr.source))
