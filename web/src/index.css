@@ -1065,6 +1065,9 @@ body {
 
 .banner-ok { background: rgba(48, 209, 88, 0.1); border-color: rgba(48, 209, 88, 0.25); color: var(--ok); }
 .banner-err { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); }
+/* .banner-warn 被 8 个模块用了(容器/k8s/总览/db)却一直没有定义, 于是警告横幅退化成无色普通横幅。
+   配色跟着主题令牌走(--warn 每套主题都有), 不写死色值。 */
+.banner-warn { background: color-mix(in srgb, var(--warn) 10%, transparent); border-color: color-mix(in srgb, var(--warn) 28%, transparent); color: var(--warn); }
 .banner-info { background: rgba(10, 132, 255, 0.1); border-color: rgba(10, 132, 255, 0.25); color: #0a84ff; }
 .alert-ok { padding: 0.5rem 1rem; border-radius: 0.5rem; background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); color: var(--ok); font-size: 0.8125rem; margin-bottom: 0.75rem; }
 .alert-err { padding: 0.5rem 1rem; border-radius: 0.5rem; background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); font-size: 0.8125rem; margin-bottom: 0.75rem; }
