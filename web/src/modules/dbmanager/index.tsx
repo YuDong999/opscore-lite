@@ -24,6 +24,7 @@ import { humanizeDbError } from './dbErrors'
 import { precheckChanges } from './batchWrite'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import SyncPanel from './SyncPanel'
+import SchemaDiffPanel from './SchemaDiffPanel'
 import ErGraphPanel from './ErGraphPanel'
 import TableOverviewPanel from './TableOverviewPanel'
 import ServerDashboardPanel from './ServerDashboardPanel'
@@ -37,7 +38,7 @@ import SavedQueriesPanel from './SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs'
   connId: string
   db?: string
   table?: string
@@ -243,6 +244,17 @@ export default function DatabaseManagerModule() {
   const handleSyncDb = (c: ConnectionInfo, db: string) => openSyncTab({ connId: c.id, db })
   const handleSyncTable = (c: ConnectionInfo, db: string, table: string) => openSyncTab({ connId: c.id, db, table })
   const handleSyncSchema = (c: ConnectionInfo, db: string, schema: string) => openSyncTab({ connId: c.id, db, schema })
+  // 结构对比入口: 与同步一样按"入口层级"预置 —— 库级比整库, 表级把这张表带进范围
+  const openDiffTab = (seed: { connId: string; db: string; table?: string }) => {
+    const c = conns.find(x => x.id === seed.connId)
+    if (c) setConn(c)
+    openTab({
+      key: `schemadiff:${seed.connId}:${seed.db}:${seed.table || ''}`, kind: 'schemadiff',
+      connId: seed.connId, db: seed.db, table: seed.table, label: seed.table ? `结构对比 ${seed.table}` : '结构对比',
+    })
+  }
+  const handleDiffDb = (c: ConnectionInfo, db: string) => openDiffTab({ connId: c.id, db })
+  const handleDiffTable = (c: ConnectionInfo, db: string, table: string) => openDiffTab({ connId: c.id, db, table })
 
   const handleOpenDash = (c: ConnectionInfo) => {
     setConn(c)
@@ -489,6 +501,7 @@ ${ddl};
           {conn && (
             <>
               <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" title="结构对比(两侧表结构差异 + 生成变更语句)" onClick={() => openTab({ key: `schemadiff:${conn.id}:${conn.config?.database || ''}`, kind: 'schemadiff', connId: conn.id, db: conn.config?.database || '', label: '结构对比' })}>结构对比</button>
               <button className="btn-glass-soft btn-glass-soft-sm" title="服务器仪表盘" onClick={() => handleOpenDash(conn)}>仪表盘</button>
               <button className="btn-glass-soft btn-glass-soft-sm" disabled={!conn.config?.database} title={conn.config?.database ? 'ER 关系图' : '该连接未指定默认库, 请从树中库节点右键进入'} onClick={() => openTab({ key: `er:${conn.id}:${conn.config?.database || ''}`, kind: 'er', connId: conn.id, db: conn.config?.database || '', label: 'ER 关系图' })}>关系图</button>
             </>
@@ -556,6 +569,8 @@ ${ddl};
               onSyncDb={handleSyncDb}
               onSyncTable={handleSyncTable}
               onSyncSchema={handleSyncSchema}
+              onDiffDb={handleDiffDb}
+              onDiffTable={handleDiffTable}
               onOpenEr={handleOpenEr}
               onOpenDash={handleOpenDash}
               onNewTable={handleNewTable}
@@ -609,7 +624,7 @@ ${ddl};
                         if (next) setActiveTab(next.key)
                       }
                     }}>
-                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
                     <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
                       onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
@@ -668,6 +683,8 @@ ${ddl};
                     return <div className="db-doc-section" style={{ flex: 1, minHeight: 0, display: 'flex' }} key={t.key}><ServerDashboardPanel connId={c!.id} engine={c!.engine} database={t.db || c!.config?.database} /></div>
                   case 'sync':
                     return <div className="db-doc-section" key={t.key}><SyncPanel conns={conns} activeConnId={c!.id} presetDb={t.db} presetSchema={t.schema} presetTable={t.table} /></div>
+                  case 'schemadiff':
+                    return <div className="db-doc-section" key={t.key} style={{ overflow: 'auto' }}><SchemaDiffPanel conns={conns} activeConnId={c!.id} presetDb={t.db} presetTable={t.table} /></div>
                   case 'audit':
                     return <div className="db-audit-section" key={t.key}><AuditPanel conns={conns} /></div>
                   case 'drivers':

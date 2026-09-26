@@ -77,6 +77,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/kill-session", Handler: h.handleKillSession},
 			{Path: "/api/dbmanager/apply-batch", Handler: h.handleApplyBatch},
 			{Path: "/api/dbmanager/apply-alter", Handler: h.handleApplyAlter},
+			{Path: "/api/dbmanager/schema-diff", Handler: h.handleSchemaDiff},
+			{Path: "/api/dbmanager/schema-diff/apply", Handler: h.handleSchemaDiffApply},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},

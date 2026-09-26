@@ -10,6 +10,9 @@ package dbmanager
 // `DEFAULT now()` 这种能过, `DEFAULT 'a;b'` 就是语法层面的事故。
 // 现在前端只说"哪一列变成什么样", 标识符引用、类型白名单、默认值/注释转义、方言分支都在后端。
 //
+// 语句生成本身住在 sync.BuildColumnAlters: 结构对比(schemadiff)要生成的是同一类语句,
+// 两边共用一份才不会出现"编辑器改对了、对比那条路还是老规则"这种漂移。
+//
 // 一个诚实的限制: MySQL 系 DDL 会**隐式提交**, 所以整批里某条失败时, 前面的改动撤不回来
 // —— 这不是"回滚失败"而是引擎能力。因此失败信息里明确说"前 N 条已生效", 不谎报 rolledBack。
 
@@ -18,10 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
-	gonaviDB "opscore/internal/dbmanager/gonavi/db"
 	"opscore/internal/dbmanager/sync"
 )
 
@@ -46,119 +47,18 @@ type applyAlterBody struct {
 	Confirm  bool       `json:"confirm"`
 }
 
-// 列类型白名单式校验: 允许 类型名 + 可选(长度[,标度]) + 少量后缀词(int unsigned / timestamp with time zone),
-// 引号、分号、注释符一律进不来。
-var reColType = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\s*\(\s*\d{1,10}\s*(,\s*\d{1,10}\s*)?\s*\))?(\s+[A-Za-z][A-Za-z0-9_]*){0,4}$`)
-
-// 默认值里允许当**表达式**发的几种(其余一律按字符串字面量转义后发出):
-// 数字 / NULL / 布尔 / 当前时间族。用户填 'abc' 会成 DEFAULT 'abc', 填 CURRENT_TIMESTAMP 会成 DEFAULT CURRENT_TIMESTAMP。
-var reDefaultExpr = regexp.MustCompile(`(?i)^(NULL|TRUE|FALSE|-?\d+(\.\d+)?|CURRENT_(TIMESTAMP|DATE|TIME)(\(\d*\))?|SYSDATE|LOCALTIME(STAMP)?(\(\d*\))?)$`)
-
-func safeColType(t string) error {
-	t = strings.TrimSpace(t)
-	if t == "" {
-		return errors.New("列类型不能为空")
+// toSyncAlters 把请求体翻成"列变更意图", 交给共用的方言生成器。
+func toSyncAlters(cols []alterCol) []sync.ColumnAlter {
+	out := make([]sync.ColumnAlter, 0, len(cols))
+	for _, c := range cols {
+		out = append(out, sync.ColumnAlter{
+			Kind: c.Kind, Name: c.Name, OrigName: c.OrigName, Type: c.Type,
+			Nullable: c.Nullable, Default: c.Default, Comment: c.Comment,
+		})
 	}
-	if !reColType.MatchString(t) {
-		return errors.New("列类型不合法: " + t)
-	}
-	return nil
+	return out
 }
 
-// defaultClause 生成 DEFAULT 片段(含前缀空格); 空字符串 = 不带默认值。
-func defaultClause(engine, d string) string {
-	d = strings.TrimSpace(d)
-	if d == "" {
-		return ""
-	}
-	if reDefaultExpr.MatchString(d) {
-		return " DEFAULT " + d
-	}
-	return " DEFAULT " + gonaviDB.FormatLiteralForDialect(engine, d)
-}
-
-// buildAlterSQLs 按方言把列变更翻成语句列表。tableRef 已由调用方按方言引用好(db.table)。
-func buildAlterSQLs(engine string, dialect sync.Dialect, tableRef string, cols []alterCol) ([]string, error) {
-	qi := func(n string) string { return sync.QuoteIdent(n, dialect) }
-	mysql := dialect == sync.DialectMySQL
-	var out []string
-	for i, c := range cols {
-		if !validIdentifier(c.Name) {
-			return nil, fmt.Errorf("第 %d 条列名非法: %s", i+1, c.Name)
-		}
-		switch c.Kind {
-		case "drop":
-			out = append(out, "ALTER TABLE "+tableRef+" DROP COLUMN "+qi(c.Name))
-			continue
-		case "add", "modify":
-		default:
-			return nil, fmt.Errorf("第 %d 条 kind 只支持 add/drop/modify", i+1)
-		}
-		if err := safeColType(c.Type); err != nil {
-			return nil, fmt.Errorf("第 %d 条: %w", i+1, err)
-		}
-		typ := strings.TrimSpace(c.Type)
-		def := defaultClause(engine, c.Default)
-		nullPart := ""
-		if !c.Nullable {
-			nullPart = " NOT NULL"
-		}
-		cmt := strings.TrimSpace(c.Comment)
-
-		if mysql {
-			// MySQL 系: 一列一条完整定义(MODIFY/CHANGE 都会按新定义重建列)
-			def0 := qi(c.Name) + " " + typ + nullPart + def
-			if cmt != "" {
-				def0 += " COMMENT " + gonaviDB.FormatLiteralForDialect(engine, cmt)
-			}
-			switch {
-			case c.Kind == "add":
-				out = append(out, "ALTER TABLE "+tableRef+" ADD COLUMN "+def0)
-			case c.OrigName != "" && c.OrigName != c.Name:
-				if !validIdentifier(c.OrigName) {
-					return nil, fmt.Errorf("第 %d 条原列名非法: %s", i+1, c.OrigName)
-				}
-				// MariaDB 没有 RENAME COLUMN, CHANGE COLUMN 两边都认
-				out = append(out, "ALTER TABLE "+tableRef+" CHANGE COLUMN "+qi(c.OrigName)+" "+def0)
-			default:
-				out = append(out, "ALTER TABLE "+tableRef+" MODIFY COLUMN "+def0)
-			}
-			continue
-		}
-
-		// 标准/PG 族: 一个属性一条语句, 顺序 = 改名 → 类型 → 可空 → 默认 → 注释
-		if c.Kind == "add" {
-			out = append(out, "ALTER TABLE "+tableRef+" ADD COLUMN "+qi(c.Name)+" "+typ+nullPart+def)
-		} else {
-			newName := c.Name
-			if c.OrigName != "" && c.OrigName != newName {
-				if !validIdentifier(c.OrigName) {
-					return nil, fmt.Errorf("第 %d 条原列名非法: %s", i+1, c.OrigName)
-				}
-				out = append(out, "ALTER TABLE "+tableRef+" RENAME COLUMN "+qi(c.OrigName)+" TO "+qi(newName))
-			}
-			col := qi(newName)
-			out = append(out, "ALTER TABLE "+tableRef+" ALTER COLUMN "+col+" TYPE "+typ)
-			if c.Nullable {
-				out = append(out, "ALTER TABLE "+tableRef+" ALTER COLUMN "+col+" DROP NOT NULL")
-			} else {
-				out = append(out, "ALTER TABLE "+tableRef+" ALTER COLUMN "+col+" SET NOT NULL")
-			}
-			if strings.TrimSpace(c.Default) != "" {
-				out = append(out, "ALTER TABLE "+tableRef+" ALTER COLUMN "+col+" SET"+def)
-			} else {
-				out = append(out, "ALTER TABLE "+tableRef+" ALTER COLUMN "+col+" DROP DEFAULT")
-			}
-		}
-		if cmt != "" {
-			out = append(out, "COMMENT ON COLUMN "+tableRef+"."+qi(c.Name)+" IS "+gonaviDB.FormatLiteralForDialect(engine, cmt))
-		}
-	}
-	if len(out) == 0 {
-		return nil, errors.New("没有可执行的列变更")
-	}
-	return out, nil
-}
 
 func (h *Handlers) handleApplyAlter(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -202,7 +102,7 @@ func (h *Handlers) handleApplyAlter(w http.ResponseWriter, r *http.Request) {
 	if tableSchema != "" {
 		tableRef = qi(tableSchema) + "." + qi(table)
 	}
-	sqls, berr := buildAlterSQLs(engine, dialect, tableRef, body.Cols)
+	sqls, berr := sync.BuildColumnAlters(engine, dialect, tableRef, toSyncAlters(body.Cols))
 	if berr != nil {
 		writeErr(w, berr.Error(), http.StatusBadRequest)
 		return

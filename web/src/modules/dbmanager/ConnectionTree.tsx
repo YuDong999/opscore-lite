@@ -105,7 +105,7 @@ interface TreeNode {
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
-  onSyncDb, onSyncTable, onSyncSchema, onOpenEr, onOpenOverview, onNewTable, onExportSchema, onOpenDash, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
+  onSyncDb, onSyncTable, onSyncSchema, onDiffDb, onDiffTable, onOpenEr, onOpenOverview, onNewTable, onExportSchema, onOpenDash, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
   onRefresh, onToggleSide,
 }: {
   conns: ConnectionInfo[]
@@ -121,6 +121,9 @@ export default function ConnectionTree({
   onSyncDb: (conn: ConnectionInfo, db: string) => void
   onSyncTable?: (conn: ConnectionInfo, db: string, table: string) => void
   onSyncSchema?: (conn: ConnectionInfo, db: string, schema: string) => void
+  // 结构对比入口: 库级=整库比; 表级=把这张表预置进比对范围(两侧仍可换库/换连接)
+  onDiffDb?: (conn: ConnectionInfo, db: string) => void
+  onDiffTable?: (conn: ConnectionInfo, db: string, table: string) => void
   onOpenEr?: (conn: ConnectionInfo, db: string, table?: string) => void
   onNewTable?: (conn: ConnectionInfo, db: string) => void
   onOpenDash?: (conn: ConnectionInfo) => void
@@ -416,6 +419,7 @@ export default function ConnectionTree({
         { label: '新建表', icon: <ActionIcon kind="plus" />, onClick: () => onNewTable?.(node.conn!, node.db!) },
         { label: '导出表结构 (SQL)', icon: <ActionIcon kind="download" />, onClick: () => onExportSchema?.(node.conn!, node.db!) },
         { label: '跨库同步此库', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncDb(node.conn!, node.db!) },
+        ...(onDiffDb ? [{ label: '结构对比 (此库)', icon: <ActionIcon kind="diff" />, onClick: () => onDiffDb(node.conn!, node.db!) }] : []),
         ...(onOpenEr ? [{ label: '关系图 (ER)', icon: <ActionIcon kind="chart" />, onClick: () => onOpenEr(node.conn!, node.db!) }] : []),
         ...(onOpenOverview ? [{ label: '表概览', icon: <ActionIcon kind="chart" />, onClick: () => onOpenOverview(node.conn!, node.db!) }] : []),
         { divider: 'heavy' },
@@ -432,6 +436,7 @@ export default function ConnectionTree({
         { label: '查看数据', icon: <ActionIcon kind="chart" />, onClick: () => onOpenTable(node.conn!, node.db!, node.table!, node.level === 'view') },
         { label: '表统计 / 状态', icon: <ActionIcon kind="gear" />, onClick: () => onOpenStatus(node.conn!, node.db!, node.table!) },
         ...(isTable && onSyncTable ? [{ label: '跨库同步此表', icon: <ActionIcon kind="transfer" />, onClick: () => onSyncTable(node.conn!, node.db!, node.table!) }] : []),
+        ...(isTable && onDiffTable ? [{ label: '结构对比 (此表)', icon: <ActionIcon kind="diff" />, onClick: () => onDiffTable(node.conn!, node.db!, node.table!) }] : []),
         ...(isTable && onOpenEr ? [{ label: '关系图 (此表为中心)', icon: <ActionIcon kind="chart" />, onClick: () => onOpenEr(node.conn!, node.db!, node.table!) }] : []),
       ]
       // ── SQL 与结构 ──

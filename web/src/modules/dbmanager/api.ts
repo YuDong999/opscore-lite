@@ -680,6 +680,41 @@ export async function applyAlter(
   return postJSON('/api/dbmanager/apply-alter', { id, database, table, cols, confirm })
 }
 
+// ── 结构对比(schema diff) ──────────────────────────────────────────────────
+// 与 apply-alter 同一套纪律: 前端只发"比哪两侧 + 勾选了哪几条变更(key)", 永不发 SQL。
+// 后端执行前会**重算**差异, 选中的 key 若已不存在差异就报 stale —— 看到什么就等于执行什么。
+export interface SchemaDiffEnd { id: string; database: string; schema?: string }
+export interface SchemaChange {
+  key: string
+  kind: string
+  object: string
+  detail: string[]
+  sqls: string[]
+  destructive: boolean
+}
+export interface SchemaTableDiff {
+  table: string
+  action: 'create' | 'modify' | 'delete' | 'none'
+  changes: SchemaChange[]
+  sqls: string[]
+  notes: string[]
+}
+export interface SchemaDiffOptions { indexes?: boolean; foreignKeys?: boolean; comments?: boolean }
+
+export async function schemaDiff(
+  src: SchemaDiffEnd, dst: SchemaDiffEnd, tables: string[], options: SchemaDiffOptions,
+): Promise<{ ok: boolean; tables?: SchemaTableDiff[]; notes?: string[]; summary?: Record<string, number>; error?: string }> {
+  return postJSON('/api/dbmanager/schema-diff', { src, dst, tables, options })
+}
+
+export async function schemaDiffApply(
+  src: SchemaDiffEnd, dst: SchemaDiffEnd, tables: string[], options: SchemaDiffOptions, keys: string[],
+  // sqls 非空 = "用户在预览里改过语句", 后端以文本为准(仍然过风险链/写锁/审计)。空 = 按 key 重算取语句。
+  sqls?: string[],
+): Promise<{ ok: boolean; count?: number; affected?: number; error?: string; stale?: boolean; unmatched?: string[]; noop?: boolean; message?: string }> {
+  return postJSON('/api/dbmanager/schema-diff/apply', { src, dst, tables, options, keys, sqls, confirm: true })
+}
+
 // 终止会话(进程列表): 只报 pid, 语句由后端按引擎生成。confirm=false 先拿预览。
 export async function killSession(
   id: string, pid: number, confirm = false,

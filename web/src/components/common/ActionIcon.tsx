@@ -1,9 +1,18 @@
 // 通用操作图标集(SVG, 禁止 emoji/dingbat) —— L2 公共层(自 DbIcons 提取, 引擎品牌图标仍在 DatabaseManager/DbIcons)
 /** 小操作图标(全部为 SVG, 禁止 emoji/dingbat): 测试/编辑/删除/刷新/关闭/新建查询/查看数据/复制/齿轮/表结构 */
-export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right' | 'eye' | 'eye-off' | 'filter' | 'sort-asc' | 'sort-desc' | 'wand'
+export type ActionIconKind = 'test' | 'edit' | 'delete' | 'refresh' | 'close' | 'query' | 'chart' | 'copy' | 'gear' | 'doc' | 'search' | 'lock' | 'upload' | 'pin' | 'transfer' | 'download' | 'plus' | 'panel' | 'chevrons-right' | 'eye' | 'eye-off' | 'filter' | 'sort-asc' | 'sort-desc' | 'wand' | 'diff'
 export function ActionIcon({ kind, size = 13 }: { kind: ActionIconKind; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (kind) {
+    case 'diff':
+      // 结构对比: 两块并排 + 中间箭头(两侧对齐的语义)
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="7" height="16" rx="1.5" />
+          <rect x="14" y="4" width="7" height="16" rx="1.5" />
+          <path d="M10.5 12h3" />
+        </svg>
+      )
     case 'wand':
       return (
         <svg {...common}>
