@@ -117,12 +117,24 @@ func DiskChildren(w http.ResponseWriter, r *http.Request) {
 // 路径经 argv 传成 $1, 不参与 shell 解析; 各段以哨兵开头, 由 remoteDiskChildren 解析。
 // 注意 du 的 -s 与 --max-depth 互斥(GNU 会报 "summarizing conflicts"), 这里只留后者:
 // 一次遍历就拿到全部顶层大小, 比逐个子目录各起一个 du 快一个量级。
+// 远程下钻脚本。三点要紧的:
+//  1. du 用 -x(不跨文件系统): 目录树里挂着别的盘(NFS/CIFS 卡住时尤其)会让扫描无限期挂住,
+//     而且跨盘的数字对"这个盘被谁吃了"没有意义 —— df 也是按盘报的, 两边口径要一致。
+//  2. du 外面包一层 timeout(有就用): 远端命令的硬上限是 60s(remote.exec), 不自我设限的话
+//     超时是把整段脚本连 df 一起掐掉, 用户只看到"连不上"; 自我设限则能留下 df + 部分 du,
+//     再用 __OPSCORE_DU_PARTIAL__ 告诉前端"这层没扫全"(前端的 partial 文案已有, 不用改)。
+//  3. 脚本经 RunOnTarget 投递会被包进单引号 —— **不能出现单引号/反斜杠**, 见 target.go。
 const remoteDiskScript = `echo __OPSCORE_DF__
 df -Pk "$1" 2>/dev/null | tail -n +2
 echo __OPSCORE_DU__
-du -k --max-depth=1 "$1" 2>/dev/null
+if command -v timeout >/dev/null 2>&1; then
+  timeout -k 5 45 du -kx --max-depth=1 "$1" 2>/dev/null
+  if [ $? -eq 124 ]; then echo __OPSCORE_DU_PARTIAL__; fi
+else
+  du -kx --max-depth=1 "$1" 2>/dev/null
+fi
 echo __OPSCORE_DIRS__
-find "$1" -maxdepth 1 -mindepth 1 -type d 2>/dev/null
+find "$1" -xdev -maxdepth 1 -mindepth 1 -type d 2>/dev/null
 echo __OPSCORE_END__`
 
 // remoteDiskChildren 在远程主机上列挂载点的顶层占用, 返回结构与本机版本一致。
@@ -131,56 +143,16 @@ func remoteDiskChildren(w http.ResponseWriter, hostID, root string) {
 	out, err := RunOnTarget(hostID, []string{"sh", "-c", remoteDiskScript, "opscore-disk", root})
 	if err != nil {
 		log.Printf("[disk] 远程读取 %s@%s 失败: %v out=%q", root, target, err, truncateForLog(out))
-		WriteJSON(w, map[string]any{"error": "连不上 " + target + "（检查主机是否在线、凭据是否正确）", "root": root})
+		// 超时与"连不上"是两件事, 混成一句会让人去查凭据
+		msg := "连不上 " + target + "（检查主机是否在线、凭据是否正确）"
+		if strings.Contains(err.Error(), "超时") {
+			msg = "读取 " + root + " 超时（目录太大或这台机器的磁盘很慢），换个目录试试"
+		}
+		WriteJSON(w, map[string]any{"error": msg, "root": root})
 		return
 	}
 
-	dc := DiskChildrenResp{Root: root}
-	sizes := map[string]uint64{}
-	dirs := map[string]bool{}
-	section := ""
-	for _, raw := range strings.Split(out, "\n") {
-		line := strings.TrimRight(raw, "\r")
-		switch line {
-		case "__OPSCORE_DF__":
-			section = "df"
-			continue
-		case "__OPSCORE_DU__":
-			section = "du"
-			continue
-		case "__OPSCORE_DIRS__":
-			section = "dirs"
-			continue
-		case "__OPSCORE_END__":
-			section = ""
-			continue
-		}
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		switch section {
-		case "df":
-			// Filesystem 1024-blocks Used Available Capacity Mounted-on
-			f := strings.Fields(line)
-			if len(f) >= 3 {
-				dc.Total = parseUint64(f[1]) * 1024
-				dc.Used = parseUint64(f[2]) * 1024
-			}
-		case "du":
-			// "<KB>\t<path>"; 其中一行是挂载点自身, 不算子项
-			i := strings.IndexByte(line, '\t')
-			if i <= 0 {
-				continue
-			}
-			p := line[i+1:]
-			if strings.TrimRight(p, "/") == strings.TrimRight(root, "/") {
-				continue
-			}
-			sizes[p] = parseUint64(line[:i]) * 1024
-		case "dirs":
-			dirs[line] = true
-		}
-	}
+	dc, sizes, dirs := parseRemoteDiskOutput(out, root)
 	if dc.Total > 0 {
 		dc.UsedPercent = float64(dc.Used) / float64(dc.Total) * 100
 	}
@@ -295,4 +267,61 @@ func isVirtualMount(path string) bool {
 		}
 	}
 	return false
+}
+
+// parseRemoteDiskOutput 把远程探测脚本的分段输出拆成 (响应骨架, 每个路径的字节数, 目录集合)。
+// 单独抽出来是为了能测这几条容易写错的地方: 段名切换、du 连"目录自身"那一行也报出来、
+// 以及 du 被自我设限掐掉时的 partial 标记 —— 前端据此提示"没扫全", 而不是让人把局部当全部。
+func parseRemoteDiskOutput(out, root string) (DiskChildrenResp, map[string]uint64, map[string]bool) {
+	dc := DiskChildrenResp{Root: root}
+	sizes := map[string]uint64{}
+	dirs := map[string]bool{}
+	section := ""
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		switch line {
+		case "__OPSCORE_DF__":
+			section = "df"
+			continue
+		case "__OPSCORE_DU__":
+			section = "du"
+			continue
+		case "__OPSCORE_DU_PARTIAL__":
+			section = "" // 它是标记, 不是尺寸行
+			dc.Partial = true
+			continue
+		case "__OPSCORE_DIRS__":
+			section = "dirs"
+			continue
+		case "__OPSCORE_END__":
+			section = ""
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		switch section {
+		case "df":
+			// Filesystem 1024-blocks Used Available Capacity Mounted-on
+			f := strings.Fields(line)
+			if len(f) >= 3 {
+				dc.Total = parseUint64(f[1]) * 1024
+				dc.Used = parseUint64(f[2]) * 1024
+			}
+		case "du":
+			// "<KB>\t<path>"; 其中一行是挂载点自身, 不算子项
+			i := strings.IndexByte(line, '\t')
+			if i <= 0 {
+				continue
+			}
+			p := line[i+1:]
+			if strings.TrimRight(p, "/") == strings.TrimRight(root, "/") {
+				continue
+			}
+			sizes[p] = parseUint64(line[:i]) * 1024
+		case "dirs":
+			dirs[line] = true
+		}
+	}
+	return dc, sizes, dirs
 }
