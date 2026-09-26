@@ -1,11 +1,13 @@
-// 表结构/索引/DDL 文档面板 + 结构编辑器(结构变更单模式: 编辑后 diff 生成 ALTER 预览, 确认执行)。
-// 范围裁剪: 仅列级变更(加/删/改列); 索引/约束变更提示走 SQL。ALTER 方言按引擎分支(MySQL MODIFY / 标准 ALTER)。
+// 表结构/索引/DDL 文档面板 + 结构编辑器(结构变更单模式: 编辑后生成"列变更意图", 后端拼 ALTER 并预览, 确认执行)。
+// 范围裁剪: 仅列级变更(加/删/改列); 索引/约束变更提示走 SQL。
+// 方言分支/标识符引用/默认值与注释转义都在后端(apply-alter), 这里不再手搓 SQL 字符串。
 
 import { useEffect, useMemo, useState } from 'react'
-import { describeTable, runQueryRaw, type ColumnInfo, type IndexInfo } from './api'
+import { describeTable, applyAlter, type ColumnInfo, type IndexInfo, type AlterCol } from './api'
 import { useConfirm } from '../../lib/hooks/useConfirm'
 import { useToast } from '../../components/Toast'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
+import { humanizeDbError } from './dbErrors'
 
 // 编辑态列(原始列 + 编辑字段; 新列标记 __new)
 interface EditCol extends ColumnInfo {
@@ -13,11 +15,6 @@ interface EditCol extends ColumnInfo {
   __drop?: boolean
   __origName?: string
 }
-
-const QUOTE_ID = (engine: string, name: string) =>
-  engine === 'mysql' || engine === 'mariadb' || engine === 'goldendb'
-    ? '`' + name.replace(/`/g, '``') + '`'
-    : '"' + name.replace(/"/g, '""') + '"'
 
 export default function DocPanel({
   connId,
@@ -46,12 +43,6 @@ export default function DocPanel({
   const { confirm, confirmEl } = useConfirm()
   const toast = useToast()
 
-  // 表名可能是 "schema.table" 两段(三级引擎): 必须逐段引用再用点拼回来。
-  // 原先这里写的是 `table.includes('.') ? table : table` —— 两个分支一模一样(死代码), 于是整串被
-  // 当成一个标识符: PG 下 "public.users" 变成 "public.users" 一整个带引号的表名, ALTER 直接找不到表。
-  const qTable = table.includes('.')
-    ? table.split('.').map(part => QUOTE_ID(engine || 'mysql', part)).join('.')
-    : QUOTE_ID(engine || 'mysql', table)
   const fullReload = () => {
     setEditing(null)
     setLoading(true)
@@ -90,77 +81,53 @@ export default function DocPanel({
   const markDrop = (i: number) =>
     setEditing(prev => prev ? prev.map((c, k) => (k === i ? { ...c, __drop: !c.__drop } : c)) : prev)
 
-  // ── ALTER 生成: 对比编辑态 vs 原始列 ──
-  const alterStatements = useMemo(() => {
+  // ── 列变更意图: 对比编辑态 vs 原始列, 只描述"哪一列变成什么样" ──
+  // 不在这里拼 SQL: 方言差异(MySQL MODIFY/CHANGE vs 标准 ALTER COLUMN 拆多条)、标识符引用、
+  // 默认值/注释转义都由后端 apply-alter 负责, 预览也是找它要的(confirm=false 不落库)。
+  const colChanges = useMemo<AlterCol[]>(() => {
     if (!editing) return []
     const orig = new Map(cols.map(c => [c.name, c]))
-    const out: string[] = []
-    const t = qTable
-    const mysql = engine === 'mysql' || engine === 'mariadb' || engine === 'goldendb'
-    const colDef = (c: EditCol) => {
-      const base = `${QUOTE_ID(engine, c.name)} ${c.type || 'TEXT'}${c.nullable ? '' : ' NOT NULL'}${c.default != null && c.default !== '' ? ` DEFAULT ${c.default}` : ''}${c.comment ? (mysql ? ` COMMENT '${c.comment.replace(/'/g, "''")}'` : '') : ''}`
-      return base
-    }
-    // 1) 新增列
-    for (const c of editing) {
-      if (c.__new && !c.__drop && c.name.trim()) out.push(`ALTER TABLE ${t} ADD COLUMN ${colDef(c)};`)
-    }
-    // 2) 删除列
-    for (const c of editing) {
-      if (!c.__new && c.__drop) out.push(`ALTER TABLE ${t} DROP COLUMN ${QUOTE_ID(engine, c.name)};`)
-    }
-    // 3) 修改列(原名仍存在且未删): 改名/类型/可空/默认/注释 有任一变化即生成
+    const out: AlterCol[] = []
+    const want = (c: EditCol) => ({
+      name: c.name, type: c.type, nullable: !!c.nullable,
+      default: c.default == null ? '' : String(c.default), comment: c.comment || '',
+    })
+    for (const c of editing) if (c.__new && !c.__drop && c.name.trim()) out.push({ kind: 'add', ...want(c) })
+    for (const c of editing) if (!c.__new && c.__drop) out.push({ kind: 'drop', name: c.name, nullable: !!c.nullable })
     for (const c of editing) {
       if (c.__new || c.__drop) continue
       const o = orig.get(c.__origName || c.name)
       if (!o) continue
       const changed = c.name !== o.name || c.type !== o.type || c.nullable !== o.nullable
         || (c.default ?? '') !== (o.default ?? '') || (c.comment ?? '') !== (o.comment ?? '')
-      if (!changed) continue
-      if (mysql) {
-        out.push(`ALTER TABLE ${t} MODIFY COLUMN ${colDef(c)};`)
-      } else {
-        // 标准/PG: 类型与改名分开; 简化: 改名列名不变走 ALTER COLUMN, 改名单独 RENAME
-        if (c.name !== o.name) out.push(`ALTER TABLE ${t} RENAME COLUMN ${QUOTE_ID(engine, o.name)} TO ${QUOTE_ID(engine, c.name)};`)
-        if (c.type !== o.type || c.nullable !== o.nullable || (c.default ?? '') !== (o.default ?? '')) {
-          out.push(`ALTER TABLE ${t} ALTER COLUMN ${QUOTE_ID(engine, c.name)} TYPE ${c.type || 'TEXT'};`)
-          out.push(`ALTER TABLE ${t} ALTER COLUMN ${QUOTE_ID(engine, c.name)} ${c.nullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
-          if ((c.default ?? '') !== (o.default ?? '')) {
-            out.push(c.default != null && c.default !== ''
-              ? `ALTER TABLE ${t} ALTER COLUMN ${QUOTE_ID(engine, c.name)} SET DEFAULT ${c.default};`
-              : `ALTER TABLE ${t} ALTER COLUMN ${QUOTE_ID(engine, c.name)} DROP DEFAULT;`)
-          }
-        }
-        if (c.comment !== (o.comment ?? '')) {
-          out.push(`COMMENT ON COLUMN ${t}.${QUOTE_ID(engine, c.name)} IS '${(c.comment || '').replace(/'/g, "''")}';`)
-        }
-      }
+      if (changed) out.push({ kind: 'modify', ...want(c), origName: o.name })
     }
     return out
-  }, [editing, cols, engine])
+  }, [editing, cols])
 
-  const applyAlter = async () => {
-    if (!alterStatements.length) return
-    const ok = await confirm(`确认执行 ${alterStatements.length} 条结构变更?`, {
-      desc: '涉及删列时数据将丢失, 不可撤销。',
-      content: <SqlPreviewBody sqls={alterStatements} caption="结构变更" />,
-      okText: '执行',
-      danger: true,
-      maxWidth: 620,
-    })
-    if (!ok) return
+  const commitStructure = async () => {
+    if (!colChanges.length) return
     setApplying(true)
     try {
-      const r = await runQueryRaw(connId, alterStatements.join('\n'))
-      if (r.data.code === 'write_locked') {
-        toast.error('写操作被拦截: 请先解锁写模式')
-        return
-      }
-      toast.success('结构变更完成')
+      const pv = await applyAlter(connId, database, table, colChanges, false)
+      if (!pv.ok) { toast.error(pv.error || '生成预览失败'); return }
+      const sqls = pv.sqls || []
+      const ok = await confirm(`确认执行 ${sqls.length} 条结构变更?`, {
+        desc: '涉及删列时数据将丢失, 不可撤销。',
+        content: <SqlPreviewBody sqls={sqls} caption="结构变更" />,
+        okText: '执行',
+        danger: true,
+        maxWidth: 620,
+      })
+      if (!ok) return
+      const r = await applyAlter(connId, database, table, colChanges, true)
+      if (!r.ok) { toast.error(humanizeDbError(r.error || '执行失败')); return }
+      toast.success(`结构变更完成（${r.count || sqls.length} 条）`)
       fullReload()
       onStructureChanged?.()
     } catch (e: any) {
-      toast.error('执行失败: ' + (e.message || e))
+      // 写锁/高危拦截这类后端拒绝走的是 403, 文案已经在 error 里, 别再加一层"执行失败"
+      toast.error(String(e?.message || e))
     } finally {
       setApplying(false)
     }
@@ -272,19 +239,30 @@ export default function DocPanel({
           {editing && (
             <div className="db-doc-alter" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <b style={{ fontSize: '0.78rem' }}>ALTER 预览</b>
-                <span className="dim" style={{ fontSize: '0.6875rem' }}>{alterStatements.length} 条语句 · 确认后执行(走写锁护栏)</span>
+                <b style={{ fontSize: '0.78rem' }}>待提交的结构变更</b>
+                <span className="dim" style={{ fontSize: '0.6875rem' }}>
+                  {colChanges.length} 处变更 · 点执行会先给出后端拼好的 ALTER 语句(走写锁护栏)
+                </span>
                 <button
                   className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent"
                   style={{ marginLeft: 'auto' }}
-                  disabled={!alterStatements.length || applying}
-                  onClick={applyAlter}
+                  disabled={!colChanges.length || applying}
+                  onClick={commitStructure}
                 >
-                  {applying ? '执行中...' : `执行 ${alterStatements.length} 条变更`}
+                  {applying ? '执行中...' : `执行 ${colChanges.length} 处变更`}
                 </button>
               </div>
+              {/* 实时列出的是"改哪一列成什么样"。具体 SQL 要按方言拼, 放在执行前的确认弹窗里 ——
+                  不为这块预览每次敲键都去问一次库。 */}
               <pre className="code-block" style={{ margin: 0, maxHeight: '10rem', overflow: 'auto', fontSize: '0.72rem' }}>
-                {alterStatements.length ? alterStatements.join('\n') : '— 无变更 —'}
+                {colChanges.length
+                  ? colChanges.map(c => c.kind === 'drop'
+                    ? `删除列 ${c.name}`
+                    : c.kind === 'add'
+                      ? `新增列 ${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` 默认 ${c.default}` : ''}`
+                      : `改列 ${c.origName === c.name ? c.name : `${c.origName} → ${c.name}`} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` 默认 ${c.default}` : ''}${c.comment ? ` 注释 ${c.comment}` : ''}`
+                  ).join('\n')
+                  : '— 无变更 —'}
               </pre>
             </div>
           )}

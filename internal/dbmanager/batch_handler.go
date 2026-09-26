@@ -17,7 +17,9 @@ package dbmanager
 //               ③ 两者都没有 → 直接拒绝(不做非原子写入)。
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -186,10 +188,39 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 事务句柄: 驱动事务接口优先, 否则钉会话走文本 BEGIN
+	// 事务句柄与逐条执行统一走 execAllInTx(apply-alter 用同一套, 不再各写一份回滚逻辑)
+	total, failedAt, execErr := execAllInTx(r.Context(), db, sqls)
+	if execErr != nil {
+		detail := fmt.Sprintf("第 %d 条失败, 整批已回滚: %v", failedAt, execErr)
+		if errors.Is(execErr, errNoTxDriver) {
+			detail = execErr.Error()
+		}
+		h.audit.Append(AuditEntry{
+			ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
+			SQL: joined, Risk: string(risk), Decision: "failed", Detail: detail,
+		})
+		writeJSON(w, map[string]any{"ok": false, "affected": 0, "failedAt": failedAt, "rolledBack": !errors.Is(execErr, errNoTxDriver), "error": detail})
+		return
+	}
+
+	h.audit.Append(AuditEntry{
+		ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
+		SQL: joined, Risk: string(risk), Decision: "executed",
+		Detail: fmt.Sprintf("%s（%d 条变更已在同一事务提交）", reason, len(sqls)),
+	})
+	writeJSON(w, map[string]any{"ok": true, "affected": total, "count": len(sqls)})
+}
+
+// execAllInTx 在一个事务里跑完整批语句, 任一条失败就整体回滚。
+// 事务来源按优先级: ① 驱动自带事务接口(Oracle/达梦这类文本 BEGIN 非法的引擎)
+//
+//	② 钉一条会话走文本 BEGIN/COMMIT  ③ 两者都没有 → 返回 errNoTxDriver(绝不做非原子写入)。
+//
+// failedAt 是 1 起的失败序号(0 = 没有逐条失败)。
+func execAllInTx(ctx context.Context, db any, sqls []string) (total int64, failedAt int, err error) {
 	var tx gonaviDB.TransactionExecer
 	if tp, ok := db.(gonaviDB.TransactionExecerProvider); ok {
-		if t, terr := tp.OpenTransactionExecer(r.Context()); terr == nil {
+		if t, terr := tp.OpenTransactionExecer(ctx); terr == nil {
 			tx = t
 			defer func() { _ = tx.Rollback() }() // Commit 成功后 Rollback 为 no-op
 		}
@@ -198,19 +229,16 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 	if tx == nil {
 		sp, ok := db.(gonaviDB.SessionExecerProvider)
 		if !ok {
-			writeErr(w, "该驱动不支持事务, 已拒绝批量写入(避免改一半)", http.StatusBadRequest)
-			return
+			return 0, 0, errNoTxDriver
 		}
-		s, serr := sp.OpenSessionExecer(r.Context())
+		s, serr := sp.OpenSessionExecer(ctx)
 		if serr != nil {
-			writeErr(w, "打开事务会话失败: "+serr.Error(), http.StatusInternalServerError)
-			return
+			return 0, 0, fmt.Errorf("打开事务会话失败: %w", serr)
 		}
 		sess = s
 		defer func() { _ = sess.Close() }()
 		if _, berr := sess.Exec("BEGIN"); berr != nil {
-			writeErr(w, "开启事务失败: "+berr.Error(), http.StatusInternalServerError)
-			return
+			return 0, 0, fmt.Errorf("开启事务失败: %w", berr)
 		}
 	}
 	execOne := func(q string) (int64, error) {
@@ -228,45 +256,26 @@ func (h *Handlers) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 			_, _ = sess.Exec("ROLLBACK")
 		}
 	}
-
-	var total int64
 	for i, q := range sqls {
 		n, eerr := execOne(q)
 		if eerr != nil {
 			rollback()
-			detail := fmt.Sprintf("第 %d 条失败, 整批已回滚: %v", i+1, eerr)
-			h.audit.Append(AuditEntry{
-				ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
-				SQL: joined, Risk: string(risk), Decision: "failed", Detail: detail,
-			})
-			writeJSON(w, map[string]any{"ok": false, "affected": 0, "failedAt": i + 1, "rolledBack": true, "error": detail})
-			return
+			return total, i + 1, eerr
 		}
 		total += n
 	}
 	if tx != nil {
 		if cerr := tx.Commit(); cerr != nil {
-			h.audit.Append(AuditEntry{
-				ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
-				SQL: joined, Risk: string(risk), Decision: "failed", Detail: "提交失败: " + cerr.Error(),
-			})
-			writeJSON(w, map[string]any{"ok": false, "affected": 0, "rolledBack": true, "error": "提交失败: " + cerr.Error()})
-			return
+			return total, 0, fmt.Errorf("提交失败: %w", cerr)
 		}
-	} else if _, cerr := sess.Exec("COMMIT"); cerr != nil {
-		rollback()
-		h.audit.Append(AuditEntry{
-			ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
-			SQL: joined, Risk: string(risk), Decision: "failed", Detail: "提交失败: " + cerr.Error(),
-		})
-		writeJSON(w, map[string]any{"ok": false, "affected": 0, "rolledBack": true, "error": "提交失败: " + cerr.Error()})
-		return
+		return total, 0, nil
 	}
-
-	h.audit.Append(AuditEntry{
-		ConnID: body.ID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
-		SQL: joined, Risk: string(risk), Decision: "executed",
-		Detail: fmt.Sprintf("%s（%d 条变更已在同一事务提交）", reason, len(sqls)),
-	})
-	writeJSON(w, map[string]any{"ok": true, "affected": total, "count": len(sqls)})
+	if _, cerr := sess.Exec("COMMIT"); cerr != nil {
+		rollback()
+		return total, 0, fmt.Errorf("提交失败: %w", cerr)
+	}
+	return total, 0, nil
 }
+
+// errNoTxDriver 单独一个错误值: 调用方要按"驱动能力缺失"提示换路径, 而不是当成执行失败。
+var errNoTxDriver = errors.New("该驱动不支持事务, 已拒绝整批写入(避免改一半)")

@@ -663,6 +663,23 @@ export async function applyBatch(
   return postJSON('/api/dbmanager/apply-batch', { id, database, table, pkCols, ops, confirm })
 }
 
+// 列级结构变更(表结构编辑器): 前端只说"哪一列变成什么样", ALTER 语句由后端按方言拼。
+// 与 apply-batch 同一套契约 —— confirm=false 拿预览(不落库), true 才在一个事务里执行。
+export interface AlterCol {
+  kind: 'add' | 'drop' | 'modify'
+  name: string
+  origName?: string
+  type?: string
+  nullable: boolean
+  default?: string
+  comment?: string
+}
+export async function applyAlter(
+  id: string, database: string, table: string, cols: AlterCol[], confirm = false,
+): Promise<{ ok: boolean; sqls?: string[]; error?: string; count?: number; failedAt?: number; rolledBack?: boolean }> {
+  return postJSON('/api/dbmanager/apply-alter', { id, database, table, cols, confirm })
+}
+
 // 终止会话(进程列表): 只报 pid, 语句由后端按引擎生成。confirm=false 先拿预览。
 export async function killSession(
   id: string, pid: number, confirm = false,
