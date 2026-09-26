@@ -32,6 +32,9 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
 	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool), diffs: newDataDiffRegistry()}
+	// 同步任务会往目标库写 DDL/数据, 因此它和 apply-* 一样要进审计。审计挂在 Runner 的终态回调上,
+	// 这样"完成/失败/panic/取消"四种收尾都会留痕, 不用每个出口记一遍。
+	h.sync.OnFinish = h.auditSyncJob
 	module := &registry.Module{
 		Manifest: registry.Manifest{
 			ID:          PluginID,
@@ -1152,8 +1155,66 @@ func (h *Handlers) handleSyncRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "源与目标不能是同一连接", http.StatusBadRequest)
 		return
 	}
+	// 同步是**写目标库**的操作, 跟 apply-* 同一档: 目标连接没解锁就不让起任务。
+	// 这条之前是漏的: 两侧都锁着时 sync/run 照样建表/灌数, 而且不进审计。
+	if rem := h.unlock.Remaining(req.TargetID); rem <= 0 {
+		writeJSONStatus(w, http.StatusForbidden, map[string]any{
+			"error":  "跨库同步会写入目标库: 目标连接默认只读, 请先解锁写模式(限时有效)",
+			"code":   "write_locked",
+			"risk":   string(RiskHigh),
+			"reason": "目标库批量写入(建表/清表/灌数据)",
+		})
+		return
+	}
 	job := h.sync.Start(req, nil)
 	writeJSON(w, map[string]any{"ok": true, "jobId": job.ID})
+}
+
+// auditSyncJob 把一次同步写进目标连接的审计流水。
+// SQL 字段放的是"这次同步做了什么"而不是某条真实语句 —— 语句在任务里逐条生成,
+// 审计要看的是"谁把哪张表写进了哪个库", 出问题时能按这个定位回去。
+func (h *Handlers) auditSyncJob(job *syncpkg.Job) {
+	conn, err := h.store.Get(job.Request.TargetID)
+	if err != nil {
+		return
+	}
+	req := job.Request
+	risk := RiskMedium
+	var decision string
+	switch job.Status {
+	case "done":
+		decision = "executed"
+	case "canceled":
+		decision = "canceled"
+	default:
+		decision = "failed"
+	}
+	if req.Mode == syncpkg.ModeTruncateFull || (req.Mode == syncpkg.ModeSchemaFull && req.Options.Truncate) {
+		risk = RiskHigh
+	}
+	tables := req.Tables
+	if len(tables) > 8 {
+		tables = append(append([]string{}, tables[:8]...), fmt.Sprintf("…共 %d 张", len(req.Tables)))
+	}
+	srcName := req.SourceID
+	if sc, serr := h.store.Get(req.SourceID); serr == nil {
+		srcName = sc.Info.Name
+	}
+	h.audit.Append(AuditEntry{
+		ConnID: req.TargetID, ConnName: conn.Info.Name, Engine: string(conn.Info.Engine),
+		SQL: fmt.Sprintf("跨库同步 %s: %s.%s → %s.%s [%s]", req.Mode,
+			srcName, req.SourceDB, conn.Info.Name, req.TargetDB, strings.Join(tables, ",")),
+		Risk:     string(risk),
+		Decision: decision,
+		Detail:   fmt.Sprintf("复制到目标 %d 行", job.TotalRows) + firstOf(job.Err),
+	})
+}
+
+func firstOf(err string) string {
+	if err == "" {
+		return ""
+	}
+	return "; 错误: " + err
 }
 
 // handleSyncStatus GET ?id=... -> 任务进度

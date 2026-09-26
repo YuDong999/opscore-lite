@@ -69,6 +69,9 @@ func (r *Runner) Start(req SyncRequest, tables []TableProgress) *Job {
 			if p := recover(); p != nil {
 				r.fail(job, fmt.Sprintf("同步任务内部异常: %v", p))
 			}
+			if r.OnFinish != nil {
+				r.OnFinish(job)
+			}
 		}()
 		r.Run(job)
 	}()
