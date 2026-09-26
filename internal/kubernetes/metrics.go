@@ -8,19 +8,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
 
@@ -193,39 +192,48 @@ type nodeDisk struct {
 	evictPct float64
 }
 
-// kubeletNodeFS 直连节点 10250 /stats/summary 取 nodefs 磁盘用量, /configz 取实际驱逐线。
-// 复用 kubeconfig 的 TLS 材料(与 API server 同证书体系, kubelet 信任); 失败节点静默跳过。
+// proxyRESTClient 给 node proxy 用的裸 REST 客户端。
+// 动态客户端会强制把响应解码成 k8s 资源对象(要求 kind), 而 /stats/summary、/configz 不是资源,
+// 所以要走 rest.RESTClient 拿原始字节。
+func (m *Manager) proxyRESTClient(clusterID string) (rest.Interface, error) {
+	cfgBase, err := m.RESTConfig(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	gv := schema.GroupVersion{Group: "", Version: "v1"}
+	cfgV1 := *cfgBase
+	cfgV1.GroupVersion = &gv
+	cfgV1.APIPath = "/api"
+	cfgV1.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	return rest.RESTClientFor(&cfgV1)
+}
+
+// kubeletNodeFS 取 nodefs 磁盘用量 + 实际驱逐线。
+//
+// 走 **apiserver 的 node proxy**(和 SummaryMetrics 同一条路), 不要直连节点 10250:
+// kubelet 的 serving 证书由 kubelet CA 签, 而 kubeconfig 里的 CA 与 ServerName 只认 apiserver,
+// 直连必然 TLS 失败 —— 而失败原先被静默吞掉, 结果就是"三台节点的磁盘列全空、还看不出原因"
+// (2026-09-26 实测: metrics-server 正常, diskOK 却恒为 false)。鉴权/证书交给 apiserver→kubelet 既有体系。
 func (m *Manager) kubeletNodeFS(ctx context.Context, clusterID string, hosts map[string]string) map[string]nodeDisk {
 	out := map[string]nodeDisk{}
 	if len(hosts) == 0 {
 		return out
 	}
-	cfg, err := m.RESTConfig(clusterID)
+	restClient, err := m.proxyRESTClient(clusterID)
 	if err != nil {
+		log.Printf("[k8s] node proxy 客户端不可用, 跳过磁盘采集: %v", err)
 		return out
 	}
-	rt, err := rest.TransportFor(cfg)
-	if err != nil {
-		return out
-	}
-	client := &http.Client{Timeout: 6 * time.Second, Transport: rt}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for name, ip := range hosts {
+	for name := range hosts {
 		wg.Add(1)
-		go func(name, ip string) {
+		go func(name string) {
 			defer wg.Done()
-			d := nodeDisk{evictPct: 10}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+ip+":10250/stats/summary", nil)
+			base := "/api/v1/nodes/" + name + "/proxy"
+			raw, err := restClient.Get().AbsPath(base + "/stats/summary").Do(ctx).Raw()
 			if err != nil {
-				return
-			}
-			resp, err := client.Do(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
+				log.Printf("[k8s] 节点 %s 取 nodefs 失败: %v", name, err)
 				return
 			}
 			var s struct {
@@ -236,9 +244,11 @@ func (m *Manager) kubeletNodeFS(ctx context.Context, clusterID string, hosts map
 					} `json:"fs"`
 				} `json:"node"`
 			}
-			if json.NewDecoder(resp.Body).Decode(&s) != nil {
+			if json.Unmarshal(raw, &s) != nil {
+				log.Printf("[k8s] 节点 %s 的 /stats/summary 解析失败", name)
 				return
 			}
+			d := nodeDisk{evictPct: 10}
 			avail := float64(s.Node.FS.AvailableBytes)
 			cap := float64(s.Node.FS.CapacityBytes)
 			d.usedGiB = (cap - avail) / (1 << 30)
@@ -247,29 +257,28 @@ func (m *Manager) kubeletNodeFS(ctx context.Context, clusterID string, hosts map
 				d.availPct = avail / cap * 100
 			}
 			// 实际驱逐线: kubelet /configz → evictionHard.nodefs.available (e.g. "10%")
-			if req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+ip+":10250/configz", nil); err == nil {
-				if cr, err := client.Do(req); err == nil {
-					if cr.StatusCode == http.StatusOK {
-						var cz struct {
-							Kubeletconfig struct {
-								EvictionHard map[string]string `json:"evictionHard"`
-							} `json:"kubeletconfig"`
-						}
-						if json.NewDecoder(cr.Body).Decode(&cz) == nil {
-							if v := cz.Kubeletconfig.EvictionHard["nodefs.available"]; v != "" {
-								if f, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(v), "%"), 64); err == nil && f > 0 {
-									d.evictPct = f
-								}
-							}
+			cz, cerr := restClient.Get().AbsPath(base + "/configz").Do(ctx).Raw()
+			if cerr != nil {
+				// 取不到就退回 10% 这个 kubeadm 默认值, 但要留痕: 界面上的"驱逐线"会看着像真的
+				log.Printf("[k8s] 节点 %s 取 /configz 驱逐线失败(按默认 10%% 显示): %v", name, cerr)
+			} else {
+				var cfg struct {
+					Kubeletconfig struct {
+						EvictionHard map[string]string `json:"evictionHard"`
+					} `json:"kubeletconfig"`
+				}
+				if json.Unmarshal(cz, &cfg) == nil {
+					if v := cfg.Kubeletconfig.EvictionHard["nodefs.available"]; v != "" {
+						if f, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(v), "%"), 64); err == nil && f > 0 {
+							d.evictPct = f
 						}
 					}
-					cr.Body.Close()
 				}
 			}
 			mu.Lock()
 			out[name] = d
 			mu.Unlock()
-		}(name, ip)
+		}(name)
 	}
 	wg.Wait()
 	return out
@@ -325,24 +334,15 @@ func (m *Manager) SummaryMetrics(ctx context.Context, clusterID string) ([]NodeM
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("nodes: %w", err)
 	}
-	// node proxy 走 RESTClient 原始字节: 动态客户端会强制解码资源对象(要求 kind), 而 summary 不是 k8s 资源
-	cfgBase, err := m.RESTConfig(clusterID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	gv := schema.GroupVersion{Group: "", Version: "v1"}
-	cfgV1 := *cfgBase
-	cfgV1.GroupVersion = &gv
-	cfgV1.APIPath = "/api"
-	cfgV1.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
-	restClient, err := rest.RESTClientFor(&cfgV1)
+	// node proxy 走 RESTClient 原始字节(见 proxyRESTClient)
+	restClient, err := m.proxyRESTClient(clusterID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	type nodeCtx struct {
-		name   string
-		alloc  [2]int64 // cpu milli, mem MiB
-		press  bool
+		name  string
+		alloc [2]int64 // cpu milli, mem MiB
+		press bool
 	}
 	var targets []nodeCtx
 	for i := range nodesList.Items {
@@ -372,7 +372,7 @@ func (m *Manager) SummaryMetrics(ctx context.Context, clusterID string) ([]NodeM
 		go func(nc nodeCtx) {
 			defer wg.Done()
 			// 经 apiserver node proxy 读 /stats/summary; 首错只记录不中断其余节点
-			res := restClient.Get().AbsPath("/api/v1/nodes/"+nc.name+"/proxy/stats/summary").Do(ctx)
+			res := restClient.Get().AbsPath("/api/v1/nodes/" + nc.name + "/proxy/stats/summary").Do(ctx)
 			raw, err := res.Raw()
 			if err != nil {
 				mu.Lock()
@@ -437,6 +437,14 @@ func (m *Manager) SummaryMetrics(ctx context.Context, clusterID string) ([]NodeM
 			if cap > 0 {
 				sd.availPct = avail / cap * 100
 			}
+			// summary 自带 nodefs: 降级态也要有磁盘那一列(主路径的磁盘来自 kubeletNodeFS, 与这里同源)
+			nm.DiskOK = cap > 0
+			nm.DiskAvailPct = sd.availPct
+			nm.DiskUsedGiB = sd.usedGiB
+			nm.DiskCapGiB = sd.capGiB
+			nm.DiskEvictPct = sd.evictPct
+			nm.DiskPressure = nc.press
+			nm.EphUsedBytes = int64(sd.usedGiB * 1024 * 1024 * 1024)
 			for _, pd := range s.Pods {
 				pm := PodMetric{Namespace: pd.PodRef.Namespace, Name: pd.PodRef.Name}
 				for _, ct := range pd.Containers {
