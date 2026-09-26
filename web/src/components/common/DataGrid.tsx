@@ -468,6 +468,13 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   // ── 结果分页(dbx 同款): 默认 100 行/页 + 底部翻页栏; 行数据始终全量在内存(客户端分页) ──
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
+  // 序号列宽: 以前写死 40px, 但批量模式下这格里是"复选框 + 行号"(实测内容要 56px) —— 数字右边被切掉。
+  // 位数按当前页最大的那个行号算: 33 万行的表首页只到 100, 常驻 6 位宽会把首列撑得太宽。
+  const numW = useMemo(() => {
+    const shown = Math.min(result?.rows?.length || 1, page * pageSize)
+    const digits = Math.max(2, String(shown).length)
+    return Math.max(40, (batchMode && isEditable ? 22 : 0) + digits * 7 + 16)
+  }, [result, batchMode, isEditable, page, pageSize])
   // 行复选(批量模式下可用): 交给底部「删除选中行」; 翻页/换结果集时清空
   const [picked, setPicked] = useState<Set<number>>(new Set())
   useEffect(() => {
@@ -540,13 +547,14 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     if (!g) return null
     return Array.from(g.querySelectorAll<HTMLTableHeaderCellElement>('thead th')).map(t => t.offsetWidth)
   }, [])
-  // 冻结列 i 的 sticky left = #列宽 + 前面各冻结列宽
+  // 冻结列 i 的 sticky left = 序号列宽 + 前面各冻结列宽。基数必须跟 colgroup 用同一个 numW,
+  // 否则序号列加宽后冻结列会压到它上面。
   const frozenLeft = useCallback((i: number): number | undefined => {
     if (i >= frozenN) return undefined
-    let left = frozenW[0] ?? 40
+    let left = numW
     for (let k = 0; k < i; k++) left += frozenW[k + 1] ?? 100
     return left
-  }, [frozenN, frozenW])
+  }, [frozenN, frozenW, numW])
   const startColResize = useCallback((col: number, e: React.PointerEvent<HTMLSpanElement>) => {
     e.preventDefault()
     e.stopPropagation()
@@ -963,7 +971,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
       <div className="db-table-grid" ref={gridRef} onScroll={e => setVTop(e.currentTarget.scrollTop)}>
         <table className={'db-table-result' + (measuring ? ' db-measuring' : '')}>
           <colgroup>
-            <col style={{ width: 40 }} />
+            <col style={{ width: numW }} />
             {result.columns.map((c, j) => (
               <col key={c} style={colW[c] ? { width: colW[c] } : undefined} />
             ))}
