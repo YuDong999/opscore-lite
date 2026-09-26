@@ -140,7 +140,11 @@ export function ConfirmModal({
   return (
     <Modal onClose={onCancel} maxWidth={maxWidth}>
       <h3>{title}</h3>
-      {children ?? (desc ? <p className="dim">{desc}</p> : null)}
+      {/* desc 与 children 是两件事: 前者是风险提示, 后者是正文(如 SQL 预览)。
+          原先写成 `children ?? desc`, 只要给了正文就把提示吞了 ——
+          调用方两个都传的那些确认框("删列数据不可撤销"这类)其实一直没显示过。 */}
+      {desc ? <p className="dim">{desc}</p> : null}
+      {children}
       <div className="modal-actions">
         <button className="btn-glass-soft" onClick={onCancel} disabled={busy}>
           {cancelLabel}
