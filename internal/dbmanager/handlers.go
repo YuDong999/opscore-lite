@@ -31,7 +31,10 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 	audit := NewAuditLog(store.Central)
 	audit.loadFromDisk()
 	svc := NewGonaviService(pool)
-	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool), diffs: newDataDiffRegistry()}
+	h := &Handlers{store: store, pool: pool, svc: svc, unlock: NewWriteUnlockManager(30), audit: audit, sync: syncpkg.NewRunner(pool), diffs: newDataDiffRegistry(), txns: newTxRegistry()}
+	// 手动事务必须有个定时清扫: 用户直接关页签的话, 光靠"访问时顺便清"清不掉,
+	// 那条 idle in transaction 会在 PG 侧挡住 vacuum 并撑住 xmin。
+	go h.sweepLoop()
 	// 同步任务会往目标库写 DDL/数据, 因此它和 apply-* 一样要进审计。审计挂在 Runner 的终态回调上,
 	// 这样"完成/失败/panic/取消"四种收尾都会留痕, 不用每个出口记一遍。
 	h.sync.OnFinish = h.auditSyncJob
@@ -86,6 +89,11 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/data-diff/job", Handler: h.handleDataDiffJob},
 			{Path: "/api/dbmanager/data-diff/cancel", Handler: h.handleDataDiffCancel},
 			{Path: "/api/dbmanager/data-diff/apply", Handler: h.handleDataDiffApply},
+			{Path: "/api/dbmanager/tx/begin", Handler: h.handleTxBegin},
+			{Path: "/api/dbmanager/tx/execute", Handler: h.handleTxExecute},
+			{Path: "/api/dbmanager/tx/commit", Handler: h.handleTxCommit},
+			{Path: "/api/dbmanager/tx/rollback", Handler: h.handleTxRollback},
+			{Path: "/api/dbmanager/tx/status", Handler: h.handleTxStatus},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
@@ -123,6 +131,7 @@ type Handlers struct {
 	audit  *AuditLog
 	sync   *syncpkg.Runner
 	diffs  *dataDiffRegistry // 数据对比任务(内存, 结果只活 30 分钟)
+	txns   *txRegistry       // 手动事务: txId → 跨请求挂着的事务会话(空闲 5 分钟自动回滚)
 }
 
 var (
@@ -393,7 +402,8 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── ADR-003 拦截链 ──
-	risk, reason := classifySQLRisk(string(conn.Info.Engine), body.SQL)
+	// 逐条取最高风险: 多语句里藏一条 DROP 也算, 否则写锁会被首条只读语句骗过去。
+	risk, reason := classifyBatchRisk(string(conn.Info.Engine), body.SQL)
 	if risk.AtLeast(RiskMedium) {
 		if blocked := h.interceptWrite(w, conn, body.ID, body.SQL, risk, reason, body.Confirm); blocked {
 			return
@@ -877,7 +887,8 @@ func (h *Handlers) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── ADR-003 拦截链 ──
-	risk, reason := classifySQLRisk(string(conn.Info.Engine), body.SQL)
+	// 逐条取最高风险: 多语句里藏一条 DROP 也算, 否则写锁会被首条只读语句骗过去。
+	risk, reason := classifyBatchRisk(string(conn.Info.Engine), body.SQL)
 	if risk.AtLeast(RiskMedium) {
 		if blocked := h.interceptWrite(w, conn, body.ID, body.SQL, risk, reason, true); blocked {
 			return

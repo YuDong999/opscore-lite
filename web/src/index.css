@@ -3812,6 +3812,12 @@ body {
 /* QueryEditor 保存内联行 */
 .db-save-inline { display: inline-flex; align-items: center; gap: 0.25rem; }
 
+/* 手动事务状态条: 事务模式下贴在编辑器头部下方, 显示"有多少东西还没落库" */
+.db-tx-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: nowrap; font-size: 0.75rem; color: var(--text-dim); background: var(--surface-tint); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.1875rem 0.5rem; margin-bottom: 0.25rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.db-tx-bar > span + span::before { content: '·'; margin-right: 0.5rem; color: var(--text-dim); }
+.db-tx-strong { color: var(--accent); font-weight: 600; }
+.db-tx-warn { margin-left: auto; color: var(--warn); }
+
 /* 右键二级子菜单(dbx 同款): hover 父项右侧展开, 纯 CSS 无状态 */
 .db-ctx-menu-subwrap { position: relative; display: block; width: 100%; }
 .db-ctx-menu-subwrap > .db-ctx-menu-item { width: 100%; }

@@ -431,6 +431,71 @@ export async function getTableMeta(id: string, database: string, table: string):
   return r.meta
 }
 
+// ── 手动事务(编辑器事务模式) ──
+// 一条物理连接上的事务跨请求挂着: begin 是懒的(首次执行才开), 空闲 5 分钟服务端自动回滚。
+// 语义与 dbx 一致, 但每条语句仍要过风险判定/写锁, 并且 MySQL 系的 DDL 会被拒绝
+// (DDL 隐式提交, 放进"待会儿能回滚"的事务里是骗人的)。
+export interface TxStatement {
+  seq: number
+  sql: string
+  type: string
+  affected: number
+  rows: number
+  durationMs: number
+  error?: string
+}
+export interface TxResp {
+  status: number
+  data: {
+    ok?: boolean
+    txId?: string
+    active?: boolean
+    count?: number
+    affected?: number
+    statements?: TxStatement[]
+    batch?: TxStatement[]
+    idleSecLeft?: number
+    openSec?: number
+    idleTimeoutSec?: number
+    finished?: boolean
+    busy?: boolean
+    columns?: string[]
+    rows?: any[][]
+    rowCount?: number
+    truncated?: boolean
+    rolledBack?: boolean
+    discarded?: number
+    noop?: boolean
+    note?: string
+    message?: string
+    error?: string
+    code?: string
+    reason?: string
+    risk?: string
+  }
+}
+
+async function txPost(path: string, body: Record<string, unknown>): Promise<TxResp> {
+  const t = localStorage.getItem('opscore-token')
+  const r = await fetch('/api/dbmanager/' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+    body: JSON.stringify(body),
+  })
+  return { status: r.status, data: await r.json().catch(() => ({})) }
+}
+
+export const txBegin = (id: string, database: string) => txPost('tx/begin', { id, database })
+export const txExecute = (txId: string, sql: string, confirm = false) => txPost('tx/execute', { txId, sql, confirm })
+export const txCommit = (txId: string) => txPost('tx/commit', { txId, confirm: true })
+export const txRollback = (txId: string) => txPost('tx/rollback', { txId })
+
+export async function txStatus(txId: string): Promise<TxResp['data'] & { status: number }> {
+  const r = await fetch('/api/dbmanager/tx/status?txId=' + encodeURIComponent(txId))
+  const d = await r.json().catch(() => ({}))
+  return { ...(d as object), status: r.status }
+}
+
 export async function runQueryRaw(
   id: string,
   sql: string,

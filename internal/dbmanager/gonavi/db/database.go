@@ -862,6 +862,33 @@ func NewSQLTxStatementExecerWithConn(tx *sql.Tx, conn *sql.Conn) TransactionExec
 	return &sqlTxStatementExecer{tx: tx, conn: conn}
 }
 
+// OpenTransactionOnPool 是各驱动 OpenTransactionExecer 的公共实现:
+// 从连接池 pin 一条物理连接并立刻 BeginTx。
+//
+// 两处刻意**不用**调用方传进来的 ctx:
+//   - 事务要跨 RPC 活着 —— begin 的那次请求先结束的话, 绑 ctx 会把事务一起取消;
+//   - 连接被 pin 住, 后续语句必须落在同一条物理连接上, 不能回到池里换人。
+//
+// BeginTx 失败时把连接 Close 掉(还回池子), 否则会漏一条被占住的物理连接。
+func OpenTransactionOnPool(pool *sql.DB, ctx context.Context) (TransactionExecer, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("连接未打开")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	conn, err := pool.Conn(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return NewSQLTxStatementExecerWithConn(tx, conn), nil
+}
+
 func (e *sqlTxStatementExecer) activeTx() (*sql.Tx, error) {
 	if e == nil || e.tx == nil {
 		return nil, localizedDatabaseRuntimeError("db.backend.error.transaction_not_open", nil)

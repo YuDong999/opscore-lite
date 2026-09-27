@@ -291,6 +291,13 @@ func aggregateIndexes(defs []gonaviConnection.IndexDefinition) []IndexInfo {
 	return out
 }
 
+// execTarget 是"能跑一条 SQL 的东西": 连接本身, 或为 USE 而 pin 下来的驱动会话。
+// 抽这一层是为了让"会话路径"和"连接路径"共用同一套读写/分句/摘要逻辑, 不再各写一遍。
+type execTarget interface {
+	Exec(query string) (int64, error)
+	Query(query string) ([]map[string]interface{}, []string, error)
+}
+
 func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
 	db, conn, err := s.pool.Acquire(connID)
 	if err != nil {
@@ -306,60 +313,56 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 	// 标签绑定的库上下文: USE 是 MySQL 系语法 —— PG/Oracle 等会话内换库不存在,
 	// 传了 defaultDatabase 也不能发 USE, 否则 PG 直接报 `syntax error at or near "USE"`
 	// (2026-09-25 实测: /query 带 database 的 PG 查询全挂)。方言统一走 sync.EngineDialect。
-	useDatabase := syncpkg.EngineDialect(string(conn.Info.Engine)) == syncpkg.DialectMySQL
-	if useDatabase && strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
+	dialect := syncpkg.EngineDialect(string(conn.Info.Engine))
+
+	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
+	//
+	// 先分句再决定走哪条通道: 多语句文本**必须每一条都只读**才算只读。
+	// 只看第一个词的话, `SELECT 1; DELETE FROM t` 会被判成只读 → 走 Query 通道 →
+	// 既绕开写锁也不进审计(风险分类同样只看首词)。分句器认方言, 所以这里也按方言切。
+	stmts := splitSQLStatements(sqlText, dialect)
+	readOnly := len(stmts) > 0
+	for _, st := range stmts {
+		if !isReadOnlySQL(st) {
+			readOnly = false
+			break
+		}
+	}
+
+	// 执行体: 需要 USE 就 pin 一条会话下来, 否则直接用连接。
+	// 关键是**两条路共用下面同一套读写/分句逻辑** —— 原来会话那条自己抄了一遍"拿 Query 跑",
+	// 结果带 database 的 MySQL 写请求既不分句也不出摘要, 还把读写通道判定整个绕过(2026-09-27 实测)。
+	var ex execTarget = db
+	if dialect == syncpkg.DialectMySQL && strings.TrimSpace(defaultDatabase) != "" && validIdentifier(defaultDatabase) {
 		if sp, ok := db.(gonavibase.SessionExecerProvider); ok {
 			sess, serr := sp.OpenSessionExecer(ctx)
 			if serr != nil {
 				res.Error = serr.Error()
 				return res, serr
 			}
+			both, sok := sess.(execTarget)
+			if !sok {
+				_ = sess.Close()
+				res.Error = "驱动会话不支持查询"
+				return res, fmt.Errorf("驱动会话不支持查询")
+			}
 			defer func() { _ = sess.Close() }()
 			if _, uerr := sess.Exec("USE " + defaultDatabase); uerr != nil {
 				res.Error = uerr.Error()
 				return res, uerr
 			}
-			qsess, qok := sess.(gonavibase.StatementQueryExecer)
-			if !qok {
-				res.Error = "驱动会话不支持查询"
-				return res, fmt.Errorf("驱动会话不支持查询")
-			}
-			rows, colNames, qerr := qsess.Query(sqlText)
-			if qerr != nil {
-				res.Error = qerr.Error()
-				return res, qerr
-			}
-			res.Columns = colNames
-			truncated := false
-			for _, row := range rows {
-				if len(res.Rows) >= maxRows {
-					truncated = true
-					break
-				}
-				vals := make([]any, len(colNames))
-				for i, c := range colNames {
-					vals[i] = row[c]
-				}
-				res.Rows = append(res.Rows, vals)
-			}
-			res.Truncated = truncated
-			res.RowCount = len(res.Rows)
-			res.DurationMs = time.Since(start).Milliseconds()
-			return res, nil
+			ex = both
 		}
 		// 驱动不支持固定会话: 无库上下文执行, SQL 需自带限定
 	}
-
-	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
-	if isReadOnlySQL(sqlText) {
+	if readOnly {
 		// 只读多语句 → 逐条执行, 返回执行摘要(GoNavi 执行摘要同款信息结构)
-		stmts := splitSQLStatements(sqlText)
 		if len(stmts) > 1 {
 			var summary []StatementResult
 			for _, st := range stmts {
 				stStart := time.Now()
 				sr := StatementResult{SQL: st, Type: statementType(st)}
-				rows, cols, err := db.Query(st)
+				rows, cols, err := ex.Query(st)
 				if err != nil {
 					sr.Error = err.Error()
 					sr.DurationMs = time.Since(stStart).Milliseconds()
@@ -396,7 +399,7 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 			res.DurationMs = time.Since(start).Milliseconds()
 			return res, nil
 		}
-		rows, colNames, err := db.Query(sqlText)
+		rows, colNames, err := ex.Query(sqlText)
 		if err != nil {
 			res.Error = err.Error()
 			return res, err
@@ -416,8 +419,41 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 		}
 		res.Truncated = truncated
 		res.RowCount = len(res.Rows)
+	} else if len(stmts) > 1 {
+		// 写通道放开多语句(结构编辑器一次改多列就是要发好几条 ALTER)。
+		// 出错即停, 且摘要里带上"第几条失败": MySQL 系 DDL 逐条自动提交,
+		// 前面已经生效的撤不回来 —— 不写清第几条, 用户就没法知道该从哪儿补。
+		summary := make([]StatementResult, 0, len(stmts))
+		var total int64
+		for i, st := range stmts {
+			stStart := time.Now()
+			sr := StatementResult{SQL: st, Type: statementType(st)}
+			aff, err := ex.Exec(st)
+			sr.DurationMs = time.Since(stStart).Milliseconds()
+			if err != nil {
+				sr.Error = fmt.Sprintf("第 %d/%d 条失败: %s", i+1, len(stmts), err.Error())
+				summary = append(summary, sr)
+				res.Statements = summary
+				res.Error = sr.Error
+				res.DurationMs = time.Since(start).Milliseconds()
+				return res, fmt.Errorf("%s", sr.Error)
+			}
+			sr.Affected = aff
+			total += aff
+			summary = append(summary, sr)
+		}
+		res.Affected = total
+		res.Statements = summary
+		res.Columns = []string{"seq", "类型", "affected_rows", "耗时ms"}
+		res.Rows = make([][]any, 0, len(summary))
+		for i, s := range summary {
+			res.Rows = append(res.Rows, []any{i + 1, s.Type, s.Affected, s.DurationMs})
+		}
+		res.RowCount = len(res.Rows)
+		res.DurationMs = time.Since(start).Milliseconds()
+		return res, nil
 	} else {
-		affected, err := db.Exec(sqlText)
+		affected, err := ex.Exec(sqlText)
 		if err != nil {
 			res.Error = err.Error()
 			return res, err

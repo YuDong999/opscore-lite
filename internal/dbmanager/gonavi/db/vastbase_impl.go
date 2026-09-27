@@ -474,3 +474,11 @@ func (v *VastbaseDB) ApplyChanges(tableName string, changes connection.ChangeSet
 
 	return tx.Commit()
 }
+
+// OpenTransactionExecer 起一个可以跨请求挂着的事务(编辑器手动事务模式用)。
+// 逻辑集中在 OpenTransactionOnPool, 这里只是把本驱动的连接池接上。
+func (v *VastbaseDB) OpenTransactionExecer(ctx context.Context) (TransactionExecer, error) {
+	return OpenTransactionOnPool(v.conn, ctx)
+}
+
+var _ TransactionExecerProvider = (*VastbaseDB)(nil)

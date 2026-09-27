@@ -781,3 +781,11 @@ func (p *PostgresDB) ApplyChangesContext(ctx context.Context, tableName string, 
 	transactionCommitted = true
 	return nil
 }
+
+// OpenTransactionExecer 起一个可以跨请求挂着的事务(编辑器手动事务模式用)。
+// 逻辑集中在 OpenTransactionOnPool, 这里只是把本驱动的连接池接上。
+func (p *PostgresDB) OpenTransactionExecer(ctx context.Context) (TransactionExecer, error) {
+	return OpenTransactionOnPool(p.conn, ctx)
+}
+
+var _ TransactionExecerProvider = (*PostgresDB)(nil)

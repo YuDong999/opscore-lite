@@ -473,3 +473,11 @@ func (d *DuckDB) ApplyChanges(tableName string, changes connection.ChangeSet) er
 
 	return commitPinnedWriteTransaction(&conn, tx)
 }
+
+// OpenTransactionExecer 起一个可以跨请求挂着的事务(编辑器手动事务模式用)。
+// 逻辑集中在 OpenTransactionOnPool, 这里只是把本驱动的连接池接上。
+func (d *DuckDB) OpenTransactionExecer(ctx context.Context) (TransactionExecer, error) {
+	return OpenTransactionOnPool(d.conn, ctx)
+}
+
+var _ TransactionExecerProvider = (*DuckDB)(nil)
