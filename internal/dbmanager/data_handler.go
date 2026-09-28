@@ -257,7 +257,9 @@ func (h *Handlers) handleTableInserts(w http.ResponseWriter, r *http.Request) {
 		tn = sync.QuoteIdent(database, dialect) + "." + tn
 	}
 	sqlText := "SELECT * FROM " + tn
-	rows, _, err := sync.QueryRows(ctx, db, sqlText)
+	// **必须用不截断的出口**: 生成 INSERT 是"产出数据", 拿预览截断值去拼就是把数据写坏
+	// (2026-09-28 实测: 5000 字节 BLOB 被写成 "[BLOB preview: 4096/5000 bytes] ZZZ...")。
+	rows, _, err := sync.QueryRowsUnbounded(ctx, db, sqlText)
 	if err != nil {
 		writeErr(w, "读取数据失败: "+err.Error(), http.StatusBadRequest)
 		return

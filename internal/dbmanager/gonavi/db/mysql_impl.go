@@ -963,6 +963,22 @@ func (m *MySQLDB) QueryContext(ctx context.Context, query string) ([]map[string]
 	return scanRowsForDialect(rows, "mysql")
 }
 
+// 见 UnboundedQueryContexter: **产出数据**的路径(导出/生成 INSERT/备份)走这个,
+// 避免拿到给界面看的预览截断值 —— 拿预览拼 SQL 会把数据写坏。
+func (m *MySQLDB) QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error) {
+	if m.conn == nil {
+		return nil, nil, fmt.Errorf("连接未打开")
+	}
+
+	rows, err := m.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsUnboundedForDialect(rows, "mysql")
+}
+
 func (m *MySQLDB) Query(query string) ([]map[string]interface{}, []string, error) {
 	if m.conn == nil {
 		return nil, nil, fmt.Errorf("连接未打开")

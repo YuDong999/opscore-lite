@@ -36,6 +36,9 @@ type DBService interface {
 	DescribeTable(ctx context.Context, connID, database, table string) ([]ColumnInfo, []IndexInfo, string, error)
 	// ExecQuery 执行 SQL：SELECT 返回结果集(截断到 maxRows)，其他返回受影响行数。
 	ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error)
+	// ExecQueryUnbounded 同 ExecQuery, 但**大值不给预览截断** —— 供"产出数据"的路径用
+	// (导出成文件、生成 INSERT、备份)。拿预览去写文件就是把数据写坏, 所以这两条路必须分开。
+	ExecQueryUnbounded(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error)
 }
 
 // GonaviService DBService 的 GoNavi 底座实现。
@@ -299,6 +302,37 @@ type execTarget interface {
 }
 
 func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
+	return s.execQuery(ctx, connID, sqlText, maxRows, defaultDatabase, false)
+}
+
+// ExecQueryUnbounded 见 DBService 接口注释: 产出数据的路径走它, 不吃预览截断。
+func (s *GonaviService) ExecQueryUnbounded(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string) (*QueryResult, error) {
+	return s.execQuery(ctx, connID, sqlText, maxRows, defaultDatabase, true)
+}
+
+// execQuery 是两条路的共同实现; unbounded=true 时用不截断的查询出口。
+//
+// execOne 是"取结果集"的唯一出口: unbounded=true 时优先走驱动的 UnboundedQueryContexter
+// (拿完整值), 否则退回普通 Query。execTarget 同时满足 exec/query 两种接口, 所以这里按
+// 能力断言选路, 而不是到处 if。
+func execOne(unbounded bool, ex execTarget, sqlText string) ([]map[string]interface{}, []string, error) {
+	if unbounded {
+		if uq, ok := ex.(gonavibase.UnboundedQueryContexter); ok {
+			return uq.QueryUnboundedContext(context.Background(), sqlText)
+		}
+	}
+	rows, cols, err := ex.Query(sqlText)
+	if err != nil || !unbounded {
+		return rows, cols, err
+	}
+	// 驱动的确没实现不截断查询: **不能静默把预览值当完整值交出去**(那正是数据损坏的来源)。
+	// 报错, 让调用方知道这份数据取不完整。
+	if cerr := syncpkg.CheckNoPreviewTruncation(rows, cols); cerr != nil {
+		return nil, cols, cerr
+	}
+	return rows, cols, nil
+}
+func (s *GonaviService) execQuery(ctx context.Context, connID, sqlText string, maxRows int, defaultDatabase string, unbounded bool) (*QueryResult, error) {
 	db, conn, err := s.pool.Acquire(connID)
 	if err != nil {
 		return nil, err
@@ -364,7 +398,7 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 			for _, st := range stmts {
 				stStart := time.Now()
 				sr := StatementResult{SQL: st, Type: statementType(st)}
-				rows, cols, err := ex.Query(st)
+				rows, cols, err := execOne(unbounded, ex, st)
 				if err != nil {
 					sr.Error = err.Error()
 					sr.DurationMs = time.Since(stStart).Milliseconds()
@@ -401,7 +435,7 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 			res.DurationMs = time.Since(start).Milliseconds()
 			return res, nil
 		}
-		rows, colNames, err := ex.Query(sqlText)
+		rows, colNames, err := execOne(unbounded, ex, sqlText)
 		if err != nil {
 			res.Error = err.Error()
 			return res, err

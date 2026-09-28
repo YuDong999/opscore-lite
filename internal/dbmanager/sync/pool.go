@@ -208,6 +208,77 @@ func QueryScalar(ctx context.Context, db gonavibase.Database, sqlText string) (i
 	return 0, nil
 }
 
+// previewMarkerPrefixes 是扫码层对大值给出的预览标记前缀(见 gonavi/db/scan_rows.go)。
+// 它们只该出现在**给人看**的地方; 一旦流到"落成文件/语句"的路径就是数据损坏。
+var previewMarkerPrefixes = []string{"[BLOB preview: ", "[CLOB preview: "}
+
+// looksLikeTruncatedPreview 判断一个值是不是预览截断产物。
+// **严格前缀匹配**: 只在值开头就是标记时才算 —— 真实数据里出现这串文字的概率极低,
+// 但"把真数据误判成截断"比"漏判"更烦人, 所以不做宽松搜索。
+func looksLikeTruncatedPreview(v any) bool {
+	s, ok := v.(string)
+	if !ok {
+		return false
+	}
+	for _, p := range previewMarkerPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrValueTruncatedForPreview 表示"这条数据被预览截断了, 不能当作完整值使用"。
+// 它不是普通错误: 调用方应据此改用 QueryRowsUnbounded(或单元格分片读), 而不是继续写文件。
+type errValueTruncated struct{ Column string }
+
+func (e *errValueTruncated) Error() string {
+	return "列 " + e.Column + " 的值被预览截断, 不能作为完整数据使用(该驱动未实现不截断查询; " +
+		"请用单元格详情里的「下载」取回完整值)"
+}
+
+// LooksLikeTruncatedPreview 对外暴露同一个判定 —— dbmanager 侧的分流兜底也要用它,
+// "什么算预览标记"只该有一处定义, 否则两边会漂移。
+func LooksLikeTruncatedPreview(v any) bool { return looksLikeTruncatedPreview(v) }
+
+// CheckNoPreviewTruncation 逐值检查一批行里有没有预览截断值, 命中就报错(含列名)。
+// 产出数据的路径在拿不到 UnboundedQueryContexter 时用它兜底 —— 宁可不给这份数据,
+// 也不给一份"看着成功、内容被截断"的导出。
+func CheckNoPreviewTruncation(rows []map[string]any, cols []string) error {
+	for _, row := range rows {
+		for _, c := range cols {
+			if looksLikeTruncatedPreview(row[c]) {
+				return &errValueTruncated{Column: c}
+			}
+		}
+	}
+	return nil
+}
+
+// QueryRowsUnbounded 是"**要完整数据**"的查询出口(导出 / 生成 INSERT / 备份都用它)。
+//
+// 为什么不能直接用 QueryRows: 扫码层对超过阈值的大对象只给预览(那是对的 —— 界面不能被
+// 几 MB 的二进制拖死), 但**拿预览去拼 SQL 或写文件就是把数据写坏**(2026-09-28 实测踩到:
+// 5000 字节 BLOB 被写成 "[BLOB preview: 4096/5000 bytes] ZZZ...")。
+//
+// 实现顺序:
+//  1. 驱动实现了 UnboundedQueryContexter → 走它(拿完整值, MySQL/PG/MariaDB/自定义等已实现);
+//  2. 否则退回 QueryRows, 并**逐值检查是否拿到预览标记** —— 命中就报错, 绝不静默返回半截数据。
+//     这样在还没适配的驱动上, 用户得到的是"这条取不了完整值"的明确提示, 而不是一份坏备份。
+func QueryRowsUnbounded(ctx context.Context, db gonavibase.Database, sqlText string) ([]map[string]any, []string, error) {
+	if uq, ok := db.(gonavibase.UnboundedQueryContexter); ok {
+		return uq.QueryUnboundedContext(ctx, sqlText)
+	}
+	rows, cols, err := QueryRows(ctx, db, sqlText)
+	if err != nil {
+		return rows, cols, err
+	}
+	if err := CheckNoPreviewTruncation(rows, cols); err != nil {
+		return nil, cols, err
+	}
+	return rows, cols, nil
+}
+
 // QueryRows 导出查询(供 dbmanager 数据浏览接口使用)。
 func QueryRows(ctx context.Context, db gonavibase.Database, sqlText string) ([]map[string]any, []string, error) {
 	if qc, ok := db.(gonavibase.QueryContexter); ok {

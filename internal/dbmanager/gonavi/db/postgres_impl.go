@@ -236,6 +236,22 @@ func (p *PostgresDB) QueryContext(ctx context.Context, query string) ([]map[stri
 	return scanRows(rows)
 }
 
+// 见 UnboundedQueryContexter: **产出数据**的路径(导出/生成 INSERT/备份)走这个,
+// 避免拿到给界面看的预览截断值 —— 拿预览拼 SQL 会把数据写坏。
+func (p *PostgresDB) QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error) {
+	if p.conn == nil {
+		return nil, nil, fmt.Errorf("连接未打开")
+	}
+
+	rows, err := p.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsUnboundedForDialect(rows, "")
+}
+
 func (p *PostgresDB) QueryContextWithMessages(ctx context.Context, query string) ([]map[string]interface{}, []string, []string, error) {
 	if p.conn == nil {
 		return nil, nil, nil, fmt.Errorf("连接未打开")

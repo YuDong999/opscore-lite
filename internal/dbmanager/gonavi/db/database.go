@@ -377,6 +377,18 @@ type QueryContexter interface {
 	QueryContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error)
 }
 
+// UnboundedQueryContexter 是"**不要预览截断**"的查询出口。
+//
+// 为什么需要它: 交互式网格对大值只给预览(`[BLOB preview: N/M bytes] ...`)是为了不让界面卡死,
+// 但**产出数据的路径不能吃这份预览** —— 拿预览去拼 INSERT 或导出 CSV 就是把数据写坏
+// (2026-09-28 实测踩到: 5000 字节 BLOB 被写成 "[BLOB preview: 4096/5000 bytes] ZZZ...").
+//
+// 所以: 给人看的走 QueryContexter(可能带预览), **落到文件/语句的走这里**(拿完整值)。
+// 这个区分是刻意的 —— 谁调用谁要清楚自己要的是"展示"还是"数据"。
+type UnboundedQueryContexter interface {
+	QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error)
+}
+
 // ExecContexter is the optional cancellation-capable write contract.
 // Callers must not assume Database.Exec can be interrupted without it.
 type ExecContexter interface {
@@ -586,6 +598,20 @@ func (e *sqlConnStatementExecer) QueryContext(ctx context.Context, query string)
 	return scanRowsForDialect(rows, e.scanDialect)
 }
 
+// 见 UnboundedQueryContexter: **产出数据**的路径(导出/生成 INSERT/备份)走这个,
+// 避免拿到给界面看的预览截断值 —— 拿预览拼 SQL 会把数据写坏。
+func (e *sqlConnStatementExecer) QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error) {
+	if e == nil || e.conn == nil {
+		return nil, nil, localizedDatabaseRuntimeError("db.backend.error.connection_not_open", nil)
+	}
+	rows, err := e.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	return scanRowsUnboundedForDialect(rows, e.scanDialect)
+}
+
 func (e *sqlConnStatementExecer) Query(query string) ([]map[string]interface{}, []string, error) {
 	return e.QueryContext(context.Background(), query)
 }
@@ -731,6 +757,21 @@ func (e *sqlConnTransactionExecer) QueryContext(ctx context.Context, query strin
 	}
 	defer rows.Close()
 	return scanRowsForDialect(rows, e.scanDialect)
+}
+
+// 见 UnboundedQueryContexter: **产出数据**的路径(导出/生成 INSERT/备份)走这个,
+// 避免拿到给界面看的预览截断值 —— 拿预览拼 SQL 会把数据写坏。
+func (e *sqlConnTransactionExecer) QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error) {
+	conn, err := e.activeConn()
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	return scanRowsUnboundedForDialect(rows, e.scanDialect)
 }
 
 func (e *sqlConnTransactionExecer) Query(query string) ([]map[string]interface{}, []string, error) {

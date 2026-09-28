@@ -105,6 +105,22 @@ func (c *CustomDB) QueryContext(ctx context.Context, query string) ([]map[string
 	return scanRowsForDialect(rows, c.scanDialect())
 }
 
+// 见 UnboundedQueryContexter: **产出数据**的路径(导出/生成 INSERT/备份)走这个,
+// 避免拿到给界面看的预览截断值 —— 拿预览拼 SQL 会把数据写坏。
+func (c *CustomDB) QueryUnboundedContext(ctx context.Context, query string) ([]map[string]interface{}, []string, error) {
+	if c.conn == nil {
+		return nil, nil, localizedDatabaseRuntimeError("db.backend.error.connection_not_open", nil)
+	}
+
+	rows, err := c.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsUnboundedForDialect(rows, c.scanDialect())
+}
+
 func (c *CustomDB) Query(query string) ([]map[string]interface{}, []string, error) {
 	if c.conn == nil {
 		return nil, nil, localizedDatabaseRuntimeError("db.backend.error.connection_not_open", nil)

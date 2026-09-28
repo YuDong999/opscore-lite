@@ -984,7 +984,9 @@ func (h *Handlers) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.ExecQuery(ctx, body.ID, body.SQL, body.MaxRows, "")
+	// **导出是"产出数据"**: 必须走不截断的出口 —— 拿预览截断值写进 CSV/XLSX 就是把数据写坏
+	// (2026-09-28 实测: 5000 字节 BLOB 导出成 "[BLOB preview: 4096/5000 bytes] ZZZ...")。
+	res, err := h.svc.ExecQueryUnbounded(ctx, body.ID, body.SQL, body.MaxRows, "")
 	if err != nil && res == nil {
 		res = &QueryResult{Error: err.Error()}
 	}
