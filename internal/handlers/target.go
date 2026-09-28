@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -75,6 +76,36 @@ func RunOnTarget(hostID string, argv []string) (string, error) {
 		return out, fmt.Errorf("exit status %d", rc)
 	}
 	return out, nil
+}
+
+// ExecWithInputOnTarget 把 input 喂给目标机上的命令。
+//
+// 本机: 命令按 argv 执行, input 写进 stdin(os/exec 的 Stdin)。
+// 远程: 经 SSH 会话 stdin 喂过去(与 cicd 的制品分发同一路子)。
+//
+// 用途: 备份的内置导出要把生成好的内容落到目标机文件上(`cat > 文件`)。
+// **注意输入是整体进内存的** —— 调用方须自行限制大小(见 dbmanager 侧的 builtinDumpMemoryGuard)。
+func ExecWithInputOnTarget(hostID, cmd string, input []byte) error {
+	if IsLocalTarget(hostID) {
+		c := exec.Command("sh", "-c", cmd)
+		c.Stdin = bytes.NewReader(input)
+		if out, err := c.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	rm, err := remoteHostByID(hostID)
+	if err != nil {
+		return err
+	}
+	if remotePool == nil {
+		return fmt.Errorf("远程执行池未初始化")
+	}
+	res := remotePool.ExecWithInput(rm, cmd, input)
+	if res.Error != "" {
+		return fmt.Errorf("%s", res.Error)
+	}
+	return nil
 }
 
 // ProbeTargetBackend 探测目标主机的防火墙后端(ufw/firewalld/none)。

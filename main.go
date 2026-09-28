@@ -11,9 +11,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
-	"runtime"
 	"time"
 
 	"opscore/internal/agent"
@@ -169,6 +169,10 @@ func main() {
 	registerCoreModules(reg)
 
 	// DB 管理模块(独立初始化, 需要访问 cs + 加密密钥)
+	//
+	// 备份要在"数据所在的机器"上跑命令, 但 dbmanager 是模块层、handlers 是 HTTP 层 ——
+	// 让模块去 import HTTP 层是层次倒挂。所以把 handlers 的执行能力以接口注入进去。
+	dbmanager.SetHostExecutor(hostExecAdapter{})
 	dbStore := dbmanager.NewStore(func() central.CentralStore { return cs }, auth.GetToken())
 	dbPool := dbmanager.NewDatabasePool(dbStore, 8)
 	dbMod := dbmanager.Module(dbStore, dbPool)
@@ -740,4 +744,20 @@ func startLogRotation(path string, cur *os.File, maxBytes int64, keep int) {
 
 func logRotated(path string, idx int) string {
 	return fmt.Sprintf("%s.%d", path, idx)
+}
+
+// hostExecAdapter 把 handlers 的目标机执行能力适配成 dbmanager.HostExecutor。
+// 放在 main.go 里是为了让"模块层不依赖 HTTP 层"这条边界保持干净 —— 接线在装配处做。
+type hostExecAdapter struct{}
+
+func (hostExecAdapter) RunOnHost(hostID string, argv []string) (string, error) {
+	return handlers.RunOnTarget(hostID, argv)
+}
+
+func (hostExecAdapter) IsLocal(hostID string) bool {
+	return handlers.IsLocalTarget(hostID)
+}
+
+func (hostExecAdapter) ExecWithInput(hostID string, cmd string, input []byte) error {
+	return handlers.ExecWithInputOnTarget(hostID, cmd, input)
 }
