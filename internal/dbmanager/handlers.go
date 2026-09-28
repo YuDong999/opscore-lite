@@ -662,7 +662,19 @@ func (h *Handlers) handleDescribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "id 格式非法", http.StatusBadRequest)
 		return
 	}
-	if !reDBName.MatchString(database) || !reTableName.MatchString(table) {
+	conn, err := h.store.Get(id)
+	if err != nil {
+		writeErr(w, "获取连接失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// 没有 SQL 的引擎(Redis): "库"是 db0..dbN, "表"是键名 —— 键名带 ':' 和 '.' 是常态,
+	// 拿 SQL 标识符正则去卡会把每一个真实键都拒掉(/data 早就按 validKeyName 放行了, 这里跟上)。
+	if isNoSQLEngine(string(conn.Info.Engine)) {
+		if !validKeyName(database) || !validKeyName(table) {
+			writeErr(w, "database/table 格式非法", http.StatusBadRequest)
+			return
+		}
+	} else if !reDBName.MatchString(database) || !reTableName.MatchString(table) {
 		writeErr(w, "database/table 格式非法", http.StatusBadRequest)
 		return
 	}
@@ -670,11 +682,6 @@ func (h *Handlers) handleDescribe(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	conn, err := h.store.Get(id)
-	if err != nil {
-		writeErr(w, "获取连接失败: "+err.Error(), http.StatusBadRequest)
-		return
-	}
 	cols, idxs, ddl, err := h.svc.DescribeTable(ctx, id, database, table)
 	if err != nil {
 		writeErr(w, "Describe 失败: "+err.Error(), http.StatusInternalServerError)
@@ -1475,7 +1482,22 @@ func (h *Handlers) handleTableMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	id, database, table := q.Get("id"), q.Get("database"), q.Get("table")
-	if !reConnID.MatchString(id) || !reDBName.MatchString(database) || !reTableName.MatchString(table) {
+	if !reConnID.MatchString(id) {
+		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+		return
+	}
+	conn, cerr := h.store.Get(id)
+	if cerr != nil {
+		writeErr(w, "获取连接失败: "+cerr.Error(), http.StatusBadRequest)
+		return
+	}
+	// 同 handleDescribe: 非 SQL 引擎的"表"是键名, 走 validKeyName 而不是 SQL 标识符正则。
+	if isNoSQLEngine(string(conn.Info.Engine)) {
+		if !validKeyName(database) || !validKeyName(table) {
+			writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
+			return
+		}
+	} else if !reDBName.MatchString(database) || !reTableName.MatchString(table) {
 		writeErr(w, "id/database/table 格式非法", http.StatusBadRequest)
 		return
 	}

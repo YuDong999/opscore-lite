@@ -466,7 +466,9 @@ func (e *RedisDB) BrowseKey(dbName, keyName string, offset, limit int) ([]map[st
 				return nil, nil, 0, gerr
 			}
 			for i := offset; i < len(xs) && i < offset+limit; i++ {
-				rows = append(rows, map[string]interface{}{"id": xs[i].Values["__id__"],
+				// 条目 ID 在 XMessage.ID 上, **不在** Values 里 —— 曾经写成 Values["__id__"],
+				// 于是 stream 的 id 列全是 null(值却对)。go-redis 的 XMessage 就是 {ID, Values} 两个字段。
+				rows = append(rows, map[string]interface{}{"id": xs[i].ID,
 					"fields": redisMapOf(xs[i].Values)})
 			}
 		}

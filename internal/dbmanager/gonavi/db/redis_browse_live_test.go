@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -77,7 +78,7 @@ func TestRedisBrowseKeyPagination(t *testing.T) {
 		{"ops:browse:list", n, []string{"index", "value"}, "value", "item3"},
 		{"ops:browse:set", n, []string{"value"}, "value", "member3"},
 		{"ops:browse:zset", n, []string{"member", "score"}, "member", "m3"},
-		// stream 的 id 是 <毫秒>-<序号>, 不比字面量: 只要求第二页确实拿到东西(下面的 len 判定)
+		// stream 的 id 是 <毫秒>-<序号>, 不能比字面量; 但**必须非空** —— 见下面单独那条断言
 		{"ops:browse:stream", n, []string{"id", "fields"}, "", ""},
 		{"ops:browse:str", 1, []string{"key", "type", "ttl", "value"}, "", ""},
 	}
@@ -122,6 +123,51 @@ func TestRedisBrowseKeyPagination(t *testing.T) {
 		} else if len(rowsEnd) != 0 {
 			t.Errorf("%s: 越界页给了 %d 行, 期望 0", c.key, len(rowsEnd))
 		}
+	}
+
+	// stream 的条目 ID 必须真的取到。
+	// 这一条是补漏: 第一版测试对 stream 只判"第二页非空", 结果漏掉了 Values["__id__"]
+	// 这个不存在的键(id 列全是 null, 值却对)。断言要盯住**每一列都有值**。
+	srows, _, _, err := d.BrowseKey("db0", "ops:browse:stream", 0, 3)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if len(srows) == 0 {
+		t.Fatal("stream: 没读到条目")
+	}
+	for i, r := range srows {
+		if r["id"] == nil || fmt.Sprint(r["id"]) == "" {
+			t.Errorf("stream 第 %d 条: id 为空(XMessage.ID 没取到?)", i)
+		}
+		f, ok := r["fields"].(map[string]interface{})
+		if !ok || len(f) == 0 {
+			t.Errorf("stream 第 %d 条: fields 为空: %#v", i, r["fields"])
+		}
+	}
+
+	// 非 UTF-8 / 带控制字符的值走 base64 分支, 且 base64 能解回原文(不是乱码糊上去的)
+	raw.Set(ctx, "ops:browse:bin", "A\x01\x02B", 0)
+	defer raw.Del(ctx, "ops:browse:bin")
+	brows, _, _, err := d.BrowseKey("db0", "ops:browse:bin", 0, 10)
+	if err != nil {
+		t.Fatalf("二进制值: %v", err)
+	}
+	if len(brows) != 1 {
+		t.Fatalf("二进制值: 读到 %d 行, 期望 1", len(brows))
+	}
+	enc, ok := brows[0]["value"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("二进制值没走 base64 分支, 而是 %#v", brows[0]["value"])
+	}
+	if enc["encoding"] != "base64" {
+		t.Errorf("编码标注 = %v, 期望 base64", enc["encoding"])
+	}
+	decoded, derr := base64.StdEncoding.DecodeString(fmt.Sprint(enc["body"]))
+	if derr != nil {
+		t.Fatalf("base64 解不开: %v", derr)
+	}
+	if string(decoded) != "A\x01\x02B" {
+		t.Errorf("base64 解回来是 %q, 期望原值", string(decoded))
 	}
 
 	// 不存在的键: 空行 + 有列名(网格要能画表头), total=0, 不报错
