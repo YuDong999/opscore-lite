@@ -13,9 +13,9 @@ import (
 )
 
 // coreBuiltinDrivers 是始终内置可用的核心驱动，无需额外安装即可使用。
-// 注: redis 曾在此列(且被测试断言"始终可用"), 但 databaseFactories 里从来没有它的实现 ——
-// `NewDatabase("redis")` 必然报错, 属于"对外宣称支持、实际创建必失败"的不一致。
-// 在 Redis 引擎真正接入(工厂 + 实现 + 引擎元数据)之前, 先不在此声明, 免得界面展示一个用不了的驱动。
+// 注: redis 曾在"有声明无实现"的状态下被从这里摘掉(见 git 历史 2026-09-25);
+// 现在 redis_impl.go + 工厂 + 引擎元数据都接上了, 重新列为内置。
+// 这条历史本身就是个教训: 声明"支持"之前, 必须先确认 NewDatabase 真能造出东西来。
 var coreBuiltinDrivers = map[string]struct{}{
 	"mysql":    {},
 	"goldendb": {},
@@ -28,6 +28,7 @@ var coreBuiltinDrivers = map[string]struct{}{
 	"mqtt":     {},
 	"kafka":    {},
 	"rabbitmq": {},
+	"redis":    {},
 }
 
 // optionalGoDrivers 表示需要用户“安装启用”后才能使用的纯 Go 驱动。

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	gonaviDB "opscore/internal/dbmanager/gonavi/db"
 	"opscore/internal/dbmanager/sync"
 )
 
@@ -33,18 +34,31 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	database, table := q.Get("database"), q.Get("table")
-	if !validIdentifier(database) {
-		writeErr(w, "database 名非法", http.StatusBadRequest)
-		return
-	}
-	// PG 族表名可为 "schema.table" 两段(gonavi GetTables 返回带前缀名)
 	tableSchema := ""
-	if i := strings.Index(table, "."); i >= 0 {
-		tableSchema, table = table[:i], table[i+1:]
+	engine := ""
+	if c, cerr := h.store.Get(id); cerr == nil {
+		engine = string(c.Info.Engine)
 	}
-	if !validIdentifier(table) || (tableSchema != "" && !validIdentifier(tableSchema)) {
-		writeErr(w, "database/table 名非法", http.StatusBadRequest)
-		return
+	if isNoSQLEngine(engine) {
+		// 这两格填的是库名(db0 / vhost)与键名(topic / Redis key), 不进 SQL;
+		// 尤其不能按 PG 那套 "schema.table" 切一刀 —— Redis 键里的点是键名的一部分。
+		if !validKeyName(database) || !validKeyName(table) {
+			writeErr(w, "库/键名非法", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if !validIdentifier(database) {
+			writeErr(w, "database 名非法", http.StatusBadRequest)
+			return
+		}
+		// PG 族表名可为 "schema.table" 两段(gonavi GetTables 返回带前缀名)
+		if i := strings.Index(table, "."); i >= 0 {
+			tableSchema, table = table[:i], table[i+1:]
+		}
+		if !validIdentifier(table) || (tableSchema != "" && !validIdentifier(tableSchema)) {
+			writeErr(w, "database/table 名非法", http.StatusBadRequest)
+			return
+		}
 	}
 	for _, col := range strings.Split(q.Get("orderBy"), ",") {
 		if col != "" && !validIdentifier(col) {
@@ -81,6 +95,39 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "连接不可用: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// 没有 SQL 的引擎(目前是 Redis): 这两格填的是"库(db0..dbN)"与"键名", 没有方言可言,
+	// 上面那道 EngineDialect 闸必然为空 → 树里单击键会撞"该引擎暂不支持数据浏览"。
+	// 这类引擎实现了 KeyValueBrowser 就转走它, 返回形状与表浏览一致(columns/rows/total)。
+	if isNoSQLEngine(engine) {
+		kv, ok := db.(gonaviDB.KeyValueBrowser)
+		if !ok {
+			writeErr(w, "该引擎暂不支持数据浏览", http.StatusBadRequest)
+			return
+		}
+		rows, cols, total, kerr := kv.BrowseKey(database, table, offset, pageSize)
+		if kerr != nil {
+			writeErr(w, "读取数据失败: "+kerr.Error(), http.StatusBadRequest)
+			return
+		}
+		out := make([][]any, 0, len(rows))
+		for _, row := range rows {
+			line := make([]any, len(cols))
+			for i, c := range cols {
+				line[i] = row[c]
+			}
+			out = append(out, line)
+		}
+		writeJSON(w, map[string]any{
+			"columns":    cols,
+			"rows":       out,
+			"total":      total,
+			"page":       page,
+			"pageSize":   pageSize,
+			"durationMs": 0, // 客户端自行计时
+		})
+		return
+	}
+
 	dialect := sync.EngineDialect(engine)
 	if dialect == "" {
 		writeErr(w, "该引擎暂不支持数据浏览", http.StatusBadRequest)
@@ -127,15 +174,14 @@ func (h *Handlers) handleData(w http.ResponseWriter, r *http.Request) {
 		out = append(out, line)
 	}
 	writeJSON(w, map[string]any{
-		"columns":   fields,
-		"rows":      out,
-		"total":     totalRows,
-		"page":      page,
-		"pageSize":  pageSize,
+		"columns":    fields,
+		"rows":       out,
+		"total":      totalRows,
+		"page":       page,
+		"pageSize":   pageSize,
 		"durationMs": 0, // 客户端自行计时
 	})
 }
-
 
 // ===== /api/dbmanager/table-inserts =====
 // GET ?id&database&table&maxRows -> 生成全表 INSERT 语句文本(借鉴 GoNavi 复制全表为 INSERT)
@@ -251,8 +297,8 @@ func (h *Handlers) handleTableInserts(w http.ResponseWriter, r *http.Request) {
 		b.WriteString(";\n\n")
 	}
 	writeJSON(w, map[string]any{
-		"text":     b.String(),
-		"rows":     len(rows),
+		"text":      b.String(),
+		"rows":      len(rows),
 		"truncated": len(rows) >= maxRows,
 	})
 }

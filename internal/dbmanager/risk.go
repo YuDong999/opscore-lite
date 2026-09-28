@@ -72,6 +72,12 @@ func classifySQLRisk(engine string, sqlText string) (SqlRisk, string) {
 	}
 	kw := strings.ToUpper(m[1])
 
+	// 非 SQL 引擎(MQ 伪 SQL / Redis 命令)的只读动词: 按 SQL 首词判会全落到"未知语句类型,
+	// 按写操作处理"→ 只读锁把 CONSUME/GET 也拦下。判定与副作用核实见 mq_read.go 头部。
+	if isNoSQLReadStatement(engine, clean) {
+		return RiskSafe, ""
+	}
+
 	switch kw {
 	case "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "HELP":
 		return RiskSafe, ""
@@ -91,6 +97,11 @@ func classifySQLRisk(engine string, sqlText string) (SqlRisk, string) {
 		// 切库语句由 forbiddenSwitchReason 单独拦截, 这里给保守值兜底
 		return RiskHigh, "USE 切库语句(禁止)"
 	case "SET":
+		// Redis 里 SET 是"往键里写值"(数据写入), 不是 SQL 的 SET 会话变量 —— 说错了会让人
+		// 以为只是改了个连接参数。真机验证时这条被原样写进了审计, 就是这个原因。
+		if isRedisEngineName(engine) {
+			return RiskMedium, "Redis 键值写入"
+		}
 		return RiskMedium, "SET 会话变量修改"
 	case "INSERT", "REPLACE", "CALL", "LOAD":
 		return RiskMedium, "数据写入"
@@ -106,6 +117,10 @@ func classifySQLRisk(engine string, sqlText string) (SqlRisk, string) {
 		return RiskCritical, kw + " 破坏性操作"
 	default:
 		// 未知关键字: 保守按 medium, 不放行为只读
+		if isRedisEngineName(engine) {
+			// Redis/MQ 的命令词表与 SQL 不重叠, "未知语句类型"这种说法对用户没有信息量
+			return RiskMedium, "Redis 写命令(" + kw + ")"
+		}
 		return RiskMedium, "未知语句类型(" + kw + "), 按写操作处理"
 	}
 }

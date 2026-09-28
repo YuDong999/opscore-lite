@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, applyCellEdit, applyRowDelete, applyBatch, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, getEngineMeta, applyCellEdit, applyRowDelete, applyBatch, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
 import { useToast } from '../../components/Toast'
 import DataGrid, { PAGE_SIZES, type GridChange } from '../../components/common/DataGrid'
 import { FilterWorkbench } from './FilterWorkbench'
@@ -90,10 +90,20 @@ export default function DataPanel({
 
   const where = useMemo(() => buildWhere(appliedFilters, filterJoiner, filterCtx), [appliedFilters, filterJoiner, filterCtx])
 
+  // 没有 SQL 的引擎(Redis 这类键值库): 树里的节点是"键"不是表。
+  // 它们没有 WHERE/ORDER BY 可言(后端 /data 走 KeyValueBrowser, 只认 库名+键名+分页),
+  // 也没有主键/行标识, 所以编辑、导入、行筛选、右键排序这些入口在这里一律收起 ——
+  // 留着就是"点了必报错"的入口, 与树里对这类引擎收起表级动作是同一条规矩。
+  const kvEngine = getEngineMeta(conn.engine)?.hasSql === false
+  // 后端对键值引擎一次最多给 300 条(redisMaxValueItems), 页大小跟着封顶, 否则分页器会按 1000 算页数
+  const KV_MAX_ITEMS = 300
+  const effPageSize = kvEngine ? Math.min(pageSize, KV_MAX_ITEMS) : pageSize
+
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const d = await fetchData(conn.id, database, table, page, pageSize, orderBy, orderDir, where)
+      const d = await fetchData(conn.id, database, table, page, effPageSize,
+        kvEngine ? '' : orderBy, orderDir, kvEngine ? '' : where)
       const normalized = { ...d, columns: d.columns || [], rows: d.rows || [] }
       setData(normalized)
       if (normalized.columns.length > 0 && visibleCols.size === 0) {
@@ -105,7 +115,7 @@ export default function DataPanel({
     } finally {
       setBusy(false)
     }
-  }, [conn.id, database, table, page, pageSize, where, orderBy, orderDir])
+  }, [conn.id, database, table, page, effPageSize, where, orderBy, orderDir, kvEngine])
 
   useEffect(() => {
     setColTypes(undefined)
@@ -129,7 +139,7 @@ export default function DataPanel({
   useEffect(() => { setPage(1) }, [database, table, where, orderBy, orderDir])
 
   const total = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const totalPages = Math.max(1, Math.ceil(total / effPageSize))
 
 
   const toggleCol = (idx: number) => {
@@ -280,18 +290,20 @@ export default function DataPanel({
   return (
     <div className="db-data-panel">
       <div className="db-data-toolbar">
-        <span className={`db-engine-badge db-engine-${conn.engine}`}>{isView ? 'VIEW' : 'TABLE'}</span>
+        <span className={`db-engine-badge db-engine-${conn.engine}`}>{kvEngine ? 'KEY' : isView ? 'VIEW' : 'TABLE'}</span>
         <span className="db-data-title"><span className="db-crumb-db">{database}</span>.{table}</span>
         {total > 0 && <span className="db-toolbar-stat">{total} 行</span>}
         {busy && <span className="dim">加载中...</span>}
         {err && <span style={{ color: 'var(--danger)', fontSize: '0.75rem' }} title={err}>⚠ {err.slice(0, 40)}</span>}
         <span className="db-data-spacer" />
 
-        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setShowImport(!showImport); setImportMsg('') }} title="粘贴或选择 CSV(首行为列名)导入本表">
-          {showImport ? '隐藏导入' : '导入数据'}
-        </button>
+        {!kvEngine && (
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { setShowImport(!showImport); setImportMsg('') }} title="粘贴或选择 CSV(首行为列名)导入本表">
+            {showImport ? '隐藏导入' : '导入数据'}
+          </button>
+        )}
 
-        {showImport && (
+        {showImport && !kvEngine && (
           <div className="db-import-panel" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <b style={{ fontSize: '0.78rem' }}>导入 CSV 到 {database}.{table}</b>
@@ -324,13 +336,15 @@ export default function DataPanel({
           </div>
         )}
 
-        {/* 表信息抽屉 */}
-        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
-          if (!meta) getTableMeta(conn.id, database, table).then(setMeta).catch(e => setMeta(null))
-          setShowMeta(!showMeta)
-        }} title="表信息: 索引 / 外键 / 触发器">
-          {showMeta ? '隐藏表信息' : '表信息'}
-        </button>
+        {/* 表信息抽屉: 键值引擎没有索引/外键/触发器这回事 */}
+        {!kvEngine && (
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => {
+            if (!meta) getTableMeta(conn.id, database, table).then(setMeta).catch(e => setMeta(null))
+            setShowMeta(!showMeta)
+          }} title="表信息: 索引 / 外键 / 触发器">
+            {showMeta ? '隐藏表信息' : '表信息'}
+          </button>
+        )}
 
         {/* 视图切换 */}
         <div className="db-view-toggle">
@@ -354,9 +368,11 @@ export default function DataPanel({
         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowColFilter(!showColFilter)} title="字段筛选">
           {showColFilter ? '隐藏字段' : '筛选字段'}
         </button>
-        <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowFilterRow(!showFilterRow)} title="按条件过滤行">
-          {showFilterRow ? '隐藏过滤' : '过滤行'}
-        </button>
+        {!kvEngine && (
+          <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setShowFilterRow(!showFilterRow)} title="按条件过滤行">
+            {showFilterRow ? '隐藏过滤' : '过滤行'}
+          </button>
+        )}
 
         {/* "每页行数"控件唯一入口在底部分页器(唯一外层 pager 的既定设计); 工具栏原重复控件已删除
             —— 两控件同绑 pageSize 但选项集不同, 选 10/20/1000 时工具栏显示值会背离真实值 */}
@@ -366,7 +382,7 @@ export default function DataPanel({
       {/* 常驻筛选状态条: 只要存在"生效中"的筛选条件就显示(不受 showFilterRow 影响), 空结果时也可见, 作为“清除筛选”逃生通道。
           生效判定与 where 生成(:91)完全一致 —— 空值/纯空白的非 NULL 条件视为未生效, 既不进 where 也不在 chip 展示,
           故 chip 里出现的每条, where 里必然也有; IS NULL / IS NOT NULL 不吃 value, 一加即生效, 始终展示。 */}
-      {filters.some(f => buildFilter(f, filterCtx)) && (
+      {!kvEngine && filters.some(f => buildFilter(f, filterCtx)) && (
         <div className="db-filter-bar">
           <span className="dim db-filter-bar-label">筛选</span>
           {filters.map((f, fi) => {
@@ -385,7 +401,7 @@ export default function DataPanel({
       )}
 
       {/* 行过滤栏(编辑 UI 抽取至 FilterWorkbench; filters/joiner 状态与 where 执行判定仍在本组件) */}
-      {showFilterRow && data && (
+      {!kvEngine && showFilterRow && data && (
         <FilterWorkbench
           columns={data.columns}
           filters={filters}
@@ -429,39 +445,40 @@ export default function DataPanel({
               affected: 0,
               durationMs: data.durationMs || 0,
               truncated: false,
-              // 单表浏览天然可编辑; 有主键才激活(后端 apply-edit 对无主键表同样拒绝), 视图不可编辑
-              isEditable: !isView && (colMeta ?? []).some(c => c.key === 'PRI'),
+              // 单表浏览天然可编辑; 有主键才激活(后端 apply-edit 对无主键表同样拒绝), 视图不可编辑。
+              // 键值引擎(Redis)没有主键/行标识, 也不能按主键 UPDATE —— 直接不给编辑入口。
+              isEditable: !kvEngine && !isView && (colMeta ?? []).some(c => c.key === 'PRI'),
             }}
             connId={conn.id}
             sql={`SELECT * FROM ${database}.${table}`}
-            exportSql={`SELECT * FROM ${database}.${table} LIMIT ${pageSize} OFFSET ${(page - 1) *pageSize}`}
-            onEdit={handleEditChanges}
-            onCommitBatch={runBatch}
+            exportSql={`SELECT * FROM ${database}.${table} LIMIT ${effPageSize} OFFSET ${(page - 1) * effPageSize}`}
+            onEdit={kvEngine ? undefined : handleEditChanges}
+            onCommitBatch={kvEngine ? undefined : runBatch}
             columnTypes={colTypes?.filter((_, i) => visibleCols.has(i))}
             columnMeta={colMeta?.filter((_, i) => visibleCols.has(i))}
-            onFilter={(col, op, value) => setFiltersApplied([{ col, op, value }])}
-            onClearFilters={() => { setFiltersApplied([]); setOrderBy('') }}
-            onSortDatabase={(col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}
-            foreignKeys={(meta?.foreignKeys || []).map(f => ({ column: f.column, refTable: f.refTable, refColumn: f.refColumn, name: f.name }))}
-            onFkJump={(refTable, conds) => onOpenTable?.(refTable, conds)}
+            onFilter={kvEngine ? undefined : (col, op, value) => setFiltersApplied([{ col, op, value }])}
+            onClearFilters={kvEngine ? undefined : () => { setFiltersApplied([]); setOrderBy('') }}
+            onSortDatabase={kvEngine ? undefined : (col, dir) => { setOrderBy(col); setOrderDir(dir === 'desc' ? 'DESC' : 'ASC'); setPage(1) }}
+            foreignKeys={kvEngine ? [] : (meta?.foreignKeys || []).map(f => ({ column: f.column, refTable: f.refTable, refColumn: f.refColumn, name: f.name }))}
+            onFkJump={kvEngine ? undefined : (refTable, conds) => onOpenTable?.(refTable, conds)}
             hidePager
             backend={{
               onExport: (sql, format) => exportQuery(conn.id, sql, format),
-              applyRowWrite: runRowWrite,
-              nextId: runNextId,
+              applyRowWrite: kvEngine ? undefined : runRowWrite,
+              nextId: kvEngine ? undefined : runNextId,
               idWorker: fetchIdWorker,
             }}
             emptyState={
-              filters.length > 0
+              !kvEngine && filters.length > 0
                 ? { hint: '当前筛选无匹配数据', actionLabel: '清除筛选', onAction: () => { setFilters([]); setOrderBy('') } }
-                : { hint: '该表暂无数据' }
+                : { hint: kvEngine ? '该键没有条目' : '该表暂无数据' }
             }
           />
           <div className="db-data-pager">
             <span className="dim">共 {total} 行</span>
-            <select className="input db-page-size" title="每页行数" value={pageSize}
+            <select className="input db-page-size" title="每页行数" value={effPageSize}
               onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
-              {PAGE_SIZES.map(n => <option key={n} value={n}>{n} 行/页</option>)}
+              {(kvEngine ? PAGE_SIZES.filter(n => n <= KV_MAX_ITEMS) : PAGE_SIZES).map(n => <option key={n} value={n}>{n} 行/页</option>)}
             </select>
             <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(1)} title="首页"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg></button>
             <button className="btn-glass-soft btn-glass-soft-sm" disabled={page <= 1 || busy} onClick={() => setPage(p => p - 1)} title="上一页"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg></button>

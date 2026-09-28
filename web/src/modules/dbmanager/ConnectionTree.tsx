@@ -4,7 +4,7 @@
 import React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, applyTableDDL,
+  type ConnectionInfo, type DbObject, listConnections, listDatabases, listSchemas, listTables, listObjects, getObjectDefinition, getTableCounts, testConnection, deleteConnection, updateConnection, describeTable, fetchTableDDL, fetchTableInserts, applyTableDDL, getEngineMeta,
 } from './api'
 import { EngineIcon, NodeIcon, ActionIcon } from './DbIcons'
 import ContextMenu, { type ContextMenuItem } from '../../components/common/ContextMenu'
@@ -103,10 +103,17 @@ interface TreeNode {
   sys?: boolean
 }
 
+// MQ 连接在树里是"topic/队列当表显示", 但表结构/统计/同步/比对/ER 那些动作对它没有意义
+// (后端会拼出真 SQL 去打 broker, 只会报错), 所以这些入口按引擎类别整组收起。
+const isMqConn = (c?: ConnectionInfo) => !!c && getEngineMeta(c.engine)?.category === 'mq'
+// 树里"表级动作"该不该收: 判据是"这个引擎有没有 SQL", 不是"是不是 MQ" ——
+// Redis 也没有 SQL/表结构, 给它挂"表统计/结构对比"同样是必失败的入口。
+const isNoSqlConn = (c?: ConnectionInfo) => !!c && getEngineMeta(c.engine)?.hasSql === false
+
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
   onSyncDb, onSyncTable, onSyncSchema, onDiffDb, onDiffTable, onDataDiffDb, onDataDiffTable, onOpenEr, onOpenOverview, onNewTable, onExportSchema, onOpenDash, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
-  onRefresh, onToggleSide,
+  onRefresh, onToggleSide, onOpenMq,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -129,6 +136,8 @@ export default function ConnectionTree({
   onOpenEr?: (conn: ConnectionInfo, db: string, table?: string) => void
   onNewTable?: (conn: ConnectionInfo, db: string) => void
   onOpenDash?: (conn: ConnectionInfo) => void
+  // 消息队列连接: 表结构/同步/比对/ER 这些概念都不存在, 入口换成 MQ 面板
+  onOpenMq?: (conn: ConnectionInfo, topic?: string) => void
   onExportSchema?: (conn: ConnectionInfo, db: string) => void
   onOpenOverview?: (conn: ConnectionInfo, db: string) => void
   onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
@@ -378,8 +387,10 @@ export default function ConnectionTree({
 
   const buildMenuItems = (node: TreeNode): ContextMenuItem[] => {
     if (node.level === 'conn' && node.conn) {
+      const mq = isMqConn(node.conn)
       return [
-        ...(onOpenDash ? [{ label: '服务器仪表盘', icon: <ActionIcon kind="chart" />, onClick: () => onOpenDash(node.conn!) }] : []),
+        ...(mq && onOpenMq ? [{ label: '消息队列管理', icon: <ActionIcon kind="chart" />, onClick: () => onOpenMq(node.conn!) }] : []),
+        ...(!mq && onOpenDash ? [{ label: '服务器仪表盘', icon: <ActionIcon kind="chart" />, onClick: () => onOpenDash(node.conn!) }] : []),
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db || '') },
         { label: '测试连接', icon: <ActionIcon kind="test" />, onClick: () => quickTest(node.conn!) },
         { divider: true },
@@ -413,6 +424,17 @@ export default function ConnectionTree({
       ]
     }
     if (node.level === 'db' && node.conn && node.db) {
+      // 这类引擎的"库"是驱动合成的占位(kafkaSyntheticDatabase / Redis 的 db0..dbN),
+      // 建表/导结构/同步/删除都没有对象可施
+      if (isNoSqlConn(node.conn)) {
+        return [
+          ...(onOpenMq ? [{ label: '消息队列管理', icon: <ActionIcon kind="chart" />, onClick: () => onOpenMq(node.conn!) }] : []),
+          { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
+          { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
+          { divider: 'heavy' },
+          { label: '复制库名', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.db!); notify(true, `已复制 ${node.db}`) } },
+        ]
+      }
       const sys = isSystemDb(node.db)
       return [
         { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
@@ -432,6 +454,15 @@ export default function ConnectionTree({
       ]
     }
     if ((node.level === 'table' || node.level === 'view') && node.conn && node.db && node.table) {
+      // 没有 SQL 的引擎(MQ 的 topic/队列、Redis 的键): 表统计/同步/比对/ER 会拼出真 SQL 打过去, 一律不给
+      if (isNoSqlConn(node.conn)) {
+        return [
+          ...(onOpenMq ? [{ label: '查看消息', icon: <ActionIcon kind="chart" />, onClick: () => onOpenMq(node.conn!, node.table!) }] : []),
+          { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) },
+          { divider: 'heavy' },
+          { label: '复制名称', icon: <ActionIcon kind="copy" />, onClick: () => { navigator.clipboard?.writeText(node.table!); notify(true, `已复制 ${node.table}`) } },
+        ]
+      }
       const pinned = isPinned(node.conn.id, node.db, node.table)
       const isTable = node.level === 'table'
       // ── 数据 ──

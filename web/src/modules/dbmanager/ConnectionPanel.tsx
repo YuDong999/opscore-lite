@@ -29,6 +29,7 @@ const CATEGORY_LABELS: Record<EngineCategory, string> = {
   relational: '关系型数据库',
   document:   '文档型',
   vector:     '向量数据库',
+  keyvalue:   '键值存储',
   timeseries: '时序数据库',
   search:     '搜索/分析',
   mq:         '消息队列',
@@ -275,7 +276,7 @@ export default function ConnectionPanel({
   // ── 第 1 步: 选引擎 ──
   if (step === 'pick-engine') {
     const groups: Record<EngineCategory, EngineMeta[]> = {
-      relational: [], document: [], vector: [], timeseries: [], search: [], mq: [], custom: [],
+      relational: [], document: [], vector: [], timeseries: [], search: [], mq: [], keyvalue: [], custom: [],
     }
     ENGINES.forEach(e => groups[e.category]?.push(e))
 

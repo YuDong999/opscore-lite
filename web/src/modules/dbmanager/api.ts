@@ -15,10 +15,11 @@ export type EngineType =
   | 'iotdb'
   | 'elasticsearch'
   | 'kafka' | 'rabbitmq' | 'rocketmq' | 'mqtt'
+  | 'redis'
   | 'custom'
 
 export type EngineCategory =
-  | 'relational' | 'document' | 'vector' | 'timeseries' | 'search' | 'mq' | 'custom'
+  | 'relational' | 'document' | 'vector' | 'timeseries' | 'search' | 'mq' | 'keyvalue' | 'custom'
 
 export type EngineStatus = 'builtin' | 'optional' | 'disabled' | 'unknown'
 
@@ -83,6 +84,7 @@ export const ENGINES: EngineMeta[] = [
   { type: 'kafka',        label: 'Kafka',           short: 'Kafka',    category: 'mq', hasDatabase: false,         defaultPort: 9092, defaultDb: '',        defaultUser: '',         defaultSsl: 'disable',   hasSql: false, hasSchema: true,  hasTable: false, hasCollection: true,  supportsDml: false, supportsDdl: false, color: '#1f2937', description: '高吞吐日志流, 消息队列', status: 'builtin' },
   { type: 'rabbitmq',     label: 'RabbitMQ',        short: 'Rabbit',   category: 'mq', hasDatabase: false,         defaultPort: 5672, defaultDb: '/',      defaultUser: 'guest',    defaultSsl: 'disable',   hasSql: false, hasSchema: true,  hasTable: false, hasCollection: true,  supportsDml: false, supportsDdl: false, color: '#f97316', description: 'AMQP 标准, 灵活路由', status: 'builtin' },
   { type: 'rocketmq',     label: 'RocketMQ',        short: 'Rocket',   category: 'mq', hasDatabase: false,         defaultPort: 9876, defaultDb: '',        defaultUser: '',         defaultSsl: 'disable',   hasSql: false, hasSchema: true,  hasTable: false, hasCollection: true,  supportsDml: false, supportsDdl: false, color: '#1d4ed8', description: '阿里开源, 金融级可靠', status: 'builtin' },
+  { type: 'redis',        label: 'Redis',           short: 'Redis',    category: 'keyvalue', hasDatabase: true,  defaultPort: 6379, defaultDb: '',        defaultUser: '',         defaultSsl: 'disable',   hasSql: false, hasSchema: false, hasTable: false, hasCollection: true,  supportsDml: true,  supportsDdl: false, color: '#dc382c', description: '键值存储, 键空间 + 六类值 + TTL', status: 'builtin' },
   { type: 'mqtt',         label: 'MQTT',            short: 'MQTT',     category: 'mq', hasDatabase: false,         defaultPort: 1883, defaultDb: '',        defaultUser: '',         defaultSsl: 'disable',   hasSql: false, hasSchema: true,  hasTable: false, hasCollection: true,  supportsDml: false, supportsDdl: false, color: '#8b5cf6', description: 'IoT 消息协议事实标准', status: 'builtin' },
   // 自定义
   { type: 'custom',       label: 'Custom DSN',      short: 'Custom',   category: 'custom', hasDatabase: false,     defaultPort: 0,    defaultDb: '',        defaultUser: '',         defaultSsl: 'disable',   hasSql: true,  hasSchema: true,  hasTable: true,  hasCollection: false, supportsDml: true,  supportsDdl: true,  color: '#94a3b8', description: '透传 DSN 到 GoNavi 底座', status: 'builtin' },
@@ -449,6 +451,7 @@ export interface TxResp {
   data: {
     ok?: boolean
     txId?: string
+    statement?: string  // mq/publish 回的是"将要/已经执行的那句"(PRODUCE ...), 用于提示与确认预览
     active?: boolean
     count?: number
     affected?: number
@@ -495,6 +498,40 @@ export async function txStatus(txId: string): Promise<TxResp['data'] & { status:
   const d = await r.json().catch(() => ({}))
   return { ...(d as object), status: r.status }
 }
+
+// ── 消息队列管理(MQ) ──
+// 能力清单由后端给(mq_handler.go 里那张表), 面板按它显隐 —— 前端不再自己维护一份引擎差异。
+export interface MqView {
+  key: string
+  label: string
+  list: string
+  detail?: string
+  peek?: string
+  publishable: boolean
+  note?: string
+  cols?: { key: string; label: string }[]
+}
+export interface MqField {
+  name: string
+  label: string
+  kind: 'text' | 'int' | 'bool'
+  hint?: string
+  min?: number
+  max?: number
+  default?: any
+}
+export interface MqCapability { engine: string; views: MqView[]; fields: MqField[]; note?: string }
+
+export async function mqCapabilities(id: string): Promise<{ ok?: boolean; capability?: MqCapability; error?: string }> {
+  const t = localStorage.getItem('opscore-token')
+  const r = await fetch('/api/dbmanager/mq/capabilities?id=' + encodeURIComponent(id), {
+    headers: t ? { Authorization: `Bearer ${t}` } : {},
+  })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+
+// 发送消息: 只发表达意图, 协议 JSON 由后端按引擎拼(与 apply-* 同一规矩)
+export const mqPublish = (body: Record<string, unknown>) => txPost('mq/publish', body)
 
 export async function runQueryRaw(
   id: string,

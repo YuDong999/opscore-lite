@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"opscore/internal/dbmanager/gonavi/sqlaudit"
 	"regexp"
 	"slices"
 	"strconv"
@@ -94,6 +95,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/tx/commit", Handler: h.handleTxCommit},
 			{Path: "/api/dbmanager/tx/rollback", Handler: h.handleTxRollback},
 			{Path: "/api/dbmanager/tx/status", Handler: h.handleTxStatus},
+			{Path: "/api/dbmanager/mq/capabilities", Handler: h.handleMQCapabilities},
+			{Path: "/api/dbmanager/mq/publish", Handler: h.handleMQPublish},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
@@ -141,6 +144,28 @@ var (
 	reDBName    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 	reTableName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 )
+
+// validDBName 校验元数据/连接配置里的"库"名。
+// SQL 引擎沿用 reDBName —— 这个名字会被拼进 SQL, 必须按标识符口径挡死。
+// MQ 的同类值不是数据库名: RabbitMQ 是 vhost(默认那个字面就是 "/"), 驱动把它放进 URL 路径并按
+// PathEscape 转义, 根本不进 SQL。按 reDBName 判的话, 默认 vhost 会被判"格式非法", 于是树里
+// 展不开队列、连接表单也没法填默认 vhost(2026-09-27 实测)。
+func validDBName(engine, name string) bool {
+	if isNoSQLEngine(engine) {
+		return name != "" && len(name) <= 128 && !strings.ContainsAny(name, "\x00\r\n\t")
+	}
+	return reDBName.MatchString(name)
+}
+
+// validKeyName 是"这一格填的是键名/topic 名"的口径, 只给非 SQL 引擎用。
+// Redis 的键带冒号甚至点(probe:hash、app.config)是常态, 按 SQL 标识符判会一律拒;
+// 它不进 SQL(引擎当命令参数用), 所以只挡空、超长与控制字符。
+func validKeyName(name string) bool {
+	if name == "" || len(name) > 512 {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 })
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -263,10 +288,15 @@ func validConnConfig(c ConnectionConfig, engine EngineType) bool {
 	case "sqlite":
 		return strings.TrimSpace(c.Database) != ""
 	}
-	if strings.TrimSpace(c.Host) == "" || c.Port <= 0 || c.Port > 65535 || strings.TrimSpace(c.Username) == "" {
+	if strings.TrimSpace(c.Host) == "" || c.Port <= 0 || c.Port > 65535 {
 		return false
 	}
-	if c.Database != "" && !reDBName.MatchString(c.Database) {
+	// 非 SQL 引擎常是匿名/无用户名接入: Kafka/MQTT/RocketMQ 默认不开 SASL, Redis 的 AUTH 只有
+	// 密码没有用户名(默认用户)。以前用户名按必填拦, 结果这几类连接根本建不出来。
+	if !isNoSQLEngine(string(engine)) && strings.TrimSpace(c.Username) == "" {
+		return false
+	}
+	if c.Database != "" && !validDBName(string(engine), c.Database) {
 		return false
 	}
 	switch c.EnvTag {
@@ -401,11 +431,19 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 留痕文本: Redis 的值直接写在命令里(SET k <值>), 原样进审计等于把业务数据抄进日志。
+	// 端口自带的 RedactQuery("redis", …) 就是"只留命令与键名"。执行仍用 body.SQL 原文。
+	engine := string(conn.Info.Engine)
+	auditText := body.SQL
+	if r := sqlaudit.RedactQuery(engine, body.SQL); r != "" && isRedisEngineName(engine) {
+		auditText = r
+	}
+
 	// ── ADR-003 拦截链 ──
 	// 逐条取最高风险: 多语句里藏一条 DROP 也算, 否则写锁会被首条只读语句骗过去。
-	risk, reason := classifyBatchRisk(string(conn.Info.Engine), body.SQL)
+	risk, reason := classifyBatchRisk(engine, body.SQL)
 	if risk.AtLeast(RiskMedium) {
-		if blocked := h.interceptWrite(w, conn, body.ID, body.SQL, risk, reason, body.Confirm); blocked {
+		if blocked := h.interceptWrite(w, conn, body.ID, auditText, risk, reason, body.Confirm); blocked {
 			return
 		}
 	}
@@ -422,8 +460,8 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		h.audit.Append(AuditEntry{
 			ConnID:   body.ID,
 			ConnName: conn.Info.Name,
-			Engine:   string(conn.Info.Engine),
-			SQL:      body.SQL,
+			Engine:   engine,
+			SQL:      auditText,
 			Risk:     string(risk),
 			Decision: decision,
 			Detail:   detail,
@@ -538,6 +576,15 @@ func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := r.URL.Query().Get("type")
 
+	// 库名的合法口径按引擎分(SQL 标识符 vs MQ 的 vhost), 所以要先知道这条连接是什么引擎
+	dbNameOK := func(database string) bool {
+		conn, err := h.store.Get(id)
+		if err != nil {
+			return false
+		}
+		return validDBName(string(conn.Info.Engine), database)
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -551,7 +598,7 @@ func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"databases": names})
 	case "tables":
 		database := r.URL.Query().Get("database")
-		if !reDBName.MatchString(database) {
+		if !dbNameOK(database) {
 			writeErr(w, "database 格式非法", http.StatusBadRequest)
 			return
 		}
@@ -563,7 +610,7 @@ func (h *Handlers) handleMetadata(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"tables": tables})
 	case "objects":
 		database := r.URL.Query().Get("database")
-		if !reDBName.MatchString(database) {
+		if !dbNameOK(database) {
 			writeErr(w, "database 格式非法", http.StatusBadRequest)
 			return
 		}

@@ -52,6 +52,8 @@ const (
 	EngineRabbitMQ EngineType = "rabbitmq"
 	EngineRocketMQ EngineType = "rocketmq"
 	EngineMQTT     EngineType = "mqtt"
+	// 键值存储
+	EngineRedis EngineType = "redis"
 	// 自定义 DSN
 	EngineCustom EngineType = "custom"
 )
@@ -65,7 +67,7 @@ func engineTypeSupported(t EngineType) bool {
 		EngineKingbase, EngineHighgo, EngineOceanBase, EngineStarRocks, EngineTDengine, EngineTrino,
 		EngineVastbase, EngineIris, EngineDiros, EngineSphinx, EngineSQLite,
 		EngineMongoDB, EngineChroma, EngineQdrant, EngineMilvus, EngineIoTDB, EngineElasticsearch,
-		EngineKafka, EngineRabbitMQ, EngineRocketMQ, EngineMQTT, EngineCustom:
+		EngineKafka, EngineRabbitMQ, EngineRocketMQ, EngineMQTT, EngineRedis, EngineCustom:
 		return true
 	}
 	return false
@@ -73,58 +75,59 @@ func engineTypeSupported(t EngineType) bool {
 
 // EngineMeta 引擎元数据（标签 / 分组 / 默认端口 / 协议 / 是否支持事务 / 是否支持 DDL）
 type EngineMeta struct {
-	Type         EngineType `json:"type"`
-	Label        string     `json:"label"`        // 中文显示名
-	Short        string     `json:"short"`        // 短名（用于徽章）
-	Category     string     `json:"category"`     // relational / document / vector / timeseries / search / mq / custom
-	DefaultPort  int        `json:"defaultPort"`
-	DefaultDB    string     `json:"defaultDb"`
-	HasSQL       bool       `json:"hasSql"`
-	HasSchema    bool       `json:"hasSchema"`
-	SupportsDML  bool       `json:"supportsDml"`
-	SupportsDDL  bool       `json:"supportsDdl"`
-	HasTable     bool       `json:"hasTable"`
-	HasCollection bool      `json:"hasCollection"` // mq / vector / mongodb
-	Color        string     `json:"color"`         // 徽章主色
-	Description  string     `json:"description"`
+	Type          EngineType `json:"type"`
+	Label         string     `json:"label"`    // 中文显示名
+	Short         string     `json:"short"`    // 短名（用于徽章）
+	Category      string     `json:"category"` // relational / document / vector / timeseries / search / mq / custom
+	DefaultPort   int        `json:"defaultPort"`
+	DefaultDB     string     `json:"defaultDb"`
+	HasSQL        bool       `json:"hasSql"`
+	HasSchema     bool       `json:"hasSchema"`
+	SupportsDML   bool       `json:"supportsDml"`
+	SupportsDDL   bool       `json:"supportsDdl"`
+	HasTable      bool       `json:"hasTable"`
+	HasCollection bool       `json:"hasCollection"` // mq / vector / mongodb
+	Color         string     `json:"color"`         // 徽章主色
+	Description   string     `json:"description"`
 }
 
 // engineMetas 引擎元数据表（前端 + 后端共用）
 var engineMetas = map[EngineType]EngineMeta{
-	EngineMySQL:      {"mysql", "MySQL", "MySQL", "relational", 3306, "", true, true, true, true, true, false, "#3b82f6", "开源 OLTP, 关系型事实标准"},
-	EngineMySQLAgent: {"mysql_agent", "MySQL Agent", "MySQL", "relational", 3306, "", true, true, true, true, true, false, "#3b82f6", "MySQL 兼容 (代理/驱动适配)"},
-	EngineMariaDB:    {"mariadb", "MariaDB", "Maria", "relational", 3306, "", true, true, true, true, true, false, "#a855f7", "MySQL 兼容分支, 开源"},
-	EnginePostgreSQL: {"postgres", "PostgreSQL", "PG", "relational", 5432, "postgres", true, true, true, true, true, false, "#0ea5e9", "强类型 + JSONB + 高级索引"},
-	EngineOracle:     {"oracle", "Oracle", "Oracle", "relational", 1521, "ORCL", true, true, true, true, true, false, "#ef4444", "商业关系型, PL/SQL"},
-	EngineGoldendb:   {"goldendb", "GoldenDB", "Gold", "relational", 1888, "", true, true, true, true, true, false, "#f59e0b", "中兴分布式, MySQL 兼容"},
-	EngineClickHouse: {"clickhouse", "ClickHouse", "CH", "relational", 9000, "default", true, true, true, true, true, false, "#facc15", "OLAP 列存, 极致分析性能"},
-	EngineSQLServer:  {"sqlserver", "SQL Server", "MSSQL", "relational", 1433, "master", true, true, true, true, true, false, "#dc2626", "微软关系型, T-SQL"},
-	EngineDuckDB:     {"duckdb", "DuckDB", "DuckDB", "relational", 0, "", true, true, true, true, true, false, "#fde047", "进程内 OLAP, 文件型"},
-	EngineDameng:     {"dameng", "达梦 DM", "DM", "relational", 5236, "", true, true, true, true, true, false, "#7c3aed", "国产化关系型, 信创"},
-	EngineGaussDB:    {"gaussdb", "GaussDB", "Gauss", "relational", 1888, "", true, true, true, true, true, false, "#10b981", "华为分布式, PostgreSQL 兼容"},
-	EngineOpenGauss:  {"opengauss", "openGauss", "oGauss", "relational", 5432, "postgres", true, true, true, true, true, false, "#059669", "华为开源, PostgreSQL 兼容"},
-	EngineKingbase:   {"kingbase", "KingbaseES", "King", "relational", 54321, "test", true, true, true, true, true, false, "#0891b2", "人大金仓, PG 兼容"},
-	EngineHighgo:     {"highgo", "HighGo", "HG", "relational", 5866, "highgo", true, true, true, true, true, false, "#0d9488", "瀚高, PG 兼容"},
-	EngineOceanBase:  {"oceanbase", "OceanBase", "OB", "relational", 2881, "oceanbase", true, true, true, true, true, false, "#0ea5e9", "蚂蚁分布式, MySQL/Oracle 兼容"},
-	EngineStarRocks:  {"starrocks", "StarRocks", "SR", "relational", 9030, "", true, true, true, true, true, false, "#0f766e", "极速全场景 MPP"},
-	EngineTDengine:   {"tdengine", "TDengine", "TD", "relational", 6041, "", true, true, true, true, true, false, "#dc2626", "时序数据库, 物联网专用"},
-	EngineTrino:      {"trino", "Trino", "Trino", "relational", 8080, "", true, true, true, false, true, false, "#f97316", "分布式 SQL 查询引擎 (前 PrestoSQL)"},
-	EngineVastbase:   {"vastbase", "Vastbase", "VB", "relational", 5432, "", true, true, true, true, true, false, "#9333ea", "海量数据, PG 兼容"},
-	EngineIris:       {"iris", "InterSystems IRIS", "IRIS", "relational", 1972, "", true, true, true, true, true, false, "#e11d48", "多模型, 医疗/金融场景"},
-	EngineDiros:      {"diros", "Diros", "Diros", "relational", 1888, "", true, true, true, true, true, false, "#9333ea", "国产化数据库"},
-	EngineSphinx:     {"sphinx", "Sphinx", "Sphinx", "relational", 9306, "", true, false, true, true, true, false, "#a3a3a3", "全文检索引擎"},
-	EngineSQLite:     {"sqlite", "SQLite", "SQLite", "relational", 0, "", true, true, true, true, true, false, "#52525b", "进程内数据库, 嵌入式"},
-	EngineMongoDB:    {"mongodb", "MongoDB", "Mongo", "document", 27017, "admin", true, true, true, true, false, true, "#10b981", "文档型, JSON 原生"},
-	EngineChroma:     {"chroma", "Chroma", "Chroma", "vector", 8000, "", false, true, false, false, false, true, "#a78bfa", "向量库, RAG 友好"},
-	EngineQdrant:     {"qdrant", "Qdrant", "Qdrant", "vector", 6333, "", false, true, false, false, false, true, "#ef4444", "向量库, Rust 实现, 高性能"},
-	EngineMilvus:     {"milvus", "Milvus", "Milvus", "vector", 19530, "", false, true, false, false, false, true, "#06b6d4", "向量库, 大规模 AI 检索"},
-	EngineIoTDB:      {"iotdb", "IoTDB", "IoTDB", "timeseries", 6667, "root", true, true, true, true, true, false, "#f59e0b", "时序数据库, 物联网/工业"},
+	EngineMySQL:         {"mysql", "MySQL", "MySQL", "relational", 3306, "", true, true, true, true, true, false, "#3b82f6", "开源 OLTP, 关系型事实标准"},
+	EngineMySQLAgent:    {"mysql_agent", "MySQL Agent", "MySQL", "relational", 3306, "", true, true, true, true, true, false, "#3b82f6", "MySQL 兼容 (代理/驱动适配)"},
+	EngineMariaDB:       {"mariadb", "MariaDB", "Maria", "relational", 3306, "", true, true, true, true, true, false, "#a855f7", "MySQL 兼容分支, 开源"},
+	EnginePostgreSQL:    {"postgres", "PostgreSQL", "PG", "relational", 5432, "postgres", true, true, true, true, true, false, "#0ea5e9", "强类型 + JSONB + 高级索引"},
+	EngineOracle:        {"oracle", "Oracle", "Oracle", "relational", 1521, "ORCL", true, true, true, true, true, false, "#ef4444", "商业关系型, PL/SQL"},
+	EngineGoldendb:      {"goldendb", "GoldenDB", "Gold", "relational", 1888, "", true, true, true, true, true, false, "#f59e0b", "中兴分布式, MySQL 兼容"},
+	EngineClickHouse:    {"clickhouse", "ClickHouse", "CH", "relational", 9000, "default", true, true, true, true, true, false, "#facc15", "OLAP 列存, 极致分析性能"},
+	EngineSQLServer:     {"sqlserver", "SQL Server", "MSSQL", "relational", 1433, "master", true, true, true, true, true, false, "#dc2626", "微软关系型, T-SQL"},
+	EngineDuckDB:        {"duckdb", "DuckDB", "DuckDB", "relational", 0, "", true, true, true, true, true, false, "#fde047", "进程内 OLAP, 文件型"},
+	EngineDameng:        {"dameng", "达梦 DM", "DM", "relational", 5236, "", true, true, true, true, true, false, "#7c3aed", "国产化关系型, 信创"},
+	EngineGaussDB:       {"gaussdb", "GaussDB", "Gauss", "relational", 1888, "", true, true, true, true, true, false, "#10b981", "华为分布式, PostgreSQL 兼容"},
+	EngineOpenGauss:     {"opengauss", "openGauss", "oGauss", "relational", 5432, "postgres", true, true, true, true, true, false, "#059669", "华为开源, PostgreSQL 兼容"},
+	EngineKingbase:      {"kingbase", "KingbaseES", "King", "relational", 54321, "test", true, true, true, true, true, false, "#0891b2", "人大金仓, PG 兼容"},
+	EngineHighgo:        {"highgo", "HighGo", "HG", "relational", 5866, "highgo", true, true, true, true, true, false, "#0d9488", "瀚高, PG 兼容"},
+	EngineOceanBase:     {"oceanbase", "OceanBase", "OB", "relational", 2881, "oceanbase", true, true, true, true, true, false, "#0ea5e9", "蚂蚁分布式, MySQL/Oracle 兼容"},
+	EngineStarRocks:     {"starrocks", "StarRocks", "SR", "relational", 9030, "", true, true, true, true, true, false, "#0f766e", "极速全场景 MPP"},
+	EngineTDengine:      {"tdengine", "TDengine", "TD", "relational", 6041, "", true, true, true, true, true, false, "#dc2626", "时序数据库, 物联网专用"},
+	EngineTrino:         {"trino", "Trino", "Trino", "relational", 8080, "", true, true, true, false, true, false, "#f97316", "分布式 SQL 查询引擎 (前 PrestoSQL)"},
+	EngineVastbase:      {"vastbase", "Vastbase", "VB", "relational", 5432, "", true, true, true, true, true, false, "#9333ea", "海量数据, PG 兼容"},
+	EngineIris:          {"iris", "InterSystems IRIS", "IRIS", "relational", 1972, "", true, true, true, true, true, false, "#e11d48", "多模型, 医疗/金融场景"},
+	EngineDiros:         {"diros", "Diros", "Diros", "relational", 1888, "", true, true, true, true, true, false, "#9333ea", "国产化数据库"},
+	EngineSphinx:        {"sphinx", "Sphinx", "Sphinx", "relational", 9306, "", true, false, true, true, true, false, "#a3a3a3", "全文检索引擎"},
+	EngineSQLite:        {"sqlite", "SQLite", "SQLite", "relational", 0, "", true, true, true, true, true, false, "#52525b", "进程内数据库, 嵌入式"},
+	EngineMongoDB:       {"mongodb", "MongoDB", "Mongo", "document", 27017, "admin", true, true, true, true, false, true, "#10b981", "文档型, JSON 原生"},
+	EngineChroma:        {"chroma", "Chroma", "Chroma", "vector", 8000, "", false, true, false, false, false, true, "#a78bfa", "向量库, RAG 友好"},
+	EngineQdrant:        {"qdrant", "Qdrant", "Qdrant", "vector", 6333, "", false, true, false, false, false, true, "#ef4444", "向量库, Rust 实现, 高性能"},
+	EngineMilvus:        {"milvus", "Milvus", "Milvus", "vector", 19530, "", false, true, false, false, false, true, "#06b6d4", "向量库, 大规模 AI 检索"},
+	EngineIoTDB:         {"iotdb", "IoTDB", "IoTDB", "timeseries", 6667, "root", true, true, true, true, true, false, "#f59e0b", "时序数据库, 物联网/工业"},
 	EngineElasticsearch: {"elasticsearch", "Elasticsearch", "ES", "search", 9200, "", false, true, true, true, true, false, "#10b981", "分布式搜索, 文档型索引"},
-	EngineKafka:      {"kafka", "Kafka", "Kafka", "mq", 9092, "", false, true, false, false, false, true, "#1f2937", "高吞吐日志流, 消息队列"},
-	EngineRabbitMQ:   {"rabbitmq", "RabbitMQ", "Rabbit", "mq", 5672, "/", false, true, false, false, false, true, "#f97316", "AMQP 标准, 灵活路由"},
-	EngineRocketMQ:   {"rocketmq", "RocketMQ", "Rocket", "mq", 9876, "", false, true, false, false, false, true, "#1d4ed8", "阿里开源, 金融级可靠"},
-	EngineMQTT:       {"mqtt", "MQTT", "MQTT", "mq", 1883, "", false, true, false, false, false, true, "#8b5cf6", "IoT 消息协议事实标准"},
-	EngineCustom:     {"custom", "Custom DSN", "Custom", "custom", 0, "", true, true, true, true, true, false, "#94a3b8", "透传 DSN 到 GoNavi 底座"},
+	EngineKafka:         {"kafka", "Kafka", "Kafka", "mq", 9092, "", false, true, false, false, false, true, "#1f2937", "高吞吐日志流, 消息队列"},
+	EngineRabbitMQ:      {"rabbitmq", "RabbitMQ", "Rabbit", "mq", 5672, "/", false, true, false, false, false, true, "#f97316", "AMQP 标准, 灵活路由"},
+	EngineRocketMQ:      {"rocketmq", "RocketMQ", "Rocket", "mq", 9876, "", false, true, false, false, false, true, "#1d4ed8", "阿里开源, 金融级可靠"},
+	EngineMQTT:          {"mqtt", "MQTT", "MQTT", "mq", 1883, "", false, true, false, false, false, true, "#8b5cf6", "IoT 消息协议事实标准"},
+	EngineRedis:         {"redis", "Redis", "Redis", "keyvalue", 6379, "", false, false, true, false, false, true, "#dc382c", "键值存储: 键空间浏览 + 六类值 + TTL"},
+	EngineCustom:        {"custom", "Custom DSN", "Custom", "custom", 0, "", true, true, true, true, true, false, "#94a3b8", "透传 DSN 到 GoNavi 底座"},
 }
 
 // AllEngineMetas 返回全部引擎元数据(供 /api/dbmanager/engines 端点)
@@ -189,10 +192,10 @@ type SSHConfig struct {
 
 // SSLConfig SSL/TLS 完整配置 (与 GoNavi 底座对齐)
 type SSLConfig struct {
-	Mode      string `json:"mode"`      // disable / preferred / required / verify-ca / verify-full / skip-verify
-	CACert    string `json:"caCert,omitempty"`
-	Cert      string `json:"cert,omitempty"`
-	Key       string `json:"key,omitempty"`
+	Mode       string `json:"mode"` // disable / preferred / required / verify-ca / verify-full / skip-verify
+	CACert     string `json:"caCert,omitempty"`
+	Cert       string `json:"cert,omitempty"`
+	Key        string `json:"key,omitempty"`
 	ServerName string `json:"serverName,omitempty"`
 }
 
@@ -209,7 +212,9 @@ type ProxyConfig struct {
 // ConnectionConfig 连接配置（不含密码，密码由 Connection.Password 单独存储）。
 // v1: host/port/database/username/sslMode/envTag
 // v2: + useSSH/ssh, useProxy/proxy, ssl{cert,key,ca,serverName}, timeout/queryTimeout/maxRows,
-//     extraParams(dsn 连接参数), label/group
+//
+//	extraParams(dsn 连接参数), label/group
+//
 // 历史 v1 字段保留(JSON 向后兼容)。
 type ConnectionConfig struct {
 	Host     string            `json:"host"`
@@ -221,17 +226,17 @@ type ConnectionConfig struct {
 	Options  map[string]string `json:"options,omitempty"`
 
 	// v2 高级选项
-	UseSSH        bool       `json:"useSSH,omitempty"`
-	SSH           SSHConfig  `json:"ssh,omitempty"`
-	UseProxy      bool       `json:"useProxy,omitempty"`
-	Proxy         ProxyConfig `json:"proxy,omitempty"`
-	SSL           SSLConfig  `json:"ssl,omitempty"`
-	TimeoutSec    int        `json:"timeoutSec,omitempty"`    // 连接超时, 默认 15
-	QueryTimeoutSec int      `json:"queryTimeoutSec,omitempty"` // 语句超时, 默认 30
-	MaxRows       int        `json:"maxRows,omitempty"`        // 单次结果最大行数, 默认 5000
-	ExtraParams   string     `json:"extraParams,omitempty"`   // 透传 DSN 额外参数
-	Driver        string     `json:"driver,omitempty"`        // custom 时指定 GoNavi driver
-	DSN           string     `json:"dsn,omitempty"`           // custom 完整 DSN
+	UseSSH          bool        `json:"useSSH,omitempty"`
+	SSH             SSHConfig   `json:"ssh,omitempty"`
+	UseProxy        bool        `json:"useProxy,omitempty"`
+	Proxy           ProxyConfig `json:"proxy,omitempty"`
+	SSL             SSLConfig   `json:"ssl,omitempty"`
+	TimeoutSec      int         `json:"timeoutSec,omitempty"`      // 连接超时, 默认 15
+	QueryTimeoutSec int         `json:"queryTimeoutSec,omitempty"` // 语句超时, 默认 30
+	MaxRows         int         `json:"maxRows,omitempty"`         // 单次结果最大行数, 默认 5000
+	ExtraParams     string      `json:"extraParams,omitempty"`     // 透传 DSN 额外参数
+	Driver          string      `json:"driver,omitempty"`          // custom 时指定 GoNavi driver
+	DSN             string      `json:"dsn,omitempty"`             // custom 完整 DSN
 
 	// 展示
 	Group string `json:"group,omitempty"` // 手动分组标签
@@ -239,14 +244,14 @@ type ConnectionConfig struct {
 	Note  string `json:"note,omitempty"`
 
 	// 引擎特参 (按引擎类型选择性使用)
-	MongoReplicaSet    string `json:"mongoReplicaSet,omitempty"`    // MongoDB replica set 名称
-	MongoAuthSource    string `json:"mongoAuthSource,omitempty"`    // MongoDB authSource (默认 admin)
+	MongoReplicaSet     string `json:"mongoReplicaSet,omitempty"`     // MongoDB replica set 名称
+	MongoAuthSource     string `json:"mongoAuthSource,omitempty"`     // MongoDB authSource (默认 admin)
 	MongoReadPreference string `json:"mongoReadPreference,omitempty"` // MongoDB readPreference (primary/secondary/nearest)
-	MongoSRV           bool   `json:"mongoSrv,omitempty"`            // MongoDB use mongodb+srv URI
-	ClickHouseProtocol string `json:"clickHouseProtocol,omitempty"` // ClickHouse protocol (auto/http/native)
-	OceanBaseProtocol  string `json:"oceanBaseProtocol,omitempty"`  // OceanBase protocol (mysql/oracle)
-	Topology           string `json:"topology,omitempty"`           // topology: single/replica/cluster/sentinel
-	Hosts              string `json:"hosts,omitempty"`              // multi-host addresses (host:port,host:port)
+	MongoSRV            bool   `json:"mongoSrv,omitempty"`            // MongoDB use mongodb+srv URI
+	ClickHouseProtocol  string `json:"clickHouseProtocol,omitempty"`  // ClickHouse protocol (auto/http/native)
+	OceanBaseProtocol   string `json:"oceanBaseProtocol,omitempty"`   // OceanBase protocol (mysql/oracle)
+	Topology            string `json:"topology,omitempty"`            // topology: single/replica/cluster/sentinel
+	Hosts               string `json:"hosts,omitempty"`               // multi-host addresses (host:port,host:port)
 }
 
 // ToGonaviConfig 转换为 GoNavi 底座的连接配置。
@@ -409,8 +414,8 @@ type SavedQuery struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	SQL       string `json:"sql"`
-	Engine    string `json:"engine,omitempty"`     // 关联引擎类型 (空=通用)
-	ConnID    string `json:"connId,omitempty"`     // 关联连接 ID (空=任意连接)
+	Engine    string `json:"engine,omitempty"` // 关联引擎类型 (空=通用)
+	ConnID    string `json:"connId,omitempty"` // 关联连接 ID (空=任意连接)
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
 }

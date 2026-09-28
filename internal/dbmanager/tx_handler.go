@@ -184,6 +184,16 @@ func (h *Handlers) handleTxBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	engine := string(conn.Info.Engine)
+	// 消息队列没有"事务"这个概念(投递即落 topic), 别让它落到下面那句泛化的"驱动没有事务接口"。
+	if isMQEngine(engine) {
+		writeErr(w, "消息队列没有事务: 发送消息是直接投递到 topic/queue, 用不到手动提交; 需要攒多条一起发请用「批量」", http.StatusBadRequest)
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(engine)) == "redis" {
+		// Redis 服务端有 MULTI/EXEC, 但本版引擎没接 —— 说清楚"没接", 别用"该驱动没有事务接口"含糊过去
+		writeErr(w, "Redis 事务(MULTI/EXEC)本版未实现, 请继续用自动提交; 需要一次改多个键可以用「批量」命令窗口逐条执行", http.StatusBadRequest)
+		return
+	}
 	dialect := syncpkg.EngineDialect(engine)
 	if dialect == "" {
 		writeErr(w, "该引擎暂不支持手动事务(v1 覆盖 MySQL 系与 PG 系)", http.StatusBadRequest)
@@ -289,7 +299,7 @@ func (h *Handlers) handleTxExecute(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// 分句 + 逐条判风险: 事务里同样不许"首条只读、后面藏写"蒙过护栏。
-	stmts := splitSQLStatements(body.SQL, sess.Dialect)
+	stmts := splitStatementsForEngine(sess.Engine, body.SQL, sess.Dialect)
 	risk, reason := classifyBatchRisk(sess.Engine, body.SQL)
 	if risk.AtLeast(RiskMedium) {
 		if blocked := h.interceptWrite(w, conn, sess.ConnID, body.SQL, risk, reason, body.Confirm); blocked {
@@ -315,7 +325,7 @@ func (h *Handlers) handleTxExecute(w http.ResponseWriter, r *http.Request) {
 	for i, st := range stmts {
 		start := time.Now()
 		rec := txStatement{Seq: len(sess.stmts) + 1, SQL: clipSQL(st), Type: statementType(st)}
-		if isReadOnlySQL(st) {
+		if isReadOnlySQL(sess.Engine, st) {
 			if sess.q == nil {
 				h.failTx(w, sess, conn, st, "该驱动的事务句柄不支持查询, 请把 SELECT 放在事务外")
 				return

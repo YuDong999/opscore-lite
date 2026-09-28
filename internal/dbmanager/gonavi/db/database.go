@@ -113,6 +113,20 @@ type Database interface {
 	GetTriggers(dbName, tableName string) ([]connection.TriggerDefinition, error)
 }
 
+// KeyValueBrowser 由"没有 SQL、只有键"的引擎实现(目前是 Redis)。
+//
+// 公共数据网格是按表设计的: 树里单击一个节点就发 /api/dbmanager/data 要一页行。
+// 对这类引擎来说那个节点是"键"而不是表, SQL 那套方言分流(EngineDialect 为空)
+// 会把请求挡在"该引擎暂不支持数据浏览"上 —— 于是键在树里看得见、点不开。
+// 实现这个接口后, /data 改走这里拿一页值, 返回形状与表浏览完全一致。
+//
+// 这是**可选**接口: 不实现的驱动行为不变。调用方用类型断言取。
+type KeyValueBrowser interface {
+	// BrowseKey 取 keyName 的第 [offset, offset+limit) 段, 返回行、列名与总条目数。
+	// total 是该键的真实长度(string 恒为 1), 供分页器算总页数; 不是"已读了多少"。
+	BrowseKey(dbName, keyName string, offset, limit int) ([]map[string]interface{}, []string, int, error)
+}
+
 const (
 	maxRemoteJSONResponseBytes           = 32 << 20
 	maxElasticsearchConsoleResponseBytes = maxRemoteJSONResponseBytes
@@ -1156,6 +1170,9 @@ var databaseFactories = map[string]databaseFactory{
 	"kafka": func() Database {
 		return &KafkaDB{}
 	},
+	"redis": func() Database {
+		return &RedisDB{}
+	},
 	"rabbitmq": func() Database {
 		return &RabbitMQDB{}
 	},
@@ -1212,6 +1229,8 @@ func normalizeDatabaseType(dbType string) string {
 		return "kafka"
 	case "rabbitmq", "rabbit-mq", "rabbit_mq":
 		return "rabbitmq"
+	case "redis", "redis6", "valkey":
+		return "redis"
 	default:
 		return normalized
 	}

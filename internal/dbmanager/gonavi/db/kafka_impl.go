@@ -989,8 +989,10 @@ func (r *kafkaGoRuntime) Publish(ctx context.Context, command kafkaPublishComman
 		BatchTimeout: 20 * time.Millisecond,
 	}
 	defer writer.Close()
+	// Writer 已经绑定了 topic, 消息里就不能再带 Topic —— segmentio/kafka-go 见到两处都有会直接
+	// 报 "Topic must not be specified for both Writer and Message"。以前两处都写了, 所以 Kafka 的
+	// 发送从来没成功过(2026-09-27 真 broker 上实测到的)。
 	if err := writer.WriteMessages(ctx, kafka.Message{
-		Topic:   topic,
 		Key:     keyBytes,
 		Value:   valueBytes,
 		Headers: headers,

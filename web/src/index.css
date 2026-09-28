@@ -3814,6 +3814,18 @@ body {
 
 /* 手动事务状态条: 事务模式下贴在编辑器头部下方, 显示"有多少东西还没落库" */
 .db-tx-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: nowrap; font-size: 0.75rem; color: var(--text-dim); background: var(--surface-tint); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.1875rem 0.5rem; margin-bottom: 0.25rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+/* 消息队列管理面板 */
+.db-mq { display: flex; flex-direction: column; gap: 0.375rem; padding: 0.125rem 0; }
+.db-mq-tabs { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+.db-mq-note { font-size: 0.75rem; color: var(--text-dim); padding: 0.125rem 0.375rem; border-left: 2px solid var(--border); }
+.db-mq-row-active { background: var(--row-hover); }
+.db-mq-acts { display: inline-flex; gap: 0.25rem; }
+.db-mq-sub-title { font-size: 0.75rem; font-weight: 600; color: var(--text-dim); margin-bottom: 0.25rem; }
+.db-mq-publish { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem; background: var(--surface-tint); display: flex; flex-direction: column; gap: 0.375rem; }
+.db-mq-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.375rem 0.75rem; }
+.db-mq-fields label { display: flex; flex-direction: column; gap: 0.125rem; font-size: 0.75rem; }
+.db-mq-fields .small { font-size: 0.6875rem; opacity: 0.75; }
+.db-mq-detail, .db-mq-peek { display: flex; flex-direction: column; gap: 0.25rem; }
 .db-tx-bar > span + span::before { content: '·'; margin-right: 0.5rem; color: var(--text-dim); }
 .db-tx-strong { color: var(--accent); font-weight: 600; }
 .db-tx-warn { margin-left: auto; color: var(--warn); }

@@ -42,12 +42,18 @@ func TestBuiltinLikeDriversRemainAvailable(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetExternalDriverDownloadDirectory(tmpDir)
 
-	// redis 不再声明为"始终内置": 工厂里没有实现, 声明了也只会得到一个必失败的入口。
-	// 注意断言的是 IsBuiltinDriver —— DriverRuntimeSupportStatus 对"任何列表都没有的未知类型"
-	// 默认返回可用(那是留给外部/自定义驱动的口子), 拿它来判 redis 会得到误导性的 true。
-	// 等 Redis 引擎真正接入后, 这里再改回断言可用。
-	if IsBuiltinDriver("redis") {
-		t.Fatal("redis 尚无实现, 不应被声明为内置驱动")
+	// redis 2026-09-25 曾因"有声明无实现"被摘出内置, 2026-09-28 引擎接入后重新声明。
+	// 这里把"声明内置"和"工厂真能造出来"绑在一条断言上 —— 当初的不一致正是因为
+	// 只加了声明、没人去 NewDatabase 试一次。
+	// 判可用性用 IsBuiltinDriver, 别用 DriverRuntimeSupportStatus: 后者对"任何列表都没有的
+	// 未知类型"默认返回可用(那是给外部/自定义驱动留的口子), 拿它判会得到误导性的 true。
+	if !IsBuiltinDriver("redis") {
+		t.Fatal("redis 引擎已接入, 应重新声明为内置驱动")
+	}
+	if db, err := NewDatabase("redis"); err != nil {
+		t.Fatalf("声明内置就必须造得出来: NewDatabase(\"redis\") 失败: %v", err)
+	} else if db != nil {
+		_ = db.Close()
 	}
 
 	supported, reason := DriverRuntimeSupportStatus("kafka")

@@ -8,7 +8,7 @@ import { useToast } from '../../components/Toast'
 import {
   type ConnectionInfo, type QueryResult, type InterceptionBody,
   listConnections, getUnlockState, lockWrite, unlockWrite, exportQuery,
-  listTables, fetchTableDDL, describeTable, applyCellEdit, applyBatch,
+  listTables, fetchTableDDL, describeTable, applyCellEdit, applyBatch, getEngineMeta,
 } from './api'
 import ConnectionPanel from './ConnectionPanel'
 import ConnectionTree from './ConnectionTree'
@@ -26,6 +26,7 @@ import { SqlPreviewBody } from '../../components/common/SqlPreview'
 import SyncPanel from './SyncPanel'
 import SchemaDiffPanel from './SchemaDiffPanel'
 import DataDiffPanel from './DataDiffPanel'
+import MqPanel from './MqPanel'
 import ErGraphPanel from './ErGraphPanel'
 import TableOverviewPanel from './TableOverviewPanel'
 import ServerDashboardPanel from './ServerDashboardPanel'
@@ -39,7 +40,7 @@ import SavedQueriesPanel from './SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs' | 'mq'
   connId: string
   db?: string
   table?: string
@@ -272,6 +273,14 @@ export default function DatabaseManagerModule() {
     setConn(c)
     openTab({ key: `dash:${c.id}`, kind: 'dash', connId: c.id, label: '服务器仪表盘' })
   }
+  // MQ 面板一个连接一个页签; 从 topic 节点右键进来时带上要预选的名字
+  const mqSeedRef = useRef<{ key: string; name: string } | null>(null)
+  const handleOpenMq = (c: ConnectionInfo, topic?: string) => {
+    setConn(c)
+    const key = `mq:${c.id}`
+    if (topic) mqSeedRef.current = { key, name: topic }
+    openTab({ key, kind: 'mq', connId: c.id, label: topic ? `${topic} 消息` : '消息队列' })
+  }
   const handleOpenOverview = (c: ConnectionInfo, db: string) => {
     setConn(c)
     openTab({ key: `overview:${c.id}:${db}`, kind: 'overview', connId: c.id, db, label: `表概览 ${db}` })
@@ -493,6 +502,13 @@ ${ddl};
     return conn.config.envTag === 'prod' || ['prod', 'production', '生产', '线上'].some(k => hay.includes(k))
   }, [conn])
 
+  // MQ 连接没有 SQL/表结构/ER 这些概念, 顶部那些按钮点了只会报错 —— 按引擎类别整组收起,
+  // 换成「消息队列」。能力差异的具体口径由后端 mq/capabilities 说了算。
+  // hasSql=false 的引擎(RabbitMQ 的"结构对比"、Redis 的"慢 SQL"…)点开只会拿到一个报错,
+  // 所以整组按"这个引擎有没有 SQL"收起; MQ 额外给一个面板入口。
+  const noSqlConn = !!conn && getEngineMeta(conn.engine)?.hasSql === false
+  const isMqConn = !!conn && getEngineMeta(conn.engine)?.category === 'mq'
+
   return (
     <div className="module db-module">
       <div className="module-head db-module-head">
@@ -500,17 +516,21 @@ ${ddl};
         <div className="db-head-global-actions">
           <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>驱动</button>
           <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>查询</button>
-          {conn && (
+          {conn && isMqConn && (
+            <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" title="消息队列管理(topic/队列/消费组/收发)"
+              onClick={() => handleOpenMq(conn)}>消息队列</button>
+          )}
+          {conn && !noSqlConn && (
             <button className="btn-glass-soft btn-glass-soft-sm" title="进程列表(当前会话)" onClick={() => openTab({ key: `procs:${conn.id}`, kind: 'procs', connId: conn.id, label: '进程列表' })}>进程</button>
           )}
-          {conn && (
+          {conn && !noSqlConn && (
             <button className="btn-glass-soft btn-glass-soft-sm" title="慢 SQL" onClick={() => openTab({ key: `slow:${conn.id}`, kind: 'slow', connId: conn.id, label: '慢 SQL' })}>慢 SQL</button>
           )}
-          {conn && (
+          {conn && !noSqlConn && (
             <button className="btn-glass-soft btn-glass-soft-sm" title="执行计划" onClick={() => openTab({ key: `explain:${conn.id}`, kind: 'explain', connId: conn.id, label: '执行计划' })}>执行计划</button>
           )}
           <button className="btn-glass-soft btn-glass-soft-sm" title="审计日志" onClick={() => openTab({ key: `audit:${conn?.id || 'all'}`, kind: 'audit', connId: conn?.id || '', label: '全局审计' })}>审计</button>
-          {conn && (
+          {conn && !noSqlConn && (
             <>
               <button className="btn-glass-soft btn-glass-soft-sm" title="跨库同步" onClick={() => openTab({ key: `sync:${conn.id}`, kind: 'sync', connId: conn.id, label: '跨库同步' })}>同步</button>
               <button className="btn-glass-soft btn-glass-soft-sm" title="结构对比(两侧表结构差异 + 生成变更语句)" onClick={() => openTab({ key: `schemadiff:${conn.id}:${conn.config?.database || ''}`, kind: 'schemadiff', connId: conn.id, db: conn.config?.database || '', label: '结构对比' })}>结构对比</button>
@@ -588,6 +608,7 @@ ${ddl};
               onDataDiffTable={handleDataDiffTable}
               onOpenEr={handleOpenEr}
               onOpenDash={handleOpenDash}
+              onOpenMq={handleOpenMq}
               onNewTable={handleNewTable}
               onExportSchema={handleExportSchema}
               onOpenOverview={handleOpenOverview}
@@ -639,7 +660,7 @@ ${ddl};
                         if (next) setActiveTab(next.key)
                       }
                     }}>
-                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : '查'}</span>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : t.kind === 'mq' ? 'MQ' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
                     <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
                       onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
@@ -710,6 +731,8 @@ ${ddl};
                     return <div className="db-slow-section" key={t.key}><SlowSQLPanel connId={t.connId} /></div>
                   case 'procs':
                     return <div className="db-slow-section" key={t.key}><ProcessListPanel connId={c!.id} engine={c!.engine} database={t.db || c!.config?.database} /></div>
+                  case 'mq':
+                    return <div className="db-mq-section" key={t.key} style={{ overflow: 'auto' }}><MqPanel connId={c!.id} engine={c!.engine} preset={mqSeedRef.current?.key === t.key ? mqSeedRef.current?.name : undefined} onWriteLocked={() => setShowUnlock(true)} /></div>
                   case 'status':
                     return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
                   case 'explain':

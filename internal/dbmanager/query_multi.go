@@ -230,7 +230,7 @@ func dollarTagEnd(sql string, i int) int {
 // 多语句必须逐条判: classifySQLRisk 只看首个关键词, 于是 `SELECT 1; DROP TABLE t` 会被判成只读 ——
 // 写锁、二次确认、审计三道就全被绕过去了。放开多语句写通道之前先补这一层。
 func classifyBatchRisk(engine, sqlText string) (SqlRisk, string) {
-	stmts := splitSQLStatements(sqlText, syncpkg.EngineDialect(engine))
+	stmts := splitStatementsForEngine(engine, sqlText, syncpkg.EngineDialect(engine))
 	if len(stmts) == 0 {
 		return classifySQLRisk(engine, sqlText) // 空/纯注释: 交给原判定给"空语句"
 	}

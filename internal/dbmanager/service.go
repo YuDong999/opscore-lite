@@ -313,17 +313,19 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 	// 标签绑定的库上下文: USE 是 MySQL 系语法 —— PG/Oracle 等会话内换库不存在,
 	// 传了 defaultDatabase 也不能发 USE, 否则 PG 直接报 `syntax error at or near "USE"`
 	// (2026-09-25 实测: /query 带 database 的 PG 查询全挂)。方言统一走 sync.EngineDialect。
-	dialect := syncpkg.EngineDialect(string(conn.Info.Engine))
+	engine := string(conn.Info.Engine)
+	dialect := syncpkg.EngineDialect(engine)
 
 	// GoNavi Query/Exec 无 ctx 参数；语句超时由连接配置 QueryTimeout(秒)在驱动层生效。
 	//
 	// 先分句再决定走哪条通道: 多语句文本**必须每一条都只读**才算只读。
 	// 只看第一个词的话, `SELECT 1; DELETE FROM t` 会被判成只读 → 走 Query 通道 →
-	// 既绕开写锁也不进审计(风险分类同样只看首词)。分句器认方言, 所以这里也按方言切。
-	stmts := splitSQLStatements(sqlText, dialect)
+	// 既绕开写锁也不进审计(风险分类同样只看首词)。分句器认方言, 所以这里也按方言切;
+	// MQ 引擎例外 —— 它收的是伪 SQL/JSON, 不按分号切(见 mq_read.go)。
+	stmts := splitStatementsForEngine(engine, sqlText, dialect)
 	readOnly := len(stmts) > 0
 	for _, st := range stmts {
-		if !isReadOnlySQL(st) {
+		if !isReadOnlySQL(engine, st) {
 			readOnly = false
 			break
 		}
@@ -469,9 +471,13 @@ func (s *GonaviService) ExecQuery(ctx context.Context, connID, sqlText string, m
 
 // isReadOnlySQL 判定是否走查询通道（与风险分类保守判定一致的文本层规则）。
 // 写语句判定的完整版在 risk.go；这里只决定 Query/Exec 通道分流。
-func isReadOnlySQL(sqlText string) bool {
+// engine 用来放行 MQ 的只读动词(伪 SQL 不在 SQL 词表里, 见 mq_read.go)。
+func isReadOnlySQL(engine, sqlText string) bool {
 	trimmed := strings.TrimSpace(stripSQLComments(sqlText))
 	if trimmed == "" {
+		return true
+	}
+	if isNoSQLReadStatement(engine, trimmed) {
 		return true
 	}
 	// 跳过前导括号
