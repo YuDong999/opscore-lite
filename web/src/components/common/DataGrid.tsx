@@ -55,6 +55,34 @@ export interface DataGridBackend {
   // 19 位雪花 ID 过一遍 JSON number 会被 double 截精度); idWorker = 本机派生的雪花 workerId。
   nextId?: (col: number) => Promise<string>
   idWorker?: () => Promise<number>
+  // P1-13: 大值单元格的分片读与下载。前端只报"哪一行哪一列"(主键值由父级从当前行取),
+  // SQL 与分片表达式由后端按方言拼 —— 与 apply-edit 同一条口径。
+  // 不提供时, 详情弹窗里不显示「查看完整值 / 下载」入口。
+  readCell?: (req: CellRef & { offset: number; limit: number; asBase64: boolean }) => Promise<CellChunk>
+  downloadCell?: (req: CellRef) => Promise<void>
+}
+
+// CellRef 指向"某一格": 库/表/列 + 该行的主键取值(与 apply-edit 的定位方式一致)。
+// 主键值由父级从网格当前行取好 —— DataGrid 不猜怎么拼主键条件。
+export interface CellRef {
+  database: string
+  table: string
+  schema?: string
+  column: string
+  pkCols: string[]
+  row: Record<string, any>
+}
+
+export interface CellChunk {
+  ok: boolean
+  offset: number
+  bytes: number
+  total: number          // -1 = 长度取不到
+  nextOffset: number     // -1 = 读完了
+  encoding?: 'base64'
+  body?: string
+  text?: string
+  error?: string
 }
 
 // 网格内"待提交变更"(批量提交模式): 编辑/置 NULL/删行先攒着, 由底部变更条统一走 onCommitBatch。
@@ -284,6 +312,9 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   const [detailEdit, setDetailEdit] = useState(false)
   const [detailDraft, setDetailDraft] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
+  // P1-13 完整值面板: 大值单元格在这里分片续读/下载。chunk=当前已读到的片段
+  const [fullVal, setFullVal] = useState<{ column: string; text: string; bytes: number; total: number; next: number; b64: boolean } | null>(null)
+  const [fullBusy, setFullBusy] = useState(false)
   const [rowDetail, setRowDetail] = useState<number | null>(null)
   const [colDetail, setColDetail] = useState<number | null>(null)
   const [fieldFilter, setFieldFilter] = useState('')
@@ -358,6 +389,7 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
   const closeDetail = useCallback(() => {
     setDetail(null)
     setDetailEdit(false)
+    setFullVal(null)   // 换一格的完整值不能留着, 否则会看串
   }, [])
 
   // 进入详情弹窗编辑(右键菜单/铅笔按钮共用); 草稿取原始值
@@ -659,6 +691,68 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
     if (typeof v === 'number') return String(v)
     return `'${String(v).replace(/'/g, "''")}'`
   }, [])
+
+  // 把"当前网格的某一行某一列"翻成后端要的 CellRef。取不到主键就返回 null ——
+  // 没有主键就无法可靠定位, 宁可不给入口, 也不猜(与 apply-edit 同一条口径)。
+  const cellRefFor = useCallback((r: number, c: number): CellRef | null => {
+    if (!result?.columns || !tableFromSql || !pkCols.length) return null
+    const column = result.columns[c]
+    if (!column) return null
+    // sql 形如 SELECT * FROM db.table / schema.table
+    const parts = tableFromSql.replace(/[`\"\[\]]/g, '').split('.')
+    const table = parts.pop() || ''
+    const database = parts.pop() || ''
+    const schema = parts.pop() || undefined
+    const row: Record<string, any> = {}
+    for (const pk of pkCols) {
+      const idx = result.columns.indexOf(pk)
+      if (idx < 0) return null // 主键列不在结果集里 → 定位不了
+      const v = result.rows[r]?.[idx]
+      if (v === null || v === undefined) return null // NULL 主键定位不可靠
+      row[pk] = v
+    }
+    return { database, table, schema, column, pkCols, row }
+  }, [result, tableFromSql, pkCols])
+
+  const loadFullValue = useCallback(async (offset: number, append: boolean) => {
+    if (!detail || !backend?.readCell) return
+    const ref = cellRefFor(detail.r, detail.c)
+    if (!ref) { toast.error('这一行没有可用的主键, 无法定位完整值'); return }
+    setFullBusy(true)
+    try {
+      // 二进制列(blob/bytea)要求 base64 回传, 否则控制字符会把 JSON/界面弄坏
+      const t = (columnMeta?.[detail.c]?.type || columnTypes?.[detail.c] || '').toLowerCase()
+      const isBinary = /blob|bytea|binary|image|raw|geometry/.test(t)
+      const r = await backend.readCell({ ...ref, offset, limit: 256 * 1024, asBase64: isBinary })
+      if (!r.ok) { toast.error(r.error || '读取失败'); return }
+      const piece = isBinary ? (r.body || '') : (r.text || '')
+      setFullVal(prev => ({
+        column: ref.column,
+        text: append && prev ? prev.text + piece : piece,
+        bytes: (append && prev ? prev.bytes : 0) + r.bytes,
+        total: r.total,
+        next: r.nextOffset,
+        b64: isBinary,
+      }))
+      if (r.nextOffset < 0) toast.success(`已读完整值(${r.total >= 0 ? r.total : r.bytes} 字节)`)
+    } catch (e: any) {
+      toast.error('读取失败: ' + (e.message || e))
+    } finally {
+      setFullBusy(false)
+    }
+  }, [detail, backend, cellRefFor, columnMeta, columnTypes, toast])
+
+  const downloadFullValue = useCallback(async () => {
+    if (!detail || !backend?.downloadCell) return
+    const ref = cellRefFor(detail.r, detail.c)
+    if (!ref) { toast.error('这一行没有可用的主键, 无法定位完整值'); return }
+    try {
+      await backend.downloadCell(ref)
+      toast.success('已开始下载')
+    } catch (e: any) {
+      toast.error('下载失败: ' + (e.message || e))
+    }
+  }, [detail, backend, cellRefFor, toast])
 
   const copyCell = useCallback((v: any) => {
     const text = renderCell(v)
@@ -1222,6 +1316,20 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                       <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.value === null ? '' : renderCell(info.value)); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制值</button>
                         <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => { navigator.clipboard?.writeText(info.column); setCopied('已复制'); setTimeout(() => setCopied(''), 1200) }}>复制列名</button>
+                        {/* P1-13: 大值取回的出口。网格里的值可能是 [BLOB preview: N/M] 这种被截断的预览,
+                            这里按主键重查并把整值分片读回来(或直接下载成文件)。 */}
+                        {backend?.readCell && cellRefFor(detail.r, detail.c) && (
+                          <button className="btn-glass-soft btn-glass-soft-sm" disabled={fullBusy}
+                            title="按主键重查这一格, 分片读回完整值(不受预览截断影响)"
+                            onClick={() => void loadFullValue(0, false)}>
+                            {fullBusy ? '读取中…' : '查看完整值'}
+                          </button>
+                        )}
+                        {backend?.downloadCell && cellRefFor(detail.r, detail.c) && (
+                          <button className="btn-glass-soft btn-glass-soft-sm"
+                            title="把这一格的内容下载成文件(后端流式读, 不占内存)"
+                            onClick={() => void downloadFullValue()}>下载</button>
+                        )}
                       </span>
                     )}
                   </div>
@@ -1244,6 +1352,38 @@ export default function DataGrid({ result, onEdit, connId, sql, exportSql, colum
                     </>
                   ) : (
                     <pre>{info.value === null ? <i className="dim">NULL</i> : typeof info.value === 'object' ? JSON.stringify(info.value, null, 2) : String(info.value)}</pre>
+                  )}
+
+                  {/* P1-13 完整值: 网格里的值可能被预览截断([BLOB preview: N/M]); 这里显示按主键读回的内容。
+                      二进制按 base64 回, 直接铺原文会把控制字符打进界面 —— 所以给出提示与"续读/下载"两个出口。 */}
+                  {fullVal && (
+                    <div className="db-cell-full">
+                      <div className="db-cell-meta-value-head">
+                        <span className="dim">
+                          完整值 · {fullVal.column} · 已读 {fullVal.bytes} 字节
+                          {fullVal.total >= 0 ? ` / 共 ${fullVal.total}` : '(长度未知)'}
+                          {fullVal.next >= 0 ? ' · 还没读完' : ' · 已读完'}
+                          {fullVal.b64 ? ' · base64' : ''}
+                        </span>
+                        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                          {fullVal.next >= 0 && (
+                            <button className="btn-glass-soft btn-glass-soft-sm" disabled={fullBusy}
+                              onClick={() => void loadFullValue(fullVal.next, true)}>
+                              {fullBusy ? '读取中…' : '继续读下一段'}
+                            </button>
+                          )}
+                          <button className="btn-glass-soft btn-glass-soft-sm"
+                            onClick={() => { navigator.clipboard?.writeText(fullVal.text); setCopied('已复制完整值'); setTimeout(() => setCopied(''), 1200) }}>复制</button>
+                          <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setFullVal(null)}>收起</button>
+                        </span>
+                      </div>
+                      <pre className="db-cell-full-body">{fullVal.text}</pre>
+                      {fullVal.next >= 0 && (
+                        <div className="dim" style={{ fontSize: '0.6875rem' }}>
+                          还有 {fullVal.total >= 0 ? fullVal.total - fullVal.bytes : '未知'} 字节未读 —— 点「继续读下一段」接着取。
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
           </DetailOverlay>

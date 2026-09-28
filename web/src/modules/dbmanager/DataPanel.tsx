@@ -2,7 +2,7 @@
 // 表格视图复用 DataGrid, JSON/文本视图展示原始数据。
 
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { type ConnectionInfo, fetchData, describeTable, getTableMeta, getEngineMeta, applyCellEdit, applyRowDelete, applyBatch, fetchNextId, fetchIdWorker, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
+import { type ConnectionInfo, fetchData, describeTable, getTableMeta, getEngineMeta, applyCellEdit, applyRowDelete, applyBatch, fetchNextId, fetchIdWorker, readCell, downloadCell, type TableData, type ColumnInfo, type TableMeta, importTableCsv, exportQuery } from './api'
 import { useToast } from '../../components/Toast'
 import DataGrid, { PAGE_SIZES, type GridChange } from '../../components/common/DataGrid'
 import { FilterWorkbench } from './FilterWorkbench'
@@ -467,6 +467,9 @@ export default function DataPanel({
               applyRowWrite: kvEngine ? undefined : runRowWrite,
               nextId: kvEngine ? undefined : runNextId,
               idWorker: fetchIdWorker,
+              // P1-13: 大值取回。键值引擎(Redis)没有主键概念, 不给这两个入口。
+              readCell: kvEngine ? undefined : (req) => readCell(conn.id, req),
+              downloadCell: kvEngine ? undefined : (req) => downloadCell(conn.id, req),
             }}
             emptyState={
               !kvEngine && filters.length > 0

@@ -99,6 +99,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/redis/capabilities", Handler: h.handleRedisCapabilities},
 			{Path: "/api/dbmanager/redis/write", Handler: h.handleRedisWrite},
 			{Path: "/api/dbmanager/mq/publish", Handler: h.handleMQPublish},
+			{Path: "/api/dbmanager/cell/read", Handler: h.handleCellRead},
+			{Path: "/api/dbmanager/cell/download", Handler: h.handleCellDownload},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},

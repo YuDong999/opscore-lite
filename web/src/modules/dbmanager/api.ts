@@ -587,6 +587,68 @@ export async function runQueryRaw(
   return { status: r.status, data }
 }
 
+// ── P1-13 单元格分片读 / 下载 ──
+// 定位方式是**按主键重查**(与 apply-edit 同一口径), 不是"记住结果集第几行" ——
+// 结果集可能带 ORDER BY 或来自多表拼接, 只有主键能可靠指回某一行。
+import type { CellChunk } from '../../components/common/DataGrid'
+export type { CellChunk }
+
+export interface CellReadBody {
+  id: string
+  database: string
+  table: string
+  schema?: string
+  column: string
+  pkCols: string[]
+  row: Record<string, any>
+  offset: number
+  limit: number
+  asBase64: boolean
+}
+
+// 返回体形状与 DataGrid 的 CellChunk 对齐(后端在失败时会只给 ok/error)。
+export async function readCell(id: string, body: Omit<CellReadBody, 'id'>): Promise<CellChunk> {
+  const r = await postJSON<Partial<CellChunk>>('/api/dbmanager/cell/read', { id, ...body })
+  return {
+    ok: !!r.ok,
+    offset: r.offset ?? body.offset,
+    bytes: r.bytes ?? 0,
+    total: r.total ?? -1,
+    nextOffset: r.nextOffset ?? -1,
+    encoding: r.encoding,
+    body: r.body,
+    text: r.text,
+    error: r.error,
+  }
+}
+
+// 下载: 后端流式返回, 这里把响应体接成 Blob 再触发浏览器下载。
+export async function downloadCell(id: string, body: Omit<CellReadBody, 'id' | 'offset' | 'limit' | 'asBase64'>): Promise<void> {
+  const t = localStorage.getItem('opscore-token')
+  const r = await fetch('/api/dbmanager/cell/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+    body: JSON.stringify({ id, ...body }),
+  })
+  if (!r.ok) {
+    // 失败时后端回的是 JSON 错误(不是文件)
+    const msg = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+    throw new Error((msg as any).error || `HTTP ${r.status}`)
+  }
+  const blob = await r.blob()
+  const dispo = r.headers.get('Content-Disposition') || ''
+  const m = /filename="([^"]+)"/.exec(dispo)
+  const name = m ? m[1] : `${body.column || 'cell'}.bin`
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 // ── P1-9 参数化查询 ──
 // 前端只发参数值; 占位符替换在服务端按方言做(类型感知转义)。**不是真 prepared** ——
 // 底座执行接口没有 args 形参, 这点在面板上也要说清。

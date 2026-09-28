@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -23,6 +24,16 @@ const streamRowsPeriodicGCInterval = 50000
 // interactiveOracleLargeObjectPreviewBytes bounds Oracle large objects before
 // they cross the Wails bridge. The streaming export path stays unbounded.
 const interactiveOracleLargeObjectPreviewBytes = 4 * 1024
+
+// interactiveLargeObjectPreviewBytes 是**跨方言**的大对象预览阈值(P1-13)。
+// 上游(dbx)的建议是"搬思想但默认改成不限长, 只在超阈值时启用" —— 这里就取这个口径:
+// 小于阈值的值原样返回(不被截断), 超过的给预览 + 提示"这可以分片读/下载"。
+// 真正的整值取回走 /api/dbmanager/cell/read 与 /cell/download, 不靠把网格撑大。
+const interactiveLargeObjectPreviewBytes = 4 * 1024
+
+// largeObjectHint 告诉用户"被截断了, 以及怎么拿全" —— 只说被截断不给出口,
+// 用户只能看到半截数据却不知道下一步该干什么。
+const largeObjectHint = "(值已被截断用于预览; 在单元格详情里用「查看完整值 / 下载」按主键分片取回)"
 
 func scanRows(rows *sql.Rows) ([]map[string]interface{}, []string, error) {
 	return scanRowsForDialect(rows, "")
@@ -209,9 +220,9 @@ func (s *queryRowScanner) scanCurrentRowValuesWithPreview(rows *sql.Rows, boundO
 func normalizeInteractiveQueryValue(value interface{}, databaseTypeName, dialect string) interface{} {
 	switch typedValue := value.(type) {
 	case []byte:
-		if len(typedValue) > interactiveOracleLargeObjectPreviewBytes && isOracleBinaryLargeObjectType(databaseTypeName) {
+		if len(typedValue) > interactiveLargeObjectPreviewBytes && isBinaryLargeObjectType(databaseTypeName, dialect) {
 			preview := normalizeQueryValueWithDBTypeAndDialect(
-				typedValue[:interactiveOracleLargeObjectPreviewBytes],
+				typedValue[:interactiveLargeObjectPreviewBytes],
 				databaseTypeName,
 				dialect,
 			)
@@ -219,21 +230,25 @@ func normalizeInteractiveQueryValue(value interface{}, databaseTypeName, dialect
 			if !ok {
 				previewText = fmt.Sprint(preview)
 			}
+			// 提示追加在**末尾**而不是塞进前缀: 前缀 "[BLOB preview: N/M bytes] " 是既有
+			// 可解析格式(测试与可能的解析方都依赖它), 动它会连带改语义。
 			return fmt.Sprintf(
-				"[BLOB preview: %d/%d bytes] %s",
-				interactiveOracleLargeObjectPreviewBytes,
+				"[BLOB preview: %d/%d bytes] %s\n%s",
+				interactiveLargeObjectPreviewBytes,
 				len(typedValue),
 				previewText,
+				largeObjectHint,
 			)
 		}
 	case string:
-		if len(typedValue) > interactiveOracleLargeObjectPreviewBytes && isOracleTextLargeObjectType(databaseTypeName) {
-			preview := truncateUTF8Prefix(typedValue, interactiveOracleLargeObjectPreviewBytes)
+		if len(typedValue) > interactiveLargeObjectPreviewBytes && isTextLargeObjectType(databaseTypeName, dialect) {
+			preview := truncateUTF8Prefix(typedValue, interactiveLargeObjectPreviewBytes)
 			return fmt.Sprintf(
-				"[CLOB preview: %d/%d bytes] %s",
+				"[CLOB preview: %d/%d bytes] %s\n%s",
 				len(preview),
 				len(typedValue),
 				preview,
+				largeObjectHint,
 			)
 		}
 	}
@@ -241,24 +256,72 @@ func normalizeInteractiveQueryValue(value interface{}, databaseTypeName, dialect
 	return normalizeQueryValueWithDBTypeAndDialect(value, databaseTypeName, dialect)
 }
 
-func isOracleBinaryLargeObjectType(databaseTypeName string) bool {
+// isBinaryLargeObjectType 判定"这个列类型的大值该不该只给预览"。
+//
+// 原来只认 Oracle 的类型名(OCIBLOBLOCATOR/LONGRAW/LONGVARRAW) —— 于是 MySQL 的
+// blob/longblob、PG 的 bytea、SQL Server 的 varbinary(max) 全都把整个值塞进网格,
+// 几 MB 的二进制直接把界面拖死(P1-13 把它扩成按方言的判定表)。
+//
+// **判据刻意保守**: 只有"声明上就可能非常大"的类型才算, 否则会给普通列误打
+// "已被截断"的标签。所以 BINARY(16)/VARBINARY(255)/RAW 这种定长小二进制**不算** ——
+// 它们本来就短, 截断提示只会误导。判定同时看阈值(调用方只对超阈值的大值才问这个函数),
+// 所以这里宁可少认几个, 也不要多认。
+func isBinaryLargeObjectType(databaseTypeName, dialect string) bool {
 	typeName := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(databaseTypeName), " ", ""))
+	if typeName == "" {
+		return false
+	}
+	// Oracle 族的 locator 名(不含下面关键词, 单列出来)
 	switch typeName {
 	case "OCIBLOBLOCATOR", "LONGRAW", "LONGVARRAW":
 		return true
-	default:
-		return false
 	}
+	// 带长度限定的: 只有"超大"那几档才算(binary(16) 这类不算)
+	switch typeName {
+	case "BLOB", "LONGBLOB", "MEDIUMBLOB", "TINYBLOB",
+		"BYTEA", "IMAGE", "NTEXT", "VARBINARY(MAX)", "BINARY(MAX)",
+		"GEOMETRY", "GEOGRAPHY":
+		return true
+	}
+	// 长度很长的 varbinary/binary(如 varbinary(65535)) 也算 —— 解析出上限再判
+	if n, ok := parseTypeSize(typeName); ok && n >= 65535 &&
+		(strings.HasPrefix(typeName, "VARBINARY(") || strings.HasPrefix(typeName, "BINARY(")) {
+		return true
+	}
+	return false
 }
 
-func isOracleTextLargeObjectType(databaseTypeName string) bool {
+// isTextLargeObjectType 判定"文本大对象"(CLOB/TEXT 等)。
+func isTextLargeObjectType(databaseTypeName, dialect string) bool {
 	typeName := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(databaseTypeName), " ", ""))
+	if typeName == "" {
+		return false
+	}
 	switch typeName {
 	case "OCICLOBLOCATOR", "LONG", "LONGVARCHAR":
 		return true
-	default:
-		return false
 	}
+	// 只认"声明上就很长"的文本类型; 普通的 VARCHAR/TEXT 不在此列 ——
+	// PG 的 text 与 MySQL 的 longtext 才是真无上限的那两个。
+	switch typeName {
+	case "CLOB", "NCLOB", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT", "XML", "JSONB", "JSON":
+		return true
+	}
+	return false
+}
+
+// parseTypeSize 从 "VARBINARY(65535)" / "BINARY(2000)" 里取括号里的数字。
+func parseTypeSize(typeName string) (int, bool) {
+	i := strings.IndexByte(typeName, '(')
+	j := strings.IndexByte(typeName, ')')
+	if i < 0 || j <= i+1 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(typeName[i+1 : j])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func truncateUTF8Prefix(value string, maxBytes int) string {

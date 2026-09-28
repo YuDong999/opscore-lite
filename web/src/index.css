@@ -3555,6 +3555,10 @@ body {
 .db-cell-meta > div { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; font-size: 0.75rem; overflow-wrap: anywhere; }
 .db-cell-meta .dim { font-size: 0.75rem; }
 .db-cell-meta-comment { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.375rem 0.5rem; border: 1px dashed var(--border); border-radius: var(--radius-sm); margin-bottom: 0.5rem; font-size: 0.75rem; }
+/* P1-13 完整值面板: 在单元格详情的值区下面再接一块(值本身可能是被截断的预览) */
+.db-cell-full { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.db-cell-full-body { max-height: 260px; overflow: auto; margin: 4px 0 0; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+
 .db-cell-meta-value { display: flex; flex-direction: column; gap: 0.25rem; }
 .db-cell-meta-value-head { display: flex; align-items: center; }
 .db-cell-meta-value pre { margin: 0; padding: 0.5rem; max-height: 16rem; overflow: auto; background: var(--surface-tint); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
