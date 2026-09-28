@@ -216,6 +216,14 @@ func (h *Handlers) handleConnections(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
 			return
 		}
+		// 白名单只说明"这个类型存在", 不说明"当前这份二进制能用它"。可选驱动(如 SQLite)在
+		// 精简构建里没有工厂条目, 放行的话会建出一个**必然连不上**的连接 —— 用户看到"建成功",
+		// 点开才报错, 而且报错指向别处。这里直接拿运行时的诚实原因挡住。
+		// 只挡**新建/测试新连接**: 存量连接(如 mysql_agent)仍可编辑, 那是既定的兼容口径。
+		if ok, reason := gonavistatus.DriverRuntimeSupportStatus(string(body.Engine)); !ok {
+			writeErr(w, "该引擎在当前构建中不可用: "+reason, http.StatusBadRequest)
+			return
+		}
 
 		// 如果没有提供配置，使用默认配置
 		if isEmptyConfig(body.Config) {
@@ -368,6 +376,14 @@ func (h *Handlers) handleTestConnection(w http.ResponseWriter, r *http.Request) 
 		// 测试新连接
 		if !engineTypeSupported(body.Engine) {
 			writeErr(w, "不支持的引擎类型", http.StatusBadRequest)
+			return
+		}
+		// 白名单只说明"这个类型存在", 不说明"当前这份二进制能用它"。可选驱动(如 SQLite)在
+		// 精简构建里没有工厂条目, 放行的话会建出一个**必然连不上**的连接 —— 用户看到"建成功",
+		// 点开才报错, 而且报错指向别处。这里直接拿运行时的诚实原因挡住。
+		// 只挡**新建/测试新连接**: 存量连接(如 mysql_agent)仍可编辑, 那是既定的兼容口径。
+		if ok, reason := gonavistatus.DriverRuntimeSupportStatus(string(body.Engine)); !ok {
+			writeErr(w, "该引擎在当前构建中不可用: "+reason, http.StatusBadRequest)
 			return
 		}
 		if !validConnConfig(body.Config, body.Engine) {
