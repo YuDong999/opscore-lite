@@ -3813,6 +3813,15 @@ body {
 .db-save-inline { display: inline-flex; align-items: center; gap: 0.25rem; }
 
 /* 手动事务状态条: 事务模式下贴在编辑器头部下方, 显示"有多少东西还没落库" */
+/* P1-9 参数化查询面板: 与事务状态条同一层(在编辑器之上), 观感沿用 .db-audit 的卡片语言 */
+.db-param-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-tint); }
+.db-param-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.db-param-title { font-size: 0.75rem; font-weight: 600; color: var(--text-dim); }
+.db-param-head code { font-size: 0.6875rem; padding: 0 3px; border-radius: 3px; background: var(--row-hover); }
+.db-param-table { font-size: 0.75rem; }
+.db-param-table th, .db-param-table td { padding: 3px 6px; border-bottom: none; }
+.db-param-table .input { font-size: 0.75rem; padding: 3px 6px; min-height: 0; height: auto; }
+
 .db-tx-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: nowrap; font-size: 0.75rem; color: var(--text-dim); background: var(--surface-tint); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.1875rem 0.5rem; margin-bottom: 0.25rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
 /* 消息队列管理面板 */
 /* 专用面板(MQ / Redis)整体留白: 容器贴边会让"库 db0 · N 个键"那行文字直接顶到主区左边缘

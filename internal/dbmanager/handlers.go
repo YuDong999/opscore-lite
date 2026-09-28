@@ -421,11 +421,12 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID       string `json:"id"`
-		SQL      string `json:"sql"`
-		MaxRows  int    `json:"maxRows"`
-		Confirm  bool   `json:"confirm"`
-		Database string `json:"database"`
+		ID       string     `json:"id"`
+		SQL      string     `json:"sql"`
+		MaxRows  int        `json:"maxRows"`
+		Confirm  bool       `json:"confirm"`
+		Database string     `json:"database"`
+		Params   []SQLParam `json:"params"` // P1-9: 占位符参数(空则整段不进入替换语义)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "invalid body", http.StatusBadRequest)
@@ -447,6 +448,18 @@ func (h *Handlers) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, "获取连接失败: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// P1-9 参数化查询: 把 :name 换成方言感知的字面量。
+	// **替换必须在风险判定与审计之前** —— 审计流水要记的是"真正会执行的那句话",
+	// 记替换前的 `DELETE FROM t WHERE id = :id` 等于把判定依据和现场都丢了。
+	if len(body.Params) > 0 {
+		substituted, perr := SubstituteParams(body.SQL, body.Params, syncpkg.EngineDialect(string(conn.Info.Engine)))
+		if perr != nil {
+			writeErr(w, perr.Error(), http.StatusBadRequest)
+			return
+		}
+		body.SQL = substituted
 	}
 
 	// 留痕文本: Redis 的值直接写在命令里(SET k <值>), 原样进审计等于把业务数据抄进日志。

@@ -8,7 +8,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { sql as sqlLang } from '@codemirror/lang-sql'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
-import { runQueryRaw, saveQuery, txBegin, txCommit, txExecute, txRollback, txStatus, type TxStatement, type QueryResult, type InterceptionBody } from './api'
+import { runQueryRaw, saveQuery, txBegin, txCommit, txExecute, txRollback, txStatus, type TxStatement, type QueryResult, type InterceptionBody, type SQLParam } from './api'
 import { useToast } from '../../components/Toast'
 import { useConfirm } from '../../lib/hooks/useConfirm'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
@@ -82,6 +82,11 @@ export default function QueryEditor({
   // begin 是懒的: 切开关只是打个标记, 第一条语句执行时才真开事务(与 dbx 一致)。
   const [txMode, setTxMode] = useState(false)
   const [txId, setTxId] = useState('')
+  // P1-9 参数化查询: 面板上维护"名字→值"表, 执行时连同 SQL 一起发后端。
+  // 占位符替换在服务端按方言做(类型感知转义)。**这不是真 prepared** —— 底座执行接口
+  // 没有 args 形参, 防注入靠的是类型化转义; 界面上的说明文案也要照实说。
+  const [paramOpen, setParamOpen] = useState(false)
+  const [params, setParams] = useState<SQLParam[]>([])
   const [txStmts, setTxStmts] = useState<TxStatement[]>([])
   const [idleLeft, setIdleLeft] = useState(0)
   const resetTx = () => { setTxId(''); setTxStmts([]); setIdleLeft(0) }
@@ -169,8 +174,8 @@ export default function QueryEditor({
   }, [defaultSQL])
 
   // 在事务里跑一条。返回响应体给上层判断 confirm_required / tx_gone。
-  const runInTx = async (id: string, confirmed: boolean) => {
-    const { status, data } = await txExecute(id, sql, confirmed)
+  const runInTx = async (id: string, confirmed: boolean, withParams: SQLParam[]) => {
+    const { status, data } = await txExecute(id, sql, confirmed, withParams)
     if (status === 200 && data.ok) {
       setTxStmts((data.statements as TxStatement[]) || [])
       setIdleLeft(data.idleSecLeft || 0)
@@ -210,18 +215,18 @@ export default function QueryEditor({
         }
         setHistory(pushHistory(sql))
         onExecuted?.(sql)
-        const data = await runInTx(id, confirmed)
+        const data = await runInTx(id, confirmed, params)
         if (data.code === 'confirm_required') {
           const ok = await askConfirm('这条语句风险较高, 确认在事务内执行?', {
             desc: data.reason || data.error || '后端要求二次确认后才执行。',
             content: <SqlPreviewBody sqls={[sql]} caption="将在事务内执行的语句" />,
             okText: '确认执行', danger: true, maxWidth: 640,
           })
-          if (ok) await runInTx(id, true)
+          if (ok) await runInTx(id, true, params)
         }
         return
       }
-      const { status, data } = await runQueryRaw(connId, sql, 5000, confirmed, db)
+      const { status, data } = await runQueryRaw(connId, sql, 5000, confirmed, db, params)
       setHistory(pushHistory(sql))
       onExecuted?.(sql)
       await handleResponse(status, data as QueryResult & InterceptionBody, confirmed)
@@ -319,6 +324,11 @@ export default function QueryEditor({
                 title="丢弃事务内的全部语句">回滚</button>
             </>
           )}
+          <button onClick={() => setParamOpen(v => !v)}
+            className={`btn-glass-soft btn-glass-soft-sm ${params.length ? 'btn-glass-soft-accent' : ''}`}
+            title="参数化查询: 在 SQL 里写 :name, 这里给值(服务端按方言做类型感知转义)">
+            参数{params.length ? `(${params.length})` : ''}
+          </button>
           <button onClick={doFormat} className="btn-glass-soft btn-glass-soft-sm" title="按当前引擎方言格式化 SQL">格式化</button>
           <button onClick={() => setSql('')} className="btn-glass-soft btn-glass-soft-sm">清空</button>
           <button onClick={() => setSaveOpen(v => !v)} disabled={busy || !sql.trim()} className="btn-glass-soft btn-glass-soft-sm" title="保存当前 SQL 到已保存查询" aria-label="保存当前 SQL">保存</button>
@@ -376,6 +386,55 @@ export default function QueryEditor({
           )}
           {/mysql|maria|tidb|oceanbase/i.test(engine || '') && (
             <span className="db-tx-warn">改表结构的语句不能放进事务(会直接报错)</span>
+          )}
+        </div>
+      )}
+
+      {/* P1-9 参数化查询面板: SQL 里写 :name, 这里给值。
+          替换在服务端按方言做(类型感知转义) —— 面板上照实说明"不是数据库侧绑定",
+          免得有人以为它是真 prepared 而在此基础上叠加别的假设。 */}
+      {paramOpen && (
+        <div className="db-param-panel">
+          <div className="db-param-head">
+            <span className="db-param-title">参数</span>
+            <span className="dim small">SQL 里写 <code>:名字</code>, 执行时由服务端按方言转义后内联(非数据库侧绑定)</span>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              <button className="btn-glass-soft btn-glass-soft-sm"
+                onClick={() => setParams(p => [...p, { name: '', type: 'string', value: '' }])}>添加</button>
+              <button className="btn-glass-soft btn-glass-soft-sm" onClick={() => setParams([])} disabled={!params.length}>清空</button>
+            </span>
+          </div>
+          {params.length === 0 ? (
+            <div className="dim small">还没有参数。点「添加」加一条, 名字要和 SQL 里的 <code>:名字</code> 一致(大小写不敏感)。</div>
+          ) : (
+            <table className="db-table db-param-table">
+              <thead><tr><th style={{ width: '28%' }}>名字</th><th style={{ width: '22%' }}>类型</th><th>值</th><th style={{ width: 40 }} /></tr></thead>
+              <tbody>
+                {params.map((p, i) => (
+                  <tr key={i}>
+                    <td>
+                      <input className="input" value={p.name} placeholder="id"
+                        onChange={e => setParams(a => a.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                    </td>
+                    <td>
+                      <select className="input" value={p.type}
+                        onChange={e => setParams(a => a.map((x, j) => j === i ? { ...x, type: e.target.value as SQLParam['type'] } : x))}>
+                        {(['string', 'number', 'bool', 'null', 'raw'] as const).map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <input className="input" value={p.value} placeholder={p.type === 'null' ? '(null 不用填值)' : '值'}
+                        disabled={p.type === 'null'}
+                        onChange={e => setParams(a => a.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                    </td>
+                    <td>
+                      <button className="btn-glass-soft btn-glass-soft-sm" title="删除这个参数"
+                        onClick={() => setParams(a => a.filter((_, j) => j !== i))}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

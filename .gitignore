@@ -19,6 +19,7 @@ nul
 /bin/
 web/dist
 /dist/
+dist-linux/
 node_modules/
 *.exe
 *.exe~

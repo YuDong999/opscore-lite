@@ -489,7 +489,8 @@ async function txPost(path: string, body: Record<string, unknown>): Promise<TxRe
 }
 
 export const txBegin = (id: string, database: string) => txPost('tx/begin', { id, database })
-export const txExecute = (txId: string, sql: string, confirm = false) => txPost('tx/execute', { txId, sql, confirm })
+export const txExecute = (txId: string, sql: string, confirm = false, params?: SQLParam[]) =>
+  txPost('tx/execute', { txId, sql, confirm, params: params?.length ? params : undefined })
 export const txCommit = (txId: string) => txPost('tx/commit', { txId, confirm: true })
 export const txRollback = (txId: string) => txPost('tx/rollback', { txId })
 
@@ -571,6 +572,7 @@ export async function runQueryRaw(
   maxRows = 5000,
   confirm = false,
   database?: string,
+  params?: SQLParam[],
 ): Promise<{ status: number; data: QueryResult & InterceptionBody }> {
   const t = localStorage.getItem('opscore-token')
   const r = await fetch('/api/dbmanager/query', {
@@ -579,10 +581,19 @@ export async function runQueryRaw(
       'Content-Type': 'application/json',
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
     },
-    body: JSON.stringify({ id, sql, maxRows, confirm, database }),
+    body: JSON.stringify({ id, sql, maxRows, confirm, database, params: params?.length ? params : undefined }),
   })
   const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   return { status: r.status, data }
+}
+
+// ── P1-9 参数化查询 ──
+// 前端只发参数值; 占位符替换在服务端按方言做(类型感知转义)。**不是真 prepared** ——
+// 底座执行接口没有 args 形参, 这点在面板上也要说清。
+export interface SQLParam {
+  name: string
+  type: 'string' | 'number' | 'bool' | 'null' | 'raw'
+  value: string
 }
 
 // ── 写解锁 / 审计 ──
