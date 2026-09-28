@@ -761,3 +761,7 @@ func (hostExecAdapter) IsLocal(hostID string) bool {
 func (hostExecAdapter) ExecWithInput(hostID string, cmd string, input []byte) error {
 	return handlers.ExecWithInputOnTarget(hostID, cmd, input)
 }
+
+func (hostExecAdapter) RunOnHostWithEnv(hostID string, env map[string]string, argv []string) (string, error) {
+	return handlers.RunOnTargetWithEnv(hostID, env, argv)
+}

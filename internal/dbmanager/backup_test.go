@@ -14,7 +14,7 @@ import (
 
 // MySQL 的一致性开关与"默认不导"的三样(--routines/--triggers/--events)都必须在。
 func TestNativeBackupArgvMySQLCarriesConsistencyAndFidelity(t *testing.T) {
-	argv := nativeBackupArgv("mysqldump", "mysql", "shop", nil, "/tmp/x.sql.gz")
+	argv := nativeBackupArgv("mysqldump", "mysql", "shop", nil, backupConnInfo{Host: "db1", Port: 3307, User: "root", Pass: "s3cr3t"})
 	joined := strings.Join(argv, " ")
 	for _, must := range []string{
 		"mysqldump",
@@ -32,7 +32,7 @@ func TestNativeBackupArgvMySQLCarriesConsistencyAndFidelity(t *testing.T) {
 }
 
 func TestNativeBackupArgvPostgresCarriesConsistency(t *testing.T) {
-	argv := nativeBackupArgv("pg_dump", "postgres", "shop", nil, "/tmp/x.sql.gz")
+	argv := nativeBackupArgv("pg_dump", "postgres", "shop", nil, backupConnInfo{Host: "db1", Port: 5433, User: "postgres"})
 	joined := strings.Join(argv, " ")
 	if !strings.Contains(joined, "--serializable-deferrable") {
 		t.Errorf("PG 备份必须带可串行化快照参数: %s", joined)
@@ -44,11 +44,11 @@ func TestNativeBackupArgvPostgresCarriesConsistency(t *testing.T) {
 
 // 指定表时, 表名要进命令行(MySQL 是位置参数, PG 是 --table=)。
 func TestNativeBackupArgvWithTables(t *testing.T) {
-	my := strings.Join(nativeBackupArgv("mysqldump", "mysql", "shop", []string{"a", "b"}, "/tmp/x"), " ")
+	my := strings.Join(nativeBackupArgv("mysqldump", "mysql", "shop", []string{"a", "b"}, backupConnInfo{Host: "h", User: "u"}), " ")
 	if !strings.Contains(my, " a") || !strings.Contains(my, " b") {
 		t.Errorf("MySQL 指定表应作为位置参数: %s", my)
 	}
-	pg := strings.Join(nativeBackupArgv("pg_dump", "postgres", "shop", []string{"a"}, "/tmp/x"), " ")
+	pg := strings.Join(nativeBackupArgv("pg_dump", "postgres", "shop", []string{"a"}, backupConnInfo{Host: "h", User: "u"}), " ")
 	if !strings.Contains(pg, "--table=a") {
 		t.Errorf("PG 指定表应走 --table=: %s", pg)
 	}
@@ -154,4 +154,42 @@ func TestBackupFileNameIsSanitized(t *testing.T) {
 // timeAt 造一个确定的时间(测试用, 免得依赖当前时刻)。
 func timeAt(y int, mo time.Month, d, h, mi, s int) time.Time {
 	return time.Date(y, mo, d, h, mi, s, 0, time.UTC)
+}
+
+// 连接信息必须显式进参数 —— 真机实测踩到过: 只给库名时 mysqldump 会以
+// "Access denied for user 'root'@'localhost' (using password: NO)" 失败。
+func TestNativeBackupArgvCarriesConnectionInfo(t *testing.T) {
+	ci := backupConnInfo{Host: "10.0.0.5", Port: 3307, User: "backup", Pass: "pw"}
+	joined := strings.Join(nativeBackupArgv("mysqldump", "mysql", "shop", nil, ci), " ")
+	for _, must := range []string{"-h 10.0.0.5", "-P 3307", "-u backup"} {
+		if !strings.Contains(joined, must) {
+			t.Errorf("MySQL 备份命令应带 %q: %s", must, joined)
+		}
+	}
+	pg := strings.Join(nativeBackupArgv("pg_dump", "postgres", "shop", nil, ci), " ")
+	for _, must := range []string{"-h 10.0.0.5", "-p 3307", "-U backup"} {
+		if !strings.Contains(pg, must) {
+			t.Errorf("PG 备份命令应带 %q: %s", must, pg)
+		}
+	}
+}
+
+// 密码**不能进 argv**(argv 会出现在 ps 与日志里), 必须走环境变量。
+func TestBackupPasswordGoesThroughEnvNotArgv(t *testing.T) {
+	ci := backupConnInfo{Host: "h", User: "u", Pass: "super-secret"}
+	joined := strings.Join(nativeBackupArgv("mysqldump", "mysql", "shop", nil, ci), " ")
+	if strings.Contains(joined, "super-secret") {
+		t.Errorf("密码不该出现在 argv 里: %s", joined)
+	}
+	env := backupToolEnv("mysql", ci)
+	if env["MYSQL_PWD"] != "super-secret" {
+		t.Errorf("MySQL 密码应走 MYSQL_PWD: %v", env)
+	}
+	envPG := backupToolEnv("postgres", ci)
+	if envPG["PGPASSWORD"] != "super-secret" {
+		t.Errorf("PG 密码应走 PGPASSWORD: %v", envPG)
+	}
+	if backupToolEnv("mysql", backupConnInfo{}) != nil {
+		t.Error("无密码时不该造出环境变量")
+	}
 }

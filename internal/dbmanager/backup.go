@@ -183,16 +183,41 @@ func backupFileName(engine, database string, at time.Time) string {
 	return fmt.Sprintf("%s-%s-%s.sql.gz", strings.ToLower(engine), safe, at.Format("20060102-150405"))
 }
 
+// backupConnInfo 是原生工具需要的连接信息。
+//
+// **必须是显式参数, 不能用环境变量或默认配置碰运气**: 真机实测踩到过 —— 只给库名时
+// mysqldump 会以 `Access denied for user 'root'@'localhost' (using password: NO)` 失败,
+// 因为它在本地默认 socket 上按"无密码"连。密码经 PGPASSWORD/MYSQL_PWD 环境变量传,
+// **不进 argv**(argv 会出现在 ps 里, 也可能被记进日志)。
+type backupConnInfo struct {
+	Host string
+	Port int
+	User string
+	Pass string
+}
+
 // nativeBackupArgv 拼原生备份命令。**所有值经 shell 转义由调用方负责**(见 RunOnTargetQuiet 的契约)。
 //
 // 关键: 一致性参数是必须项, 不是可选项 —— 少了它就是"备份期间允许写入", 那份备份自相矛盾。
-func nativeBackupArgv(tool, engine, database string, tables []string, filePath string) []string {
+func nativeBackupArgv(tool, engine, database string, tables []string, ci backupConnInfo) []string {
+	host := ci.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	argv := []string{tool}
 	if isMySQLFamily(engine) {
 		// --single-transaction: InnoDB 一致性快照不锁表
 		// --routines --triggers --events: 这三样默认**不导**, 必须显式要
 		// --hex-blob: 二进制安全
 		// --set-gtid-purged=OFF: 免得在目标库回放时污染 GTID
+		argv = append(argv,
+			"-h", host)
+		if ci.Port > 0 {
+			argv = append(argv, "-P", fmt.Sprint(ci.Port))
+		}
+		if ci.User != "" {
+			argv = append(argv, "-u", ci.User)
+		}
 		argv = append(argv,
 			"--single-transaction", "--routines", "--triggers", "--events",
 			"--hex-blob", "--set-gtid-purged=OFF", "--default-character-set=utf8mb4",
@@ -204,14 +229,32 @@ func nativeBackupArgv(tool, engine, database string, tables []string, filePath s
 	}
 	// pg_dump: -Fp 纯文本(与 mysqldump 的输出口径一致, 便于人读与 grep)
 	// 一致性靠 --serializable-deferrable(要求目标库非只读且有权限)
+	argv = append(argv, "-h", host)
+	if ci.Port > 0 {
+		argv = append(argv, "-p", fmt.Sprint(ci.Port))
+	}
+	if ci.User != "" {
+		argv = append(argv, "-U", ci.User)
+	}
 	argv = append(argv,
-		"--format=plain", "--no-owner", "--no-privileges=false",
+		"--format=plain", "--no-owner",
 		"--serializable-deferrable",
 		"--dbname="+database)
 	for _, t := range tables {
 		argv = append(argv, "--table="+t)
 	}
 	return argv
+}
+
+// backupToolEnv 给出原生工具需要的环境变量(密码走环境变量, 不进 argv)。
+func backupToolEnv(engine string, ci backupConnInfo) map[string]string {
+	if ci.Pass == "" {
+		return nil
+	}
+	if isMySQLFamily(engine) {
+		return map[string]string{"MYSQL_PWD": ci.Pass}
+	}
+	return map[string]string{"PGPASSWORD": ci.Pass}
 }
 
 // splitTableArgs 把命令行风格的表名参数排序去重(便于测试与稳定输出)。

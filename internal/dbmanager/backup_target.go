@@ -17,6 +17,8 @@ type HostExecutor interface {
 	// RunOnHost 在 hostID 指定的主机上执行 argv, 返回合并输出(stdout+stderr)。
 	// hostID 为空/local 视为本机。
 	RunOnHost(hostID string, argv []string) (string, error)
+	// RunOnHostWithEnv 同 RunOnHost, 但带上环境变量(备份工具用它传密码, 不进 argv)。
+	RunOnHostWithEnv(hostID string, env map[string]string, argv []string) (string, error)
 	// IsLocal 判定 hostID 是否指向本机。
 	IsLocal(hostID string) bool
 	// ExecWithInput 把 stdin 喂给远端命令(用于 `cat > 文件` 这类写入)。
@@ -69,6 +71,15 @@ func RunOnTargetQuiet(hostID string, argv []string) (string, error) {
 		return "", err
 	}
 	return ex.RunOnHost(hostID, argv)
+}
+
+// RunOnTargetWithEnv 带环境变量在目标机执行(密码走这里, 不进命令行)。
+func RunOnTargetWithEnv(hostID string, env map[string]string, argv []string) (string, error) {
+	ex, err := requireExecutor()
+	if err != nil {
+		return "", err
+	}
+	return ex.RunOnHostWithEnv(hostID, env, argv)
 }
 
 // execWithInput 把数据喂给目标机上的命令(见 HostExecutor.ExecWithInput)。

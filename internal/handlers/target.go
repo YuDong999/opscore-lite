@@ -78,6 +78,36 @@ func RunOnTarget(hostID string, argv []string) (string, error) {
 	return out, nil
 }
 
+// RunOnTargetWithEnv 在目标机执行命令并带上环境变量。
+//
+// 用途: 备份工具用它传密码(MYSQL_PWD / PGPASSWORD) —— 密码若进 argv, 会出现在
+// `ps` 输出与可能的日志里; 环境变量是这类工具的标准做法。
+//
+// 本机: 直接给 cmd.Env。远程: 经 `env K=V` 前缀(值经 Shq 转义)喂给 shell。
+func RunOnTargetWithEnv(hostID string, env map[string]string, argv []string) (string, error) {
+	if len(env) == 0 {
+		return RunOnTarget(hostID, argv)
+	}
+	if IsLocalTarget(hostID) {
+		if len(argv) == 0 {
+			return "", fmt.Errorf("空命令")
+		}
+		c := exec.Command(argv[0], argv[1:]...)
+		for k, v := range env {
+			c.Env = append(c.Env, k+"="+v)
+		}
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	// 远程: 拼成 `env 'K=V' ... <命令>`。值经 Shq, 所以含引号/空格都安全。
+	prefixed := []string{"env"}
+	for k, v := range env {
+		prefixed = append(prefixed, k+"="+v)
+	}
+	prefixed = append(prefixed, argv...)
+	return RunOnTarget(hostID, prefixed)
+}
+
 // ExecWithInputOnTarget 把 input 喂给目标机上的命令。
 //
 // 本机: 命令按 argv 执行, input 写进 stdin(os/exec 的 Stdin)。

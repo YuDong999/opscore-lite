@@ -91,7 +91,10 @@ func (h *Handlers) runBackup(ctx context.Context, req BackupRequest) BackupRecor
 
 	var runErr error
 	if mode == BackupModeNative {
-		runErr = h.runNative(ctx, req, rec, tool)
+		runErr = h.runNative(ctx, req, rec, tool, backupConnInfo{
+			Host: conn.Info.Config.Host, Port: conn.Info.Config.Port,
+			User: conn.Info.Config.Username, Pass: conn.Password,
+		})
 	} else {
 		runErr = h.runBuiltin(ctx, req, rec)
 	}
@@ -112,10 +115,12 @@ func (h *Handlers) runBackup(ctx context.Context, req BackupRequest) BackupRecor
 }
 
 // runNative 走目标机上的原生工具。参数里的一致性开关是**必须项**(见 nativeBackupArgv)。
-func (h *Handlers) runNative(ctx context.Context, req BackupRequest, rec BackupRecord, tool string) error {
-	argv := nativeBackupArgv(tool, rec.Engine, req.Database, rec.Tables, rec.FilePath)
+func (h *Handlers) runNative(ctx context.Context, req BackupRequest, rec BackupRecord, tool string, ci backupConnInfo) error {
+	argv := nativeBackupArgv(tool, rec.Engine, req.Database, rec.Tables, ci)
 	cmd := buildBackupShellCommand(argv, rec.FilePath)
-	if _, err := RunOnTargetQuiet(req.HostID, []string{"sh", "-c", cmd}); err != nil {
+	// 密码走环境变量(不进 argv —— argv 会出现在 ps 与日志里)
+	env := backupToolEnv(rec.Engine, ci)
+	if _, err := RunOnTargetWithEnv(req.HostID, env, []string{"sh", "-c", cmd}); err != nil {
 		return fmt.Errorf("%s 执行失败: %w", tool, err)
 	}
 	return nil
