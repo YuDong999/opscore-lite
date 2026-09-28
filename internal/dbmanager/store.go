@@ -313,6 +313,116 @@ func isEmptyConfig(c ConnectionConfig) bool {
 
 const savedQueriesKey = "dbmanager:saved_queries"
 
+// RenameSavedQueryFolder 把 to 目录(含子目录)整体改名/移动, 返回受影响的查询条数。
+// 目录不是独立实体(树由 Folder 前缀推导), 所以"改目录名"就是批量改这些查询的 Folder。
+func (s *Store) RenameSavedQueryFolder(from, to string) (int, error) {
+	src, err := normalizeSQLFolder(from)
+	if err != nil {
+		return 0, err
+	}
+	if src == "" {
+		return 0, fmt.Errorf("不能重命名根目录")
+	}
+	dst, err := normalizeSQLFolder(to)
+	if err != nil {
+		return 0, err
+	}
+	if dst == src {
+		return 0, nil
+	}
+	// 不许把目录移到自己里面(会形成自我嵌套的前缀混乱)
+	if strings.HasPrefix(dst+"/", src+"/") {
+		return 0, fmt.Errorf("不能把目录移到它自己里面")
+	}
+	list, err := s.ListSavedQueries()
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	n := 0
+	for i := range list {
+		f := list[i].Folder
+		if f == src || strings.HasPrefix(f, src+"/") {
+			rest := strings.TrimPrefix(strings.TrimPrefix(f, src), "/")
+			list[i].Folder = dst
+			if rest != "" {
+				if dst == "" {
+					list[i].Folder = rest
+				} else {
+					list[i].Folder = dst + "/" + rest
+				}
+			}
+			list[i].UpdatedAt = now
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("目录不存在: %s", src)
+	}
+	return n, s.writeSavedQueries(list)
+}
+
+// DeleteSavedQueryFolder 删除目录(含子目录)下的**全部查询**, 返回删除条数。
+// 这是破坏性操作, 所以让调用方(处理器)去要二次确认; 这里只负责如实返回删了多少。
+func (s *Store) DeleteSavedQueryFolder(path string) (int, error) {
+	target, err := normalizeSQLFolder(path)
+	if err != nil {
+		return 0, err
+	}
+	if target == "" {
+		return 0, fmt.Errorf("根目录不能用这个接口删 —— 要清空请逐条删除")
+	}
+	list, err := s.ListSavedQueries()
+	if err != nil {
+		return 0, err
+	}
+	kept := make([]SavedQuery, 0, len(list))
+	n := 0
+	for _, q := range list {
+		if q.Folder == target || strings.HasPrefix(q.Folder, target+"/") {
+			n++
+			continue
+		}
+		kept = append(kept, q)
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("目录不存在或本来就是空的: %s", target)
+	}
+	return n, s.writeSavedQueries(kept)
+}
+
+// normalizeSQLFolder 规整"SQL 仓库"的目录路径, 并挡掉能跑出根目录的写法。
+//
+// 目录只是 SavedQuery.Folder 里的一段文本(树由前缀推导), 但它会出现在界面路径与
+// 将来的导出文件名里, 所以在这里就把边界定死: 不许绝对路径、不许 `..`、不许空段。
+// 允许 `/` 分隔的多级(如 "运维/K8s"), 以及中文/空格/下划线这类正常名字。
+func normalizeSQLFolder(raw string) (string, error) {
+	f := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+	f = strings.Trim(f, "/")
+	if f == "" {
+		return "", nil
+	}
+	if len(f) > 200 {
+		return "", fmt.Errorf("目录路径过长(上限 200 字符)")
+	}
+	segs := strings.Split(f, "/")
+	out := make([]string, 0, len(segs))
+	for _, s := range segs {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue // 连续斜杠直接折叠, 不报错
+		}
+		if s == "." || s == ".." {
+			return "", fmt.Errorf("目录名不能是 %q", s)
+		}
+		if strings.ContainsAny(s, "\\:*?\"<>|") {
+			return "", fmt.Errorf("目录名不能含 \\ : * ? \" < > | 这些字符: %q", s)
+		}
+		out = append(out, s)
+	}
+	return strings.Join(out, "/"), nil
+}
+
 // ListSavedQueries 返回全部保存的查询。
 func (s *Store) ListSavedQueries() ([]SavedQuery, error) {
 	st := s.store()
@@ -345,6 +455,11 @@ func (s *Store) SaveQuery(q SavedQuery) (SavedQuery, error) {
 	if strings.TrimSpace(q.SQL) == "" {
 		return SavedQuery{}, fmt.Errorf("SQL 不能为空")
 	}
+	folder, ferr := normalizeSQLFolder(q.Folder)
+	if ferr != nil {
+		return SavedQuery{}, ferr
+	}
+	q.Folder = folder
 	list, err := s.ListSavedQueries()
 	if err != nil {
 		return SavedQuery{}, err
@@ -367,14 +482,27 @@ func (s *Store) SaveQuery(q SavedQuery) (SavedQuery, error) {
 	if !found {
 		list = append(list, q)
 	}
-	b, err := json.Marshal(list)
-	if err != nil {
-		return SavedQuery{}, err
-	}
-	if err := central.SetMetaString(st, savedQueriesKey, string(b)); err != nil {
+	if err := s.writeSavedQueries(list); err != nil {
 		return SavedQuery{}, err
 	}
 	return q, nil
+}
+
+// writeSavedQueries 把整个列表写回 central store。
+// 抽出来是因为"改一个目录名/删一个目录"要批量改多条, 不该各写一遍序列化+落盘。
+func (s *Store) writeSavedQueries(list []SavedQuery) error {
+	st := s.store()
+	if st == nil {
+		return fmt.Errorf("central store not initialized")
+	}
+	if list == nil {
+		list = []SavedQuery{} // JSON 里给 [] 不给 null: 前端 .map 会炸
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return central.SetMetaString(st, savedQueriesKey, string(b))
 }
 
 // DeleteSavedQuery 删除保存的查询。

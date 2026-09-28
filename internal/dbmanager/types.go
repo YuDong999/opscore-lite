@@ -411,11 +411,15 @@ type QueryResult struct {
 
 // SavedQuery 用户保存的查询语句。
 type SavedQuery struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	SQL       string `json:"sql"`
-	Engine    string `json:"engine,omitempty"` // 关联引擎类型 (空=通用)
-	ConnID    string `json:"connId,omitempty"` // 关联连接 ID (空=任意连接)
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	SQL    string `json:"sql"`
+	Engine string `json:"engine,omitempty"` // 关联引擎类型 (空=通用)
+	ConnID string `json:"connId,omitempty"` // 关联连接 ID (空=任意连接)
+	// Folder 是"服务端 SQL 仓库"里的目录路径(P1-10 目录化), 用 / 分隔, 如 "运维/K8s"。
+	// 空 = 根目录。**不单独存目录实体**: 目录树由各条查询的 Folder 前缀推导出来 ——
+	// 少一套 CRUD 与"空目录"的边界情况; 代价是改目录名要靠移动查询(见 SavedQueriesPanel)。
+	Folder    string `json:"folder,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
 }

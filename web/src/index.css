@@ -3040,6 +3040,10 @@ body {
   display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; cursor: pointer;
 }
 .db-query-name { font-weight: 600; font-size: 0.8125rem; flex: 1; }
+/* P1-10 SQL 仓库目录行: 视觉上要和"查询行"区分开(它点一下是展开而不是选中) */
+.db-query-dir { cursor: pointer; background: var(--surface-tint); }
+.db-query-dir:hover { background: var(--row-hover); }
+.db-query-caret { width: 12px; display: inline-block; color: var(--text-dim); font-size: 0.625rem; }
 .db-query-meta { font-size: 0.75rem; }
 .db-query-sql { margin: 0 0.75rem 0.75rem; font-size: 0.75rem; max-height: 240px; overflow: auto; }
 

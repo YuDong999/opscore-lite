@@ -760,7 +760,17 @@ ${ddl};
                   case 'explain':
                     return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={explainSqlRef.current || lastSQLRef.current} /></div>
                   case 'queries':
-                    return <div className="db-queries-section" key={t.key}><SavedQueriesPanel conns={conns} activeConn={activeConn} /></div>
+                    return <div className="db-queries-section" key={t.key}>
+                      <SavedQueriesPanel conns={conns} activeConn={activeConn}
+                        onOpenQuery={(sql, name) => {
+                          // 在**当前活跃连接**上开一个新查询标签并预填 SQL(复用既有的 seed 机制)。
+                          // 没选连接时不硬猜 —— 保存的查询可能属于别的连接, 猜错比不打开更糟。
+                          const c = activeConn || conn
+                          if (!c) { toast.error('先选一个连接, 再打开这条查询'); return }
+                          handleNewQueryWithSQL(c, t.db || c.config?.database || '', sql)
+                          toast.info(`已在新标签打开「${name}」`)
+                        }} />
+                    </div>
                   default:
                     return null
                 }

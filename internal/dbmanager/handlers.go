@@ -104,6 +104,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/queries", Handler: h.handleQueries},
 			{Path: "/api/dbmanager/queries/save", Handler: h.handleSaveQuery},
 			{Path: "/api/dbmanager/queries/delete", Handler: h.handleDeleteQuery},
+			{Path: "/api/dbmanager/queries/folder/rename", Handler: h.handleRenameQueryFolder},
+			{Path: "/api/dbmanager/queries/folder/delete", Handler: h.handleDeleteQueryFolder},
 			{Path: "/api/dbmanager/drivers/install", Handler: h.handleDriverInstall},
 		},
 	}
@@ -2034,7 +2036,11 @@ func (h *Handlers) handleQueries(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, list)
+	// 包一层 {queries: [...]}: 本模块所有"列表"端点都是这个形状(connections/databases/
+	// tables/engines/drivers/entries/jobs...), 前端 api.ts 也按 {queries} 读。
+	// 这里原来直接 writeJSON(list) 吐裸数组 → 前端 r.queries 恒为 undefined →
+	// **"已保存查询"列表一直是空的**(存得进、删得掉、就是列不出来), 2026-09-28 实测发现。
+	writeJSON(w, map[string]any{"queries": list})
 }
 
 // ===== /api/dbmanager/queries/save =====
@@ -2080,6 +2086,77 @@ func (h *Handlers) handleDeleteQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ===== /api/dbmanager/queries/folder/* — "服务端 SQL 仓库"的目录操作 =====
+//
+// 目录不是独立实体: 树由每条查询的 Folder 前缀推导出来(P1-10 的取舍 —— 少一套 CRUD 与
+// "空目录"边界, 代价是改名要批量改查询)。所以这两个端点是**批量操作**, 返回值里如实报条数。
+
+// POST {from, to} -> 目录改名/移动(含子目录), 返回 affected
+func (h *Handlers) handleRenameQueryFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	n, err := h.store.RenameSavedQueryFolder(body.From, body.To)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "affected": n})
+}
+
+// POST {path, confirm} -> 删除目录及其下**全部查询**(破坏性, 要 confirm=true)
+func (h *Handlers) handleDeleteQueryFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Confirm bool   `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !body.Confirm {
+		// 先报"会删掉几条", 让前端能给出有信息量的二次确认 —— 与写操作的 confirm 同一口径
+		list, err := h.store.ListSavedQueries()
+		if err != nil {
+			writeErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		target, nerr := normalizeSQLFolder(body.Path)
+		if nerr != nil {
+			writeErr(w, nerr.Error(), http.StatusBadRequest)
+			return
+		}
+		cnt := 0
+		for _, q := range list {
+			if q.Folder == target || strings.HasPrefix(q.Folder, target+"/") {
+				cnt++
+			}
+		}
+		writeJSON(w, map[string]any{"ok": false, "needsConfirm": true, "affected": cnt,
+			"error": fmt.Sprintf("这会删除目录 %s 下的 %d 条查询, 确认后不可恢复", target, cnt)})
+		return
+	}
+	n, err := h.store.DeleteSavedQueryFolder(body.Path)
+	if err != nil {
+		writeErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "affected": n})
 }
 
 // ===== /api/dbmanager/drivers/install =====

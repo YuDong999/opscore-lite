@@ -735,6 +735,9 @@ export interface SavedQuery {
   sql: string
   engine?: string
   connId?: string
+  // P1-10 "服务端 SQL 仓库"的目录路径(用 / 分隔, 如 "运维/K8s"), 空 = 根目录。
+  // 目录不是独立实体: 树由每条查询的 folder 前缀推导 —— 所以改名/删除目录是批量操作。
+  folder?: string
   createdAt: number
   updatedAt: number
 }
@@ -744,8 +747,20 @@ export async function listSavedQueries(): Promise<SavedQuery[]> {
   return r.queries || []
 }
 
-export async function saveQuery(q: { name: string; sql: string; engine?: string; connId?: string }): Promise<SavedQuery> {
+export async function saveQuery(q: { name: string; sql: string; engine?: string; connId?: string; folder?: string }): Promise<SavedQuery> {
   return postJSON<SavedQuery>('/api/dbmanager/queries/save', q)
+}
+
+// 目录改名/移动(含子目录)。目录是推导出来的, 所以这是**批量改查询的 folder**。
+export async function renameQueryFolder(from: string, to: string): Promise<{ ok: boolean; affected?: number; error?: string }> {
+  return postJSON('/api/dbmanager/queries/folder/rename', { from, to })
+}
+
+// 删除目录(含其下全部查询)。confirm=false 先拿"会删几条", 让确认弹窗有信息量。
+export async function deleteQueryFolder(path: string, confirm = false): Promise<{
+  ok: boolean; affected?: number; needsConfirm?: boolean; error?: string
+}> {
+  return postJSON('/api/dbmanager/queries/folder/delete', { path, confirm })
 }
 
 export async function deleteSavedQuery(id: string): Promise<void> {

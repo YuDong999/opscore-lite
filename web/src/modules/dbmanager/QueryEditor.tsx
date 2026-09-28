@@ -76,6 +76,7 @@ export default function QueryEditor({
   // 保存当前 SQL 到已保存查询(补全缺口: 后端 /queries/save + api.saveQuery 一直在, 缺保存入口)
   const [saveOpen, setSaveOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
+  const [saveFolder, setSaveFolder] = useState('')
   const { confirm: askConfirm, confirmEl } = useConfirm()
 
   // ── 手动事务(事务模式) ──
@@ -160,10 +161,11 @@ export default function QueryEditor({
     if (!name) { toast.error('请填写查询名称'); return }
     if (!sql.trim()) { toast.error('当前 SQL 为空'); return }
     try {
-      await saveQuery({ name, sql, engine })
-      toast.success(`已保存查询「${name}」`)
+      await saveQuery({ name, sql, engine, folder: saveFolder })
+      toast.success(saveFolder ? `已保存到「${saveFolder}」: ${name}` : `已保存查询「${name}」`)
       setSaveOpen(false)
       setSaveName('')
+      setSaveFolder('')
     } catch (e: any) {
       toast.error('保存失败: ' + (e.message || e))
     }
@@ -342,6 +344,16 @@ export default function QueryEditor({
                 autoFocus
                 aria-label="查询名称"
                 onChange={e => setSaveName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveOpen(false) }}
+              />
+              <input
+                className="input btn-glass-soft-sm"
+                style={{ maxWidth: '10rem', fontSize: '0.75rem' }}
+                placeholder="目录(可留空)"
+                title={'保存到服务端 SQL 仓库的哪个目录, 如 运维/K8s; 留空=根目录。目录树在「查询」面板里看。'}
+                value={saveFolder}
+                aria-label="保存目录"
+                onChange={e => setSaveFolder(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveOpen(false) }}
               />
               <button onClick={doSave} className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent">确定</button>
