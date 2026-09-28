@@ -27,6 +27,7 @@ import SyncPanel from './SyncPanel'
 import SchemaDiffPanel from './SchemaDiffPanel'
 import DataDiffPanel from './DataDiffPanel'
 import MqPanel from './MqPanel'
+import RedisPanel from './RedisPanel'
 import ErGraphPanel from './ErGraphPanel'
 import TableOverviewPanel from './TableOverviewPanel'
 import ServerDashboardPanel from './ServerDashboardPanel'
@@ -40,7 +41,7 @@ import SavedQueriesPanel from './SavedQueriesPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs' | 'mq'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs' | 'mq' | 'redis'
   connId: string
   db?: string
   table?: string
@@ -275,6 +276,14 @@ export default function DatabaseManagerModule() {
   }
   // MQ 面板一个连接一个页签; 从 topic 节点右键进来时带上要预选的名字
   const mqSeedRef = useRef<{ key: string; name: string } | null>(null)
+  // Redis 面板: 一个连接一个页签(键列表 + 值 + 键级写操作)。从树里点键进来时预选那个键。
+  const redisSeedRef = useRef<{ key: string; name: string } | null>(null)
+  const handleOpenRedis = (c: ConnectionInfo, db: string, keyName?: string) => {
+    setConn(c)
+    const key = `redis:${c.id}.${db}`
+    if (keyName) redisSeedRef.current = { key, name: keyName }
+    openTab({ key, kind: 'redis', connId: c.id, db, label: keyName ? `${keyName}` : `Redis ${db}` })
+  }
   const handleOpenMq = (c: ConnectionInfo, topic?: string) => {
     setConn(c)
     const key = `mq:${c.id}`
@@ -508,6 +517,8 @@ ${ddl};
   // 所以整组按"这个引擎有没有 SQL"收起; MQ 额外给一个面板入口。
   const noSqlConn = !!conn && getEngineMeta(conn.engine)?.hasSql === false
   const isMqConn = !!conn && getEngineMeta(conn.engine)?.category === 'mq'
+  // Redis 是 keyvalue 类别: 面板与 MQ 同为"专用 UI", 但入口分开(动作集不同)。
+  const isRedisConn = !!conn && conn.engine === 'redis'
 
   return (
     <div className="module db-module">
@@ -516,6 +527,10 @@ ${ddl};
         <div className="db-head-global-actions">
           <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>驱动</button>
           <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>查询</button>
+          {conn && isRedisConn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="Redis 键管理(浏览 + 键级写操作)"
+              onClick={() => handleOpenRedis(conn, conn.config?.database || 'db0')}>Redis</button>
+          )}
           {conn && isMqConn && (
             <button className="btn-glass-soft btn-glass-soft-sm btn-glass-soft-accent" title="消息队列管理(topic/队列/消费组/收发)"
               onClick={() => handleOpenMq(conn)}>消息队列</button>
@@ -609,6 +624,7 @@ ${ddl};
               onOpenEr={handleOpenEr}
               onOpenDash={handleOpenDash}
               onOpenMq={handleOpenMq}
+              onOpenRedis={handleOpenRedis}
               onNewTable={handleNewTable}
               onExportSchema={handleExportSchema}
               onOpenOverview={handleOpenOverview}
@@ -660,7 +676,7 @@ ${ddl};
                         if (next) setActiveTab(next.key)
                       }
                     }}>
-                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : t.kind === 'mq' ? 'MQ' : '查'}</span>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : t.kind === 'mq' ? 'MQ' : t.kind === 'redis' ? 'KV' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
                     <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
                       onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
@@ -731,6 +747,12 @@ ${ddl};
                     return <div className="db-slow-section" key={t.key}><SlowSQLPanel connId={t.connId} /></div>
                   case 'procs':
                     return <div className="db-slow-section" key={t.key}><ProcessListPanel connId={c!.id} engine={c!.engine} database={t.db || c!.config?.database} /></div>
+                  case 'redis':
+                    return <div className="db-mq-section" key={t.key} style={{ overflow: 'auto' }}>
+                      <RedisPanel connId={c!.id} database={t.db || c!.config?.database || 'db0'}
+                        preset={redisSeedRef.current?.key === t.key ? redisSeedRef.current?.name : undefined}
+                        onWriteLocked={() => setShowUnlock(true)} />
+                    </div>
                   case 'mq':
                     return <div className="db-mq-section" key={t.key} style={{ overflow: 'auto' }}><MqPanel connId={c!.id} engine={c!.engine} preset={mqSeedRef.current?.key === t.key ? mqSeedRef.current?.name : undefined} onWriteLocked={() => setShowUnlock(true)} /></div>
                   case 'status':

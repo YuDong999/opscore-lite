@@ -127,6 +127,25 @@ type KeyValueBrowser interface {
 	BrowseKey(dbName, keyName string, offset, limit int) ([]map[string]interface{}, []string, int, error)
 }
 
+// KeyValueWriter 由键值引擎实现(目前是 Redis), 提供**带类型**的写操作。
+//
+// 为什么不让调用方拼命令文本: 值里可能带空格/引号/换行/二进制, 拼进 `SET k <value>`
+// 这类文本命令就得自己处理转义 —— 少转一个引号就是一条注入。这里让驱动用 go-redis 的
+// 类型化调用(key, value 各是一个参数), 从根上没有转义这件事。
+//
+// 写入仍然要过调用方的护栏链(写锁 + 审计), 本接口只负责"怎么把意图落到 redis"。
+type KeyValueWriter interface {
+	// SetKey 写一个 string 键。已有键若不是 string 类型则**拒绝**(不拿 SET 覆盖别人的 hash/list)。
+	// ttlSeconds <= 0 表示不过期。
+	SetKey(dbName, keyName string, value []byte, ttlSeconds int) error
+	// ExpireKey 设置/清除过期: ttlSeconds <= 0 走 PERSIST(清除过期)。
+	ExpireKey(dbName, keyName string, ttlSeconds int) error
+	// DeleteKey 删键, 返回真正删掉的个数(0 = 键本来就不在)。
+	DeleteKey(dbName, keyName string) (int64, error)
+	// RenameKey 改名。目标已存在时**拒绝**(不静默覆盖); 源不存在时报错。
+	RenameKey(dbName, fromKey, toKey string) error
+}
+
 const (
 	maxRemoteJSONResponseBytes           = 32 << 20
 	maxElasticsearchConsoleResponseBytes = maxRemoteJSONResponseBytes

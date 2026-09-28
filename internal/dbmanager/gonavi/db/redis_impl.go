@@ -477,6 +477,106 @@ func (e *RedisDB) BrowseKey(dbName, keyName string, offset, limit int) ([]map[st
 	return nil, nil, 0, fmt.Errorf("redis: 暂不支持在网格里展示 %s 类型的值(可以用 TYPE/MEMORY USAGE 看元信息)", typ)
 }
 
+// ---------------------------------------------------------------- 类型化写入(KeyValueWriter)
+
+// SetKey 写 string 键。已有键不是 string 就拒绝 —— 用 SET 盖掉别人的 hash/list 是不可逆的数据损失,
+// 而"值类型不符"这件事在界面上本来就能看出来, 报错比静默覆盖诚实。
+func (e *RedisDB) SetKey(dbName, keyName string, value []byte, ttlSeconds int) error {
+	_, c, err := e.writeTarget(dbName, keyName)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := e.ctx()
+	defer cancel()
+	if typ, terr := c.Type(ctx, keyName).Result(); terr == nil && typ != "none" && typ != "string" {
+		return fmt.Errorf("redis: 键 %s 现在是 %s 类型, 不能用 SET 覆盖(请先用 DEL 删掉, 或改用对应的写命令)", keyName, typ)
+	}
+	return c.Set(ctx, keyName, value, time.Duration(ttlSeconds)*time.Second).Err()
+}
+
+// ExpireKey 设置/清除过期。ttlSeconds <= 0 = 清除过期(PERSIST), 而不是"立刻过期"。
+func (e *RedisDB) ExpireKey(dbName, keyName string, ttlSeconds int) error {
+	_, c, err := e.writeTarget(dbName, keyName)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := e.ctx()
+	defer cancel()
+	if ttlSeconds <= 0 {
+		// go-redis v9 的 Persist 返回 bool: 真的清掉了才算成功(false = 键不存在或本来就没有过期)
+		ok, perr := c.Persist(ctx, keyName).Result()
+		if perr != nil {
+			return perr
+		}
+		if !ok {
+			return fmt.Errorf("redis: 键 %s 不存在或本来就没有过期时间", keyName)
+		}
+		return nil
+	}
+	ok, err := c.Expire(ctx, keyName, time.Duration(ttlSeconds)*time.Second).Result()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("redis: 键 %s 不存在", keyName)
+	}
+	return nil
+}
+
+// DeleteKey 删键。返回真正删掉的个数。
+func (e *RedisDB) DeleteKey(dbName, keyName string) (int64, error) {
+	_, c, err := e.writeTarget(dbName, keyName)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := e.ctx()
+	defer cancel()
+	return c.Del(ctx, keyName).Result()
+}
+
+// RenameKey 改名。目标已存在时拒绝 —— RENAME 会静默覆盖目标, 那是数据损失。
+func (e *RedisDB) RenameKey(dbName, fromKey, toKey string) error {
+	if strings.TrimSpace(toKey) == "" {
+		return errors.New("redis: 新键名不能为空")
+	}
+	if fromKey == toKey {
+		return nil
+	}
+	_, c, err := e.writeTarget(dbName, fromKey)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := e.ctx()
+	defer cancel()
+	if n, eerr := c.Exists(ctx, fromKey).Result(); eerr != nil {
+		return eerr
+	} else if n == 0 {
+		return fmt.Errorf("redis: 源键 %s 不存在", fromKey)
+	}
+	if n, eerr := c.Exists(ctx, toKey).Result(); eerr != nil {
+		return eerr
+	} else if n > 0 {
+		return fmt.Errorf("redis: 目标键 %s 已存在, 改名会覆盖它 —— 本产品不做静默覆盖", toKey)
+	}
+	return c.Rename(ctx, fromKey, toKey).Err()
+}
+
+// writeTarget 解析库名与键名并取出该库的 client(三个写操作共用的前置)。
+func (e *RedisDB) writeTarget(dbName, keyName string) (int, *redis.Client, error) {
+	db, err := redisParseDB(dbName)
+	if err != nil {
+		return 0, nil, err
+	}
+	if strings.TrimSpace(keyName) == "" {
+		return 0, nil, errors.New("redis: 键名不能为空")
+	}
+	c, err := e.client(db)
+	if err != nil {
+		return 0, nil, err
+	}
+	return db, c, nil
+}
+
 // redisColumnNames 取类型对应的列名(空结果也要给列, 否则网格画不出表头)。
 func redisColumnNames(defs []connection.ColumnDefinition) []string {
 	names := make([]string, 0, len(defs))

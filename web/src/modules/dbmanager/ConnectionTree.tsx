@@ -109,11 +109,13 @@ const isMqConn = (c?: ConnectionInfo) => !!c && getEngineMeta(c.engine)?.categor
 // 树里"表级动作"该不该收: 判据是"这个引擎有没有 SQL", 不是"是不是 MQ" ——
 // Redis 也没有 SQL/表结构, 给它挂"表统计/结构对比"同样是必失败的入口。
 const isNoSqlConn = (c?: ConnectionInfo) => !!c && getEngineMeta(c.engine)?.hasSql === false
+// Redis: 有专用键管理面板(键列表 + 值 + 键级写), 与 MQ 的"投递"面板是两回事
+const isRedisConn = (c?: ConnectionInfo) => !!c && c.engine === 'redis'
 
 export default function ConnectionTree({
   conns, selectedConnId, onOpenTable, onNewQuery, onOpenDoc, onSelectConn, onEditConn, onNewConn, onConnsChange, notify,
   onSyncDb, onSyncTable, onSyncSchema, onDiffDb, onDiffTable, onDataDiffDb, onDataDiffTable, onOpenEr, onOpenOverview, onNewTable, onExportSchema, onOpenDash, onOpenStatus, onOpenExplain, onNewQueryWithSQL, onExportTable,
-  onRefresh, onToggleSide, onOpenMq,
+  onRefresh, onToggleSide, onOpenMq, onOpenRedis,
 }: {
   conns: ConnectionInfo[]
   selectedConnId?: string
@@ -138,6 +140,8 @@ export default function ConnectionTree({
   onOpenDash?: (conn: ConnectionInfo) => void
   // 消息队列连接: 表结构/同步/比对/ER 这些概念都不存在, 入口换成 MQ 面板
   onOpenMq?: (conn: ConnectionInfo, topic?: string) => void
+  // Redis: 打开键管理面板(可选预选一个键)。与 MQ 分开是因为动作集不同(键级写 vs 投递)。
+  onOpenRedis?: (conn: ConnectionInfo, db: string, keyName?: string) => void
   onExportSchema?: (conn: ConnectionInfo, db: string) => void
   onOpenOverview?: (conn: ConnectionInfo, db: string) => void
   onOpenStatus: (conn: ConnectionInfo, db: string, table: string) => void
@@ -428,6 +432,7 @@ export default function ConnectionTree({
       // 建表/导结构/同步/删除都没有对象可施
       if (isNoSqlConn(node.conn)) {
         return [
+          ...(onOpenRedis && isRedisConn(node.conn) ? [{ label: '键管理 (Redis)', icon: <ActionIcon kind="chart" />, onClick: () => onOpenRedis!(node.conn!, node.db!) }] : []),
           ...(onOpenMq ? [{ label: '消息队列管理', icon: <ActionIcon kind="chart" />, onClick: () => onOpenMq(node.conn!) }] : []),
           { label: '新建查询', icon: <ActionIcon kind="query" />, onClick: () => onNewQuery(node.conn!, node.db!) },
           { label: '刷新列表', icon: <ActionIcon kind="refresh" />, onClick: () => { loadTables(node.conn!.id, node.db!) } },
@@ -457,6 +462,7 @@ export default function ConnectionTree({
       // 没有 SQL 的引擎(MQ 的 topic/队列、Redis 的键): 表统计/同步/比对/ER 会拼出真 SQL 打过去, 一律不给
       if (isNoSqlConn(node.conn)) {
         return [
+          ...(onOpenRedis && isRedisConn(node.conn) ? [{ label: '在键管理里打开', icon: <ActionIcon kind="chart" />, onClick: () => onOpenRedis!(node.conn!, node.db!, node.table!) }] : []),
           ...(onOpenMq ? [{ label: '查看消息', icon: <ActionIcon kind="chart" />, onClick: () => onOpenMq(node.conn!, node.table!) }] : []),
           { label: '新建查询 (FROM)', icon: <ActionIcon kind="query" />, onClick: () => onNewQueryWithSQL(node.conn!, node.db!, `SELECT * FROM ${node.table} LIMIT 100`) },
           { divider: 'heavy' },

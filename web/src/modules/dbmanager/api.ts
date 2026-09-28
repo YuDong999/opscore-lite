@@ -533,6 +533,38 @@ export async function mqCapabilities(id: string): Promise<{ ok?: boolean; capabi
 // 发送消息: 只发表达意图, 协议 JSON 由后端按引擎拼(与 apply-* 同一规矩)
 export const mqPublish = (body: Record<string, unknown>) => txPost('mq/publish', body)
 
+// ── Redis 面板: 能力清单 + 键的写操作 ──
+// 写操作只发**意图**(键名/值/ttl), 命令由后端用 go-redis 的类型化调用发出 ——
+// 前端拼 `SET k <value>` 就得自己处理转义, 少转一个引号就是一条注入。
+export interface RedisCapability {
+  engine: string
+  valueKinds: string[]
+  ops: string[]
+  note?: string
+}
+
+export async function redisCapabilities(id: string): Promise<{ ok?: boolean; capability?: RedisCapability; error?: string }> {
+  const t = localStorage.getItem('opscore-token')
+  const r = await fetch('/api/dbmanager/redis/capabilities?id=' + encodeURIComponent(id), {
+    headers: t ? { Authorization: `Bearer ${t}` } : {},
+  })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+
+export interface RedisWriteBody {
+  op: 'set' | 'expire' | 'del' | 'rename'
+  id: string
+  database: string
+  key: string
+  toKey?: string
+  value?: string
+  valueBase64?: boolean
+  ttlSeconds?: number
+  confirm: boolean
+}
+
+export const redisWrite = (body: RedisWriteBody) => txPost('redis/write', body as unknown as Record<string, unknown>)
+
 export async function runQueryRaw(
   id: string,
   sql: string,

@@ -96,6 +96,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/tx/rollback", Handler: h.handleTxRollback},
 			{Path: "/api/dbmanager/tx/status", Handler: h.handleTxStatus},
 			{Path: "/api/dbmanager/mq/capabilities", Handler: h.handleMQCapabilities},
+			{Path: "/api/dbmanager/redis/capabilities", Handler: h.handleRedisCapabilities},
+			{Path: "/api/dbmanager/redis/write", Handler: h.handleRedisWrite},
 			{Path: "/api/dbmanager/mq/publish", Handler: h.handleMQPublish},
 			{Path: "/api/dbmanager/next-id", Handler: h.handleNextID},
 			{Path: "/api/dbmanager/id-worker", Handler: h.handleIDWorker},
