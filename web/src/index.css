@@ -3821,6 +3821,26 @@ body {
 .db-save-inline { display: inline-flex; align-items: center; gap: 0.25rem; }
 
 /* 手动事务状态条: 事务模式下贴在编辑器头部下方, 显示"有多少东西还没落库" */
+/* P1-7 备份面板: 重点让"这份备份不含什么"一眼可见(两条路径保真度不同, 用户必须能分辨) */
+.db-backup-section { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
+.db-backup { display: flex; flex-direction: column; gap: 8px; }
+.db-backup-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-tint); }
+.db-backup-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.db-backup-field { display: flex; flex-direction: column; gap: 2px; font-size: 0.75rem; min-width: 10rem; }
+.db-backup-check { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; padding-bottom: 4px; }
+.db-backup-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.db-backup-plan { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; background: var(--surface-tint); display: flex; flex-direction: column; gap: 6px; }
+.db-backup-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.db-backup-plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 6px 16px; font-size: 0.75rem; }
+.db-backup-mode { font-size: 0.6875rem; font-weight: 600; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border); }
+.db-backup-mode-ok { color: var(--text); border-color: var(--accent); }
+.db-backup-mode-warn { color: var(--warn, #b45309); border-color: var(--warn, #b45309); }
+/* "不含什么"用醒目色: 它不是细节, 是"能不能完整恢复"的判据 */
+.db-backup-warn { color: var(--warn, #b45309); }
+.db-backup-hint { font-size: 0.6875rem; color: var(--text-dim); border-left: 2px solid var(--border); padding-left: 6px; }
+.db-backup-ok { color: var(--accent); font-size: 0.75rem; }
+.db-backup-bad { color: var(--danger); font-size: 0.75rem; }
+
 /* P1-9 参数化查询面板: 与事务状态条同一层(在编辑器之上), 观感沿用 .db-audit 的卡片语言 */
 .db-param-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-tint); }
 .db-param-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

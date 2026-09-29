@@ -18,6 +18,11 @@ const (
 
 // loadBackupRecords 读全部历史(读不到就返回空, 不报错 —— 首次运行本来就没有)。
 func (h *Handlers) loadBackupRecords() []BackupRecord {
+	// h 或 store 未就绪时返回空, **不 panic** —— 这个函数在探路/备份/清理三条路上都会被调,
+	// 任何一条路上空指针崩掉都会把整个 HTTP 请求打成 500(真机测出来过)。
+	if h == nil || h.store == nil {
+		return nil
+	}
 	st := h.store.store()
 	if st == nil {
 		return nil
@@ -67,15 +72,17 @@ func (h *Handlers) saveBackupRecord(rec BackupRecord) {
 // **只动同一条连接 + 同一个库**的记录: 跨连接误删别人的备份是不可接受的。
 // 删文件失败不中断(记录里仍留着说明"文件可能还在"), 但会记进返回值让用户知道。
 func (h *Handlers) pruneBackups(connID, database string, keep int, hostID string) []BackupRecord {
+	// 全部分支都返回**非 nil** 切片: nil 会序列化成 null, 前端 .length 会炸
+	// (本模块已因 nil 切片踩过两次, 见 backup.go 同一条注释)。
 	if keep <= 0 {
-		return nil
+		return []BackupRecord{}
 	}
 	list := h.loadBackupRecords()
 	victims := planPrune(list, connID, database, keep)
 	if len(victims) == 0 {
-		return nil
+		return []BackupRecord{}
 	}
-	var pruned []BackupRecord
+	pruned := []BackupRecord{}
 	alive := make([]BackupRecord, 0, len(list))
 	dead := map[string]bool{}
 	for _, v := range victims {

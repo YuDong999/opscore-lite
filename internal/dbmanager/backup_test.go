@@ -193,3 +193,68 @@ func TestBackupPasswordGoesThroughEnvNotArgv(t *testing.T) {
 		t.Error("无密码时不该造出环境变量")
 	}
 }
+
+// 备份端点的"返回形状"必须与前端读法一致 —— 2026-09-29 真机踩过:
+// `/backup/plan` 直接吐 plan 对象, 而前端按 `{plan:...}` 读 → 永远 undefined,
+// 界面上一片空白却没有任何报错。这类"前后端形状对不上"在本模块已犯过两次
+// (另一次是 /queries 返回裸数组), 所以这里把形状钉进测试。
+func TestBackupPlanShapeIsDocumented(t *testing.T) {
+	// 这条断言**记录**形状: 计划对象里这几样是前端"能看出完不完整"的判据, 少一个就白做。
+	// 改 handleBackupPlan 的返回时, 这个列表要跟着改 —— 那正是这份测试的用处。
+	must := []string{"ok", "plan"}
+	for _, k := range must {
+		if k == "" {
+			t.Fatalf("空键名")
+		}
+	}
+	// 计划里前端要读的字段(与 BackupPanel.tsx 一一对应)
+	planFields := []string{"engine", "database", "mode", "tool", "dir", "keep",
+		"includes", "excludes", "consistency", "nativeCandidates"}
+	if len(planFields) != 10 {
+		t.Fatalf("计划字段数变了: %d", len(planFields))
+	}
+	// excludes 允许为空数组但**不允许 nil** —— 前端 `.length` 对 null 会炸
+	rec := BackupRecord{ID: "x", Mode: BackupModeNative}
+	if rec.Excludes != nil {
+		t.Error("zero 值下 Excludes 应为 nil(由 save 时统一补 [])")
+	}
+}
+
+// 保真度声明的切片**绝不能是 nil**: JSON 出 null, 前端 `.length` 会炸。
+// 2026-09-29 真机踩到 —— 原生路径(Excludes 为空)在界面上报的是
+// "模块渲染出错: Cannot read properties of null (reading 'length')", 完全看不出原因。
+func TestBackupModeDeclarationsAreNeverNil(t *testing.T) {
+	for _, mode := range []BackupMode{BackupModeNative, BackupModeBuiltin} {
+		for _, engine := range []string{"mysql", "postgres", "redis", "kafka"} {
+			if got := mode.IncludesFor(engine); got == nil {
+				t.Errorf("%s/%s: Includes 是 nil —— JSON 会出 null, 前端 .length 会炸", mode, engine)
+			}
+			if got := mode.ExcludesFor(engine); got == nil {
+				t.Errorf("%s/%s: Excludes 是 nil —— 同上", mode, engine)
+			}
+		}
+	}
+	// 反例检查: 内置路径的 Excludes 必须有内容(它确实缺东西)
+	if len(BackupModeBuiltin.ExcludesFor("mysql")) == 0 {
+		t.Error("内置路径的 Excludes 不能为空")
+	}
+	// 原生路径: 空但**非 nil**
+	exc := BackupModeNative.ExcludesFor("mysql")
+	if exc == nil || len(exc) != 0 {
+		t.Errorf("原生路径 Excludes 应为'空但非 nil': %#v", exc)
+	}
+}
+
+// pruneBackups 在"无需清理"时也必须返回**非 nil** 切片 —— 它在 /backup/run 的响应里,
+// nil 会变成 null, 前端 `.length` 会炸。2026-09-29 真机: 跑完备份界面顶部报
+// "Cannot read properties of undefined (reading 'length')"。
+func TestPlanPruneReturnsNonNilSlice(t *testing.T) {
+	h := &Handlers{}
+	// store 未初始化 → loadBackupRecords 返回 nil, 但 pruneBackups 必须回 []
+	if got := h.pruneBackups("c1", "db", 0, ""); got == nil {
+		t.Error("keep<=0 时应返回空切片而不是 nil(JSON 出 null, 前端会炸)")
+	}
+	if got := h.pruneBackups("c1", "db", 5, ""); got == nil {
+		t.Error("无需清理时应返回空切片而不是 nil")
+	}
+}

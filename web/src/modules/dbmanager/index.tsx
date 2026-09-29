@@ -38,10 +38,11 @@ import ProcessListPanel from './ProcessListPanel'
 import TableStatusPanel from './TableStatusPanel'
 import ExplainPanel from './ExplainPanel'
 import SavedQueriesPanel from './SavedQueriesPanel'
+import BackupPanel from './BackupPanel'
 
 interface WorkTab {
   key: string          // data:cid.db.table / query:cid / doc:cid.db.table / sync / audit / drivers / slow / status / explain / queries
-  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs' | 'mq' | 'redis'
+  kind: 'data' | 'query' | 'doc' | 'sync' | 'schemadiff' | 'datadiff' | 'audit' | 'drivers' | 'slow' | 'status' | 'explain' | 'queries' | 'er' | 'overview' | 'dash' | 'procs' | 'mq' | 'redis' | 'backup'
   connId: string
   db?: string
   table?: string
@@ -283,6 +284,11 @@ export default function DatabaseManagerModule() {
     const key = `redis:${c.id}.${db}`
     if (keyName) redisSeedRef.current = { key, name: keyName }
     openTab({ key, kind: 'redis', connId: c.id, db, label: keyName ? `${keyName}` : `Redis ${db}` })
+  }
+  // 备份面板: 一个连接一个页签。它是"对整库的操作", 不是对某个对象, 所以从连接级进入。
+  const handleOpenBackup = (c: ConnectionInfo, db?: string) => {
+    setConn(c)
+    openTab({ key: `backup:${c.id}`, kind: 'backup', connId: c.id, db, label: '备份' })
   }
   const handleOpenMq = (c: ConnectionInfo, topic?: string) => {
     setConn(c)
@@ -527,6 +533,10 @@ ${ddl};
         <div className="db-head-global-actions">
           <button className="btn-glass-soft btn-glass-soft-sm" title="驱动管理" onClick={() => openTab({ key: 'drivers', kind: 'drivers', connId: '', label: '驱动管理' })}>驱动</button>
           <button className="btn-glass-soft btn-glass-soft-sm" title="保存的查询" onClick={() => openTab({ key: 'queries', kind: 'queries', connId: '', label: '保存的查询' })}>查询</button>
+          {conn && (
+            <button className="btn-glass-soft btn-glass-soft-sm" title="数据库备份(原生工具 / 内置导出)"
+              onClick={() => handleOpenBackup(conn, conn.config?.database || '')}>备份</button>
+          )}
           {conn && isRedisConn && (
             <button className="btn-glass-soft btn-glass-soft-sm" title="Redis 键管理(浏览 + 键级写操作)"
               onClick={() => handleOpenRedis(conn, conn.config?.database || 'db0')}>Redis</button>
@@ -676,7 +686,7 @@ ${ddl};
                         if (next) setActiveTab(next.key)
                       }
                     }}>
-                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : t.kind === 'mq' ? 'MQ' : t.kind === 'redis' ? 'KV' : '查'}</span>
+                    <span className="db-worktab-kind">{t.kind === 'data' ? '表' : t.kind === 'query' ? 'SQL' : t.kind === 'doc' ? 'DDL' : t.kind === 'sync' ? '同步' : t.kind === 'schemadiff' ? '比对' : t.kind === 'datadiff' ? '比数' : t.kind === 'audit' ? '审' : t.kind === 'drivers' ? '驱' : t.kind === 'mq' ? 'MQ' : t.kind === 'redis' ? 'KV' : t.kind === 'backup' ? '备份' : '查'}</span>
                     <span className="db-worktab-label">{t.label}</span>
                     <button type="button" className="db-worktab-close" aria-label={`关闭 ${t.label}`}
                       onClick={e => { e.stopPropagation(); closeTab(t.key) }}>×</button>
@@ -759,6 +769,10 @@ ${ddl};
                     return <div className="db-status-section" key={t.key}><TableStatusPanel connId={t.connId} database={t.db!} table={t.table!} /></div>
                   case 'explain':
                     return <div className="db-explain-section" key={t.key}><ExplainPanel connId={t.connId} sql={explainSqlRef.current || lastSQLRef.current} /></div>
+                  case 'backup':
+                    return <div className="db-backup-section" key={t.key}>
+                      <BackupPanel conns={conns} activeConn={c!} />
+                    </div>
                   case 'queries':
                     return <div className="db-queries-section" key={t.key}>
                       <SavedQueriesPanel conns={conns} activeConn={activeConn}

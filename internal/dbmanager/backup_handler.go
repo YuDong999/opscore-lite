@@ -1,9 +1,10 @@
 // 备份的 HTTP 端点(P1-7)。
 //
 // 三个动作刻意分开, 因为它们的语义完全不同:
-//   POST /backup/plan    —— **先探路**: 会走哪条(原生/内置)、包含什么、不含什么。让人先看清楚再决定。
-//   POST /backup/run     —— 真跑一次。
-//   GET  /backup/list    —— 历史记录(含 Mode/Includes/Excludes)。
+//
+//	POST /backup/plan    —— **先探路**: 会走哪条(原生/内置)、包含什么、不含什么。让人先看清楚再决定。
+//	POST /backup/run     —— 真跑一次。
+//	GET  /backup/list    —— 历史记录(含 Mode/Includes/Excludes)。
 //
 // "先探路"是刻意的设计: 备份是"你以为它完整、其实缺触发器"会出大事的操作, 所以让用户
 // 在跑之前就能看到这份备份将包含/不包含什么, 而不是跑完才发现。
@@ -73,19 +74,25 @@ func (h *Handlers) handleBackupPlan(w http.ResponseWriter, r *http.Request) {
 		keep = backupDefaultKeep
 	}
 
+	// 包一层 {ok, plan}: 本模块的 /backup/run 是 {ok, record}、/backup/list 是 {records},
+	// 探路也照同一形状 —— 前端就能统一按 r.ok 判成败, 不靠"字段在不在"猜。
+	// (第一版直接吐 plan 对象, 前端按 {plan:...} 读 → 永远 undefined, 真机才发现。)
 	writeJSON(w, map[string]any{
-		"engine":      engine,
-		"database":    body.Database,
-		"hostId":      body.HostID,
-		"mode":        mode,
-		"tool":        strings.TrimSpace(tool + " " + version),
-		"dir":         dir,
-		"keep":        keep,
-		"includes":    mode.IncludesFor(engine), // 必看: 这份备份包含什么
-		"excludes":    mode.ExcludesFor(engine), // 必看: 不含什么(空 = 完整)
-		"consistency": mode.ConsistencyFor(engine),
-		// 没有原生工具且引擎也不是 MySQL/PG 时, 说清为什么只能走内置
-		"nativeCandidates": nativeToolCandidates(engine),
+		"ok": true,
+		"plan": map[string]any{
+			"engine":      engine,
+			"database":    body.Database,
+			"hostId":      body.HostID,
+			"mode":        mode,
+			"tool":        strings.TrimSpace(tool + " " + version),
+			"dir":         dir,
+			"keep":        keep,
+			"includes":    mode.IncludesFor(engine), // 必看: 这份备份包含什么
+			"excludes":    mode.ExcludesFor(engine), // 必看: 不含什么(空 = 完整)
+			"consistency": mode.ConsistencyFor(engine),
+			// 没有原生工具且引擎也不是 MySQL/PG 时, 说清为什么只能走内置
+			"nativeCandidates": nativeToolCandidates(engine),
+		},
 	})
 }
 

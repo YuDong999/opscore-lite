@@ -16,9 +16,9 @@
 // RunOnTarget 在目标机执行。备份文件也落在**目标机**上(路径由调用方给)。
 //
 // ## 刻意没做
-// - **不做增量**: 增量是另一个量级的事(位点/时间戳/一致性), 做错比不做更危险。
-// - **不设行数上限**: dbx 是每表 1 万行(`DATABASE_EXPORT_ROW_LIMIT`), 那不是备份是取样。
-//   要限量由调用方显式给 maxRows。
+//   - **不做增量**: 增量是另一个量级的事(位点/时间戳/一致性), 做错比不做更危险。
+//   - **不设行数上限**: dbx 是每表 1 万行(`DATABASE_EXPORT_ROW_LIMIT`), 那不是备份是取样。
+//     要限量由调用方显式给 maxRows。
 package dbmanager
 
 import (
@@ -76,7 +76,9 @@ func (m BackupMode) IncludesFor(engine string) []string {
 		// 内置路径**必须如实说明缺什么** —— 它缺的正是"能不能完整恢复"的关键部分
 		return []string{"表结构(含列注释)", "索引", "数据"}
 	}
-	return nil
+	// 空切片而不是 nil: JSON 里出 [] 不出 null —— 前端 .length/.map 对 null 会炸
+	// (本仓已犯过两次: 同步模块与资源模块, 见记忆里"nil 切片"那条)。
+	return []string{}
 }
 
 // ExcludesFor 给出"这份备份不含什么"。内置路径这里是**非空**的, 且必须展示给用户。
@@ -84,7 +86,9 @@ func (m BackupMode) ExcludesFor(engine string) []string {
 	if m == BackupModeBuiltin {
 		return []string{"触发器", "存储过程/函数", "事件", "权限(GRANT)", "序列当前值", "表空间/分区定义细节"}
 	}
-	return nil // 原生路径: 完整
+	// 原生路径"完整", 所以这里是**空切片**(不是 nil): JSON 出 [] 不出 null。
+	// 前端会在界面上显示"不含(完整)"—— 那正是要传达的信息。
+	return []string{}
 }
 
 // ConsistencyFor 说明这份备份的一致性口径 —— 没有它, "备份中途有人写入"就是一份自相矛盾的备份。

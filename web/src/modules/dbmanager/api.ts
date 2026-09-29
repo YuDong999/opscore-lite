@@ -452,6 +452,7 @@ export interface TxResp {
     ok?: boolean
     txId?: string
     statement?: string  // mq/publish 回的是"将要/已经执行的那句"(PRODUCE ...), 用于提示与确认预览
+    receivers?: number  // redis/publish 回的是"几个订阅者收到了"(0 是有意义的信息, 不是失败)
     active?: boolean
     count?: number
     affected?: number
@@ -542,6 +543,11 @@ export interface RedisCapability {
   valueKinds: string[]
   ops: string[]
   note?: string
+  /** single | sentinel | cluster —— 面板据此说明"多库/频道"的差别, 而不是点了才报错 */
+  topology?: string
+  /** Cluster 只有 db0: false 时要把多库入口收起并说明原因 */
+  multiDb?: boolean
+  pubsub?: boolean
 }
 
 export async function redisCapabilities(id: string): Promise<{ ok?: boolean; capability?: RedisCapability; error?: string }> {
@@ -566,6 +572,59 @@ export interface RedisWriteBody {
 
 export const redisWrite = (body: RedisWriteBody) => txPost('redis/write', body as unknown as Record<string, unknown>)
 
+// ── Redis Pub/Sub ──
+// 快照(PUBSUB CHANNELS/NUMSUB/NUMPAT)是**纯只读**, 挂在 GET 上;
+// "实时看一会儿"要真的订阅, 有限时长、到期自动退订 —— 控制台不留常驻订阅。
+export interface RedisPubSubChannel {
+  name: string
+  kind: 'channel' | 'pattern' | 'shard'
+  subscribers: number
+}
+export interface RedisPubSubSnapshot {
+  channels: RedisPubSubChannel[]
+  numPat: number
+  shardSupported: boolean
+  note?: string
+}
+export interface RedisPubSubMessage {
+  channel: string
+  pattern?: string
+  payload: string
+  payloadB64?: boolean
+  at: number
+}
+export interface RedisPubSubResult {
+  messages: RedisPubSubMessage[]
+  seconds: number
+  truncated: boolean
+  /** 实际盯了多久(ms) —— 比窗口短很多就说明是提前退出, 不是"看完了这段时间" */
+  elapsedMs?: number
+  /** 重订阅了几段: 长窗口按 5 秒一段, 段首要重新订阅(落在那几百毫秒里的消息会漏) */
+  slices?: number
+  /** 订阅中途断了: 这时 messages=0 的含义是"收不到了", 不是"没有消息" */
+  interrupted?: boolean
+  note?: string
+}
+
+export async function redisPubSubSnapshot(
+  id: string, database: string,
+): Promise<{ ok?: boolean; snapshot?: RedisPubSubSnapshot; error?: string }> {
+  const t = localStorage.getItem('opscore-token')
+  const r = await fetch(`/api/dbmanager/redis/pubsub?id=${encodeURIComponent(id)}&database=${encodeURIComponent(database)}`, {
+    headers: t ? { Authorization: `Bearer ${t}` } : {},
+  })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+
+export const redisPubSubDrain = (body: {
+  id: string; database: string; channels: string[]; patterns: string[]; seconds: number
+}) => txPost('redis/pubsub', body as unknown as Record<string, unknown>)
+
+// PUBLISH 是写: 会推给所有订阅者(可能触发别人的业务), 所以与 SET/DEL 走同一条护栏链。
+export const redisPublish = (body: {
+  id: string; database: string; channel: string; payload: string; confirm: boolean
+}) => txPost('redis/publish', body as unknown as Record<string, unknown>)
+
 export async function runQueryRaw(
   id: string,
   sql: string,
@@ -585,6 +644,80 @@ export async function runQueryRaw(
   })
   const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   return { status: r.status, data }
+}
+
+// ── P1-7 数据库备份 ──
+// 三个端点对应三个语义完全不同的动作: **先探路 → 再跑 → 查历史**。
+// "先探路"是刻意的: 备份是"你以为完整、其实缺东西"会出大事的操作, 让人跑之前就看清
+// 这份备份将包含/不包含什么(backupPlan 的 includes/excludes), 而不是跑完才发现。
+export type BackupMode = 'native' | 'builtin' | 'native-unavailable'
+
+export interface BackupRecord {
+  id: string
+  connId: string
+  connName: string
+  engine: string
+  database: string
+  mode: BackupMode
+  tool?: string
+  consistency?: string
+  hostId?: string
+  filePath: string
+  sizeBytes: number
+  tables?: string[]
+  /** 这份备份**包含**什么 */
+  includes: string[]
+  /** 这份备份**不含**什么(空 = 完整) */
+  excludes: string[]
+  durationMs: number
+  startedAt: number
+  status: 'ok' | 'failed'
+  error?: string
+}
+
+export interface BackupPlan {
+  engine: string
+  database: string
+  hostId?: string
+  mode: BackupMode
+  tool: string
+  dir: string
+  keep: number
+  includes: string[]
+  excludes: string[]
+  consistency: string
+  nativeCandidates: string[] | null
+}
+
+export interface BackupRequest {
+  connId: string
+  database: string
+  tables?: string[]
+  hostId?: string
+  dir?: string
+  keep?: number
+  /** 显式要求走内置导出(不依赖探测结果) */
+  forceBuiltin?: boolean
+}
+
+/** 探路: 不执行任何备份, 只回答"如果现在跑, 会走哪条路径、包含/不含什么、写到哪"。 */
+export async function backupPlan(req: BackupRequest): Promise<{ plan?: BackupPlan; error?: string }> {
+  return postJSON('/api/dbmanager/backup/plan', req)
+}
+
+export async function backupRun(req: BackupRequest): Promise<{
+  ok?: boolean; record?: BackupRecord; pruned?: BackupRecord[]; error?: string
+}> {
+  return postJSON('/api/dbmanager/backup/run', req)
+}
+
+export async function backupList(connId?: string): Promise<{
+  records: BackupRecord[]; defaultDir: string; defaultKeep: number
+}> {
+  const q = connId ? `?id=${encodeURIComponent(connId)}` : ''
+  const r = await getJSON<{ records: BackupRecord[]; defaultDir: string; defaultKeep: number }>(
+    `/api/dbmanager/backup/list${q}`)
+  return { records: r.records || [], defaultDir: r.defaultDir || '', defaultKeep: r.defaultKeep || 5 }
 }
 
 // ── P1-13 单元格分片读 / 下载 ──
