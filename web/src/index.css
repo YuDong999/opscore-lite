@@ -3823,12 +3823,12 @@ body {
 /* 手动事务状态条: 事务模式下贴在编辑器头部下方, 显示"有多少东西还没落库" */
 /* P1-7 备份面板: 重点让"这份备份不含什么"一眼可见(两条路径保真度不同, 用户必须能分辨) */
 .db-backup-section { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
-.db-backup { display: flex; flex-direction: column; gap: 8px; }
-.db-backup-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-tint); }
-.db-backup-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
-.db-backup-field { display: flex; flex-direction: column; gap: 2px; font-size: 0.75rem; min-width: 10rem; }
-.db-backup-check { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; padding-bottom: 4px; }
-.db-backup-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.db-backup { display: flex; flex-direction: column; gap: 10px; }
+.db-backup-form { display: flex; flex-direction: column; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-tint); }
+.db-backup-row { display: flex; align-items: flex-end; gap: 12px 14px; flex-wrap: wrap; }
+.db-backup-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.75rem; min-width: 12rem; }
+.db-backup-check { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; padding-bottom: 4px; }
+.db-backup-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 .db-backup-plan { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; background: var(--surface-tint); display: flex; flex-direction: column; gap: 6px; }
 .db-backup-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .db-backup-plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 6px 16px; font-size: 0.75rem; }
@@ -3838,6 +3838,9 @@ body {
 /* "不含什么"用醒目色: 它不是细节, 是"能不能完整恢复"的判据 */
 .db-backup-warn { color: var(--warn, #b45309); }
 .db-backup-hint { font-size: 0.6875rem; color: var(--text-dim); border-left: 2px solid var(--border); padding-left: 6px; }
+/* 库名非法(如不存在/为空): 把出错的那一格直接标出来, 用户不用从底部 banner 反推是哪一行 */
+.db-backup-field .input-bad { border-color: var(--danger); }
+.db-backup-field .input-bad:focus { border-color: var(--danger); }
 .db-backup-ok { color: var(--accent); font-size: 0.75rem; }
 .db-backup-bad { color: var(--danger); font-size: 0.75rem; }
 

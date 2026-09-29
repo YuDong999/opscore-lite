@@ -39,10 +39,32 @@ if (how === 'atomic') {
   } catch {}
   if (hadOld) setTimeout(() => { try { fs.rmSync(retired, { recursive: true, force: true }) } catch {} }, 5000)
 } else {
-  // 覆盖拷贝: dist 原地保留（modules/ 自然不受影响），只把新 SPA 产物盖上去
+  // 覆盖拷贝: dist 被 8088 占用时无法原子换, 只能原地覆盖。
+  // 关键: Vite 产物名带内容哈希, **只覆盖不删除**会让 index-*.js / index-*.css 每构建一次
+  // 多留一份 —— 实测 22 次发布后远端 assets/ 堆到 432 个文件, 而且整包一起传给用户。
+  // 所以先盖新的, 再把"这次产物里没有的"旧文件清掉。
+  // 顺序不能反: 先删会让 index.html 指着一个已被删掉的 js(白屏窗口)。
   const modsBefore = hasModules()
   fs.cpSync('dist.build', 'dist', { recursive: true, force: true })
+  const keep = new Set(['modules'])            // 单模块页不在本次产物里, 不是陈旧文件
+  for (const n of fs.readdirSync('dist.build')) keep.add(n)
+  let removed = 0
+  for (const name of fs.readdirSync('dist')) {
+    if (keep.has(name)) continue
+    fs.rmSync(`dist/${name}`, { recursive: true, force: true })
+    removed++
+  }
+  for (const dir of ['assets']) {              // 只清 assets/: 顶层旧文件本就该没了
+    const target = `dist/${dir}`, fresh = `dist.build/${dir}`
+    if (!fs.existsSync(target) || !fs.existsSync(fresh)) continue
+    for (const n of fs.readdirSync(target)) {
+      if (fs.existsSync(`${fresh}/${n}`)) continue
+      fs.rmSync(`${target}/${n}`, { recursive: true, force: true })
+      removed++
+    }
+  }
   fs.rmSync('dist.build', { recursive: true, force: true })
+  if (removed > 0) console.log(`[build-spa] 清掉 ${removed} 个上一版遗留产物(哈希文件名不删除就会一直堆)`)
   if (!modsBefore && hasModules()) how = 'copy(+modules)'
 }
 

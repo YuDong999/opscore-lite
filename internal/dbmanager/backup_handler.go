@@ -11,9 +11,11 @@
 package dbmanager
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // backupPlanBody /backup/plan 与 /backup/run 的请求体。
@@ -46,6 +48,17 @@ func (h *Handlers) handleBackupPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validBackupTarget(body.Database) {
 		writeErr(w, "库名非法", http.StatusBadRequest)
+		return
+	}
+	// 库名存在性校验: 探路的全部价值是"开跑前就看清"。若库名根本不存在(打错字/选错连接)
+	// 却照样返回一份"看起来没问题"的计划, 用户要等到真跑失败才发现 —— 那探路就白探了。
+	// 只在**确实列得出库列表**时才判(文件型等引擎列不出库列表): 列不出来就不拦,
+	// 宁可漏判也不能错杀本来能用的路径。
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	names, lerr := h.svc.ListDatabases(ctx, body.ConnID)
+	cancel()
+	if lerr == nil && len(names) > 0 && !backupListHasName(names, body.Database) {
+		writeErr(w, "库不存在: "+body.Database+"（该连接上可访问的库: "+strings.Join(capNames(names, 12), ", ")+"）", http.StatusBadRequest)
 		return
 	}
 	engine := string(conn.Info.Engine)
@@ -168,4 +181,25 @@ func (h *Handlers) handleBackupList(w http.ResponseWriter, r *http.Request) {
 		out[i], out[j] = out[j], out[i]
 	}
 	writeJSON(w, map[string]any{"records": out, "defaultDir": backupDefaultDir, "defaultKeep": backupDefaultKeep})
+}
+
+// backupListHasName 判断库名是否出现在可访问库列表里(大小写不敏感 —— MySQL 在
+// 不区分大小写的文件系统上, 库名大小写与 SHOW DATABASES 的返回可能不一致)。
+func backupListHasName(names []string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, n := range names {
+		if strings.EqualFold(n, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// capNames 截断过长的库名列表(错误信息里不该把几十个系统库全铺出来)。
+func capNames(names []string, max int) []string {
+	if len(names) <= max {
+		return names
+	}
+	out := append([]string{}, names[:max]...)
+	return append(out, "……")
 }

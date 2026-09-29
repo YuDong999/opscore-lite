@@ -258,3 +258,32 @@ func TestPlanPruneReturnsNonNilSlice(t *testing.T) {
 		t.Error("无需清理时应返回空切片而不是 nil")
 	}
 }
+
+// 探路的库存在性校验: 打错库名**不能**返回一份"看起来没问题"的计划 ——
+// 2026-09-29 真机发现 POST /backup/plan 带 nope_zzz 也返回 200 计划, 用户要等到真跑
+// 才发现库不存在, 探路(让人开跑前看清)就失去意义了。
+func TestBackupListHasNameIsCaseInsensitive(t *testing.T) {
+	names := []string{"employees", "xianyu_data", "mysql"}
+	for _, want := range []string{"employees", "EMPLOYEES", "Xianyu_Data", " mysql "} {
+		if !backupListHasName(names, want) {
+			t.Errorf("%q 应被判为存在", want)
+		}
+	}
+	for _, miss := range []string{"nope_zzz", "employee", ""} {
+		if backupListHasName(names, miss) {
+			t.Errorf("%q 不应被判为存在", miss)
+		}
+	}
+}
+
+// 错误信息里不该把几十个系统库全铺出来。
+func TestCapNamesTruncatesWithEllipsis(t *testing.T) {
+	many := []string{"a", "b", "c", "d"}
+	got := capNames(many, 2)
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "……" {
+		t.Fatalf("capNames = %v, want [a b ……]", got)
+	}
+	if got := capNames([]string{"a"}, 5); len(got) != 1 {
+		t.Fatalf("未超限不应改动: %v", got)
+	}
+}

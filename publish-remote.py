@@ -170,6 +170,16 @@ else
   echo "    [警告] dbmanager 模块页缺失(只发了 SPA?)"
 fi
 echo "    服务: $(systemctl is-active opscore)  二进制: $(ls -l /opt/opscore/opscore | awk '{print $5" bytes "$6" "$7" "$8}')"
+echo "    dist/assets 文件数: $(ls -1 /opt/opscore/web/dist/assets | wc -l)"
+
+# 清理 /opt/opscore/backups 只留 N 份 —— 每次部署备份约 90MB, 不清理会一直涨
+KEEP_BK=5
+ls -1dt /opt/opscore/backups/*/ 2>/dev/null | tail -n +$((KEEP_BK+1)) | while read -r d; do
+  rm -rf "$d"
+  echo "    已清理旧备份: $(basename "$d")"
+done
+echo "    /opt/opscore/backups 保留: $(ls -1d /opt/opscore/backups/*/ 2>/dev/null | wc -l) 份, 共 $(du -sh /opt/opscore/backups 2>/dev/null | cut -f1)"
+
 """
 
 

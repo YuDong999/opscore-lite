@@ -60,6 +60,9 @@ export default function BackupPanel({
   const [defaults, setDefaults] = useState<{ dir: string; keep: number }>({ dir: '', keep: 5 })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // dbBad: 库名那一格非法时把输入框标红。只在底部 banner 写一句话的话,
+  // 表单有三行、提示离得远, 用户看不出该改哪一格。
+  const [dbBad, setDbBad] = useState(false)
 
   const reload = useCallback(async () => {
     try {
@@ -77,6 +80,8 @@ export default function BackupPanel({
     // 换连接时清掉上一次的探路结果 —— 留着最容易让人看错库
     setPlan(null)
     setDatabase(activeConn?.config?.database || '')
+    setDbBad(false)
+    setErr('')
   }, [activeConn?.id])
 
   // 库列表: 复用元数据端点(与其他面板一致)
@@ -102,12 +107,26 @@ export default function BackupPanel({
   })
 
   const doPlan = async () => {
-    if (!activeConn) { toast.error('先选一个连接'); return }
-    if (!database.trim()) { toast.error('先选要备份的库'); return }
+    if (!activeConn) { setErr('先选一个连接'); toast.error('先选一个连接'); return }
+    // 空库名: 以前只弹一个 2.8 秒的 toast, 页面上不留任何痕迹 —— 用户看到的就是
+    // "点了没反应/探路失败"。现在同时置 err(持久 banner) 与 dbBad(输入框标红)。
+    if (!database.trim()) {
+      setPlan(null); setDbBad(true)
+      setErr('先选择要备份的库 —— 从下拉里选一个, 或在「数据库」里手填库名')
+      toast.error('先选要备份的库')
+      return
+    }
+    setDbBad(false)
     setBusy(true); setErr('')
     try {
       const r = await backupPlan(buildReq())
-      if (r.error || !r.plan) { setErr(r.error || '探路失败'); setPlan(null); return }
+      if (r.error || !r.plan) {
+        const msg = r.error || '探路失败'
+        setErr(msg); setPlan(null)
+        // 库不存在是很典型的"库名打错": 把输入框一起标红, 别让用户去猜是哪里错
+        setDbBad(/库|database|不存在/i.test(msg))
+        return
+      }
       // 容错: 接口可能给 null(后端不守 [] 约定时), 这里归一到空数组 ——
       // 渲染不因为一个 null 整块崩(崩了的表现是"模块渲染出错", 完全看不出原因)。
       setPlan({
@@ -117,13 +136,18 @@ export default function BackupPanel({
         nativeCandidates: r.plan.nativeCandidates || [],
       })
     } catch (e: any) {
-      setErr(e.message || '探路失败')
+      // 注意: postJSON 对非 2xx 是**抛异常**(如 400 库不存在), 不走上面的 r.error 分支 ——
+      // 这里必须同样处理 dbBad, 否则"库名打错"时只有 banner 标红、输入框不红(真机验过)。
+      const msg = e.message || '探路失败'
+      setErr(msg)
+      setDbBad(/库|database|不存在/i.test(msg))
     } finally {
       setBusy(false)
     }
   }
 
   const doRun = async () => {
+    // 没探过路就点"开始备份": 先去探路。探路失败(如空库名)会自己置 err/dbBad, 这里不重复提示。
     if (!plan) { await doPlan(); return }
     const incomplete = (plan.excludes || []).length > 0
     const ok = await askConfirm(`备份 ${plan.database}?`, {
@@ -168,8 +192,9 @@ export default function BackupPanel({
         <div className="db-backup-row">
           <label className="db-backup-field">
             <span className="dim">数据库</span>
-            <input className="input" list="db-backup-dbs" value={database} placeholder="要备份的库"
-              onChange={e => { setDatabase(e.target.value); setPlan(null) }} />
+            <input className={'input' + (dbBad ? ' input-bad' : '')} list="db-backup-dbs" value={database}
+              placeholder="要备份的库"
+              onChange={e => { setDatabase(e.target.value); setPlan(null); setDbBad(false) }} />
             <datalist id="db-backup-dbs">{dbs.map(d => <option key={d} value={d} />)}</datalist>
           </label>
           <label className="db-backup-field">
