@@ -34,6 +34,14 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
+// Redis 的三种拓扑。**同一个实现支持三种**, 差别只在建 client 的 options
+// (go-redis 的 UniversalClient 把三者统一了), 上层的 SCAN/GET/TTL 调用一字不改。
+const (
+	redisTopologySingle   = "single"   // 单机: 一个地址
+	redisTopologySentinel = "sentinel" // 哨兵: 给哨兵地址列表 + master 名
+	redisTopologyCluster  = "cluster"  // 集群: 给种子节点列表, 客户端自动跟随 MOVED/ASK
+)
+
 const (
 	redisDefaultScanCount   = 500
 	redisMaxKeysListed      = 2000 // 列键上限: 超了就标 partial, 不把大库整个拖进界面
@@ -41,18 +49,28 @@ const (
 	redisMaxInlineValueSize = 256 << 10
 )
 
-// RedisDB 是引擎对外的句柄; 每个 db index 建一个 client(见文件头取舍 1)。
+// RedisDB 是引擎对外的句柄。
+//
+// 三种拓扑(single / sentinel / cluster)共用**一套实现**: go-redis 的 UniversalClient
+// 把 *Client / *ClusterClient / *FailoverClient 统一成一个接口, 所以这里存的 client 类型
+// 是 UniversalClient 而不是 *redis.Client —— 上层的 SCAN/GET/TTL 等调用一字不改。
+// 具体建哪一种由 NewUniversalClient 按 options 判定(见 redisUniversalOptions)。
+//
+// 每个 db index 一个 client(见文件头取舍 1)。注意 **cluster 模式只有 db 0**:
+// Redis Cluster 协议不支持多库, 所以 db index > 0 时这里直接报错而不是静默按 db0 跑。
 type RedisDB struct {
 	clientMu sync.Mutex
-	clients  map[int]*redis.Client
-	opts     redis.Options
+	clients  map[int]redis.UniversalClient
+	uopts    *redis.UniversalOptions
 	dbIndex  int
 	timeout  time.Duration
 	queryTO  time.Duration
+	// topology 记录连接形态(single/sentinel/cluster), 供能力清单与错误文案用
+	topology string
 }
 
 func newRedisDB() *RedisDB {
-	return &RedisDB{clients: map[int]*redis.Client{}, dbIndex: 0}
+	return &RedisDB{clients: map[int]redis.UniversalClient{}, dbIndex: 0, topology: "single"}
 }
 
 func (e *RedisDB) ctx() (context.Context, context.CancelFunc) {
@@ -62,7 +80,7 @@ func (e *RedisDB) ctx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
-func (e *RedisDB) client(db int) (*redis.Client, error) {
+func (e *RedisDB) client(db int) (redis.UniversalClient, error) {
 	e.clientMu.Lock()
 	defer e.clientMu.Unlock()
 	if c, ok := e.clients[db]; ok {
@@ -70,51 +88,145 @@ func (e *RedisDB) client(db int) (*redis.Client, error) {
 	}
 	if e.clients == nil {
 		// 工厂是按 &RedisDB{} 裸建的, 没走构造函数 —— 这里兜住, 否则写 nil map 直接 panic
-		e.clients = map[int]*redis.Client{}
+		e.clients = map[int]redis.UniversalClient{}
 	}
-	opt := e.opts
+	if e.uopts == nil {
+		e.uopts = &redis.UniversalOptions{}
+	}
+	// cluster 只有 db0: 协议层面不支持多库。这里明确拒绝而不是静默按 db0 跑 ——
+	// 静默会让用户以为自己在看 db3, 实际看的是 db0。
+	if e.topology == redisTopologyCluster && db != 0 {
+		return nil, fmt.Errorf("redis: Cluster 模式只有 db0(Redis Cluster 不支持多库), 无法切到 db%d", db)
+	}
+	opt := *e.uopts
 	opt.DB = db
-	c := redis.NewClient(&opt)
+	c := redis.NewUniversalClient(&opt)
 	e.clients[db] = c
 	return c, nil
 }
 
-// Connect 建立连接(只验证 db 0 可用, 其余库按需建)。
+// Connect 建立连接(只验证默认库可用, 其余库按需建)。
 func (e *RedisDB) Connect(config connection.ConnectionConfig) error {
-	host := strings.TrimSpace(config.Host)
-	if host == "" {
-		return errors.New("redis: 缺少地址")
-	}
-	port := config.Port
-	if port <= 0 {
-		port = 6379
-	}
 	e.timeout = redisDialTimeout(config)
 	e.queryTO = redisQueryTimeout(config)
-	e.opts = redis.Options{
-		Addr:     net.JoinHostPort(host, strconv.Itoa(port)),
-		Username: strings.TrimSpace(config.User),
-		Password: config.Password,
+
+	uopts, topo, err := redisUniversalOptions(config)
+	if err != nil {
+		return err
 	}
-	if config.UseSSL || strings.EqualFold(config.SSLMode, "skip-verify") {
-		e.opts.TLSConfig = &tls.Config{InsecureSkipVerify: strings.EqualFold(config.SSLMode, "skip-verify")}
-	}
+	e.uopts = uopts
+	e.topology = topo
+
 	e.dbIndex = redisPickDB(config)
 	if e.dbIndex < 0 {
 		return fmt.Errorf("redis: 非法的库号 %d", e.dbIndex)
 	}
-	c, err := e.client(e.dbIndex)
-	if err != nil {
-		return err
+	// cluster 只有 db0: 在这里就拦住, 免得用户以为自己连的是 db3
+	if topo == redisTopologyCluster && e.dbIndex != 0 {
+		return fmt.Errorf("redis: Cluster 模式只有 db0(Redis Cluster 协议不支持多库), "+
+			"当前配置要求 db%d", e.dbIndex)
+	}
+
+	c, cerr := e.client(e.dbIndex)
+	if cerr != nil {
+		return cerr
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), e.timeout+5*time.Second)
 	defer cancel()
 	if err := c.Ping(ctx).Err(); err != nil {
 		_ = c.Close()
-		e.clients = map[int]*redis.Client{}
+		e.clients = map[int]redis.UniversalClient{}
 		return fmt.Errorf("redis: 连接失败: %w", err)
 	}
 	return nil
+}
+
+// redisUniversalOptions 按连接配置判定拓扑并生成 go-redis 的通用 options。
+//
+// 三条规则, 都"以显式配置为准, 拿不准就报错", 不猜:
+//  1. topology=cluster 或给了多个 host → cluster(种子列表, 客户端自动跟随重定向);
+//  2. topology=sentinel 或填了 sentinel master 名 → sentinel(要哨兵地址 + master 名);
+//  3. 其余 → 单机。
+func redisUniversalOptions(config connection.ConnectionConfig) (*redis.UniversalOptions, string, error) {
+	hosts := normalizeRedisHosts(config)
+	if len(hosts) == 0 {
+		return nil, "", errors.New("redis: 缺少地址")
+	}
+	topo := strings.ToLower(strings.TrimSpace(config.Topology))
+	master := strings.TrimSpace(config.RedisSentinelMaster)
+
+	// 显式冲突要说清: 既说是 cluster 又给了 master 名, 只能拒绝
+	if topo == redisTopologyCluster && master != "" {
+		return nil, "", errors.New("redis: Cluster 模式不需要 Sentinel master 名, 请清掉其中一项")
+	}
+
+	uopts := &redis.UniversalOptions{
+		Username: strings.TrimSpace(config.User),
+		Password: config.Password,
+		// 哨兵自身也可能是带密码的(与数据节点不同账号), 所以单独给
+		SentinelUsername: strings.TrimSpace(config.RedisSentinelUser),
+		SentinelPassword: config.RedisSentinelPassword,
+		DialTimeout:      redisDialTimeout(config),
+	}
+	if config.UseSSL || strings.EqualFold(config.SSLMode, "skip-verify") {
+		uopts.TLSConfig = &tls.Config{InsecureSkipVerify: strings.EqualFold(config.SSLMode, "skip-verify")}
+	}
+
+	switch {
+	case topo == redisTopologyCluster || (topo == "" && len(hosts) > 1 && master == ""):
+		uopts.Addrs = hosts
+		// 默认让读也走主节点: 本产品是运维工具, 看的是"权威值", 不是缓存读
+		uopts.ReadOnly = false
+		return uopts, redisTopologyCluster, nil
+
+	case topo == redisTopologySentinel || master != "":
+		if master == "" {
+			return nil, "", errors.New("redis: Sentinel 模式必须填 master 名")
+		}
+		uopts.Addrs = hosts // 哨兵地址列表
+		uopts.MasterName = master
+		return uopts, redisTopologySentinel, nil
+
+	default:
+		if len(hosts) > 1 && topo == "" {
+			// 给了多个地址但没说是 cluster: 上面第一个 case 已覆盖, 这里兜底成 cluster 更合直觉
+			uopts.Addrs = hosts
+			return uopts, redisTopologyCluster, nil
+		}
+		uopts.Addrs = hosts[:1]
+		return uopts, redisTopologySingle, nil
+	}
+}
+
+// normalizeRedisHosts 把"host+port"与"hosts 列表"两种填法归一成 host:port 列表。
+//
+// 为什么两种都收: 表单上是 host/port 两个格子(单机最顺手), 而 cluster/sentinel 需要
+// 一串地址 —— 硬要求用户去填一串字符串才能用集群, 不如两者都支持。
+func normalizeRedisHosts(config connection.ConnectionConfig) []string {
+	var out []string
+	for _, h := range config.Hosts {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		// 没带端口的补默认端口(用户常只填主机名)
+		if !strings.Contains(h, ":") {
+			h = net.JoinHostPort(h, "6379")
+		}
+		out = append(out, h)
+	}
+	if len(out) == 0 {
+		host := strings.TrimSpace(config.Host)
+		if host == "" {
+			return nil
+		}
+		port := config.Port
+		if port <= 0 {
+			port = 6379
+		}
+		out = append(out, net.JoinHostPort(host, strconv.Itoa(port)))
+	}
+	return out
 }
 
 func (e *RedisDB) Close() error {
@@ -176,6 +288,10 @@ func (e *RedisDB) GetTables(dbName string) ([]string, error) {
 }
 
 func (e *RedisDB) scanKeys(db int, match string, capN int) ([]string, error) {
+	if e.isClusterTopology() {
+		// Cluster 的 SCAN 是**单节点**语义: 只扫到一个节点上就会漏键, 且漏得看不出来。
+		return e.scanKeysAllNodes(db, match, capN)
+	}
 	c, err := e.client(db)
 	if err != nil {
 		return nil, err
@@ -299,6 +415,9 @@ func (e *RedisDB) Query(query string) ([]map[string]interface{}, []string, error
 	case strings.HasPrefix(up, "INFO"):
 		return e.rawQuery(text)
 	case strings.HasPrefix(up, "DBSIZE"):
+		if e.isClusterTopology() {
+			return e.clusterDbsizeRows()
+		}
 		return e.rawQuery(text)
 	case strings.HasPrefix(up, "KEYS"):
 		return nil, nil, errors.New("redis: 不用 KEYS(服务端 O(N) 且阻塞), 请改用 SCAN 或界面上的键列表")
@@ -309,6 +428,9 @@ func (e *RedisDB) Query(query string) ([]map[string]interface{}, []string, error
 		return e.rawQuery(text)
 	case strings.HasPrefix(up, "HGETALL "), strings.HasPrefix(up, "SMEMBERS "), strings.HasPrefix(up, "LRANGE "),
 		strings.HasPrefix(up, "ZRANGE "), strings.HasPrefix(up, "XRANGE "), strings.HasPrefix(up, "GET "):
+		return e.rawQuery(text)
+	case strings.HasPrefix(up, "PUBSUB "), strings.HasPrefix(up, "PUBSUB"):
+		// PUBSUB 的子命令都是只读; 具体子命令的合法性交给 redis 自己判(它会回明确错误)
 		return e.rawQuery(text)
 	}
 	return nil, nil, fmt.Errorf("redis: 不支持的只读命令: %s (可用: INFO/DBSIZE/SCAN/TTL/TYPE/EXISTS/MEMORY USAGE/HGETALL/SMEMBERS/LRANGE/ZRANGE/XRANGE/GET/SELECT * FROM <key>)",
@@ -562,7 +684,7 @@ func (e *RedisDB) RenameKey(dbName, fromKey, toKey string) error {
 }
 
 // writeTarget 解析库名与键名并取出该库的 client(三个写操作共用的前置)。
-func (e *RedisDB) writeTarget(dbName, keyName string) (int, *redis.Client, error) {
+func (e *RedisDB) writeTarget(dbName, keyName string) (int, redis.UniversalClient, error) {
 	db, err := redisParseDB(dbName)
 	if err != nil {
 		return 0, nil, err
@@ -584,6 +706,25 @@ func redisColumnNames(defs []connection.ColumnDefinition) []string {
 		names = append(names, c.Name)
 	}
 	return names
+}
+
+// clusterDbsizeRows 汇总各主节点的 DBSIZE。
+// 单机版这个数字在集群里只是 1/N, 直接回给用户等于给一个看起来正常的错数 —— 所以既汇总,
+// 也在同一行里写明是几个节点汇总的(口径见 redis_cluster.go 头部)。
+func (e *RedisDB) clusterDbsizeRows() ([]map[string]interface{}, []string, error) {
+	nodes, err := e.clusterPrimaryClients(e.dbIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	total, err := e.clusterDBSize(e.dbIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []map[string]interface{}{{
+		"dbsize":        total,
+		"primary_nodes": len(nodes),
+		"note":          clusterScanNote(len(nodes)),
+	}}, []string{"dbsize", "primary_nodes", "note"}, nil
 }
 
 // ---------------------------------------------------------------- 写入
@@ -805,7 +946,7 @@ func redisMapOf(v map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-func redisSizeOf(ctx context.Context, c *redis.Client, typ string, key string) int64 {
+func redisSizeOf(ctx context.Context, c redis.UniversalClient, typ string, key string) int64 {
 	switch typ {
 	case "string":
 		if n, err := c.StrLen(ctx, key).Result(); err == nil {

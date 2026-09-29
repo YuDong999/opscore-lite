@@ -252,6 +252,29 @@ type ConnectionConfig struct {
 	OceanBaseProtocol   string `json:"oceanBaseProtocol,omitempty"`   // OceanBase protocol (mysql/oracle)
 	Topology            string `json:"topology,omitempty"`            // topology: single/replica/cluster/sentinel
 	Hosts               string `json:"hosts,omitempty"`               // multi-host addresses (host:port,host:port)
+	// Redis Sentinel: master 名与哨兵自身凭据(哨兵常与数据节点不同账号)
+	RedisSentinelMaster   string `json:"redisSentinelMaster,omitempty"`
+	RedisSentinelUser     string `json:"redisSentinelUser,omitempty"`
+	RedisSentinelPassword string `json:"redisSentinelPassword,omitempty"`
+}
+
+// splitHostsList 把"逗号/分号/空白分隔的多地址"拆成切片。
+// 表单上是一行文本(比让用户敲 JSON 数组友好), 所以这里容错多种分隔符。
+func splitHostsList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // ToGonaviConfig 转换为 GoNavi 底座的连接配置。
@@ -289,6 +312,12 @@ func (c ConnectionConfig) ToGonaviConfig(password string) gonaviConnection.Conne
 		Driver:           c.Driver,
 		DSN:              c.DSN,
 		ConnectionParams: c.ExtraParams,
+		// 拓扑相关: **不转发等于用户填了也没用** —— 之前这里就漏了, 集群/哨兵配置到不了驱动层。
+		Topology:              c.Topology,
+		Hosts:                 splitHostsList(c.Hosts),
+		RedisSentinelMaster:   c.RedisSentinelMaster,
+		RedisSentinelUser:     c.RedisSentinelUser,
+		RedisSentinelPassword: c.RedisSentinelPassword,
 	}
 	// SSL
 	switch c.SSLMode {

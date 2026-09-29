@@ -127,6 +127,19 @@ type KeyValueBrowser interface {
 	BrowseKey(dbName, keyName string, offset, limit int) ([]map[string]interface{}, []string, int, error)
 }
 
+// RedisPubSuber 由 Redis 驱动实现: 频道快照(只读, 不需订阅) + 实时看一会儿 + 发布。
+//
+// 与 KeyValueWriter 分开是因为它的**形态**不同: 订阅是长连接+推送, 而写键是"发命令拿结果"。
+// 拆开也让"只想支持键值视图的驱动"不必被迫实现 Pub/Sub。
+type RedisPubSuber interface {
+	// PubSubSnapshotOf 列出频道与订阅数(PUBSUB CHANNELS/NUMSUB/NUMPAT), **纯只读**。
+	PubSubSnapshotOf(dbName string) (*PubSubSnapshot, error)
+	// PubSubDrain 订阅 channels/patterns 若干秒, 收完自动退订(不做常驻订阅)。
+	PubSubDrain(dbName string, channels []string, patterns []string, seconds int) (*PubSubDrainResult, error)
+	// PublishTo 发布一条消息, 返回订阅者数。**这是写操作**, 调用方须过写锁与审计。
+	PublishTo(dbName, channel, payload string) (int64, error)
+}
+
 // KeyValueWriter 由键值引擎实现(目前是 Redis), 提供**带类型**的写操作。
 //
 // 为什么不让调用方拼命令文本: 值里可能带空格/引号/换行/二进制, 拼进 `SET k <value>`

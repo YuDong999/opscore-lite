@@ -98,6 +98,8 @@ func Module(store *Store, pool *DatabasePool) *registry.Module {
 			{Path: "/api/dbmanager/mq/capabilities", Handler: h.handleMQCapabilities},
 			{Path: "/api/dbmanager/redis/capabilities", Handler: h.handleRedisCapabilities},
 			{Path: "/api/dbmanager/redis/write", Handler: h.handleRedisWrite},
+			{Path: "/api/dbmanager/redis/pubsub", Handler: h.handleRedisPubSub},
+			{Path: "/api/dbmanager/redis/publish", Handler: h.handleRedisPublish},
 			{Path: "/api/dbmanager/mq/publish", Handler: h.handleMQPublish},
 			{Path: "/api/dbmanager/backup/plan", Handler: h.handleBackupPlan},
 			{Path: "/api/dbmanager/backup/run", Handler: h.handleBackupRun},
@@ -305,7 +307,14 @@ func validConnConfig(c ConnectionConfig, engine EngineType) bool {
 	case "sqlite":
 		return strings.TrimSpace(c.Database) != ""
 	}
-	if strings.TrimSpace(c.Host) == "" || c.Port <= 0 || c.Port > 65535 {
+	// 地址要求: 单机看 host/port; **cluster/sentinel 的地址在 hosts 里**(那时 host 可以为空) ——
+	// 只卡 host 会让"填了 3 个哨兵地址"的合法配置建不出来。
+	multi := len(splitHostsList(c.Hosts)) > 0
+	if !multi {
+		if strings.TrimSpace(c.Host) == "" || c.Port <= 0 || c.Port > 65535 {
+			return false
+		}
+	} else if c.Port < 0 || c.Port > 65535 {
 		return false
 	}
 	// 非 SQL 引擎常是匿名/无用户名接入: Kafka/MQTT/RocketMQ 默认不开 SASL, Redis 的 AUTH 只有
@@ -315,6 +324,24 @@ func validConnConfig(c ConnectionConfig, engine EngineType) bool {
 	}
 	if c.Database != "" && !validDBName(string(engine), c.Database) {
 		return false
+	}
+	// 拓扑相关校验: 三样都"必须配套", 单填一样是配置错误 —— 早报比连上去才失败好。
+	switch strings.ToLower(strings.TrimSpace(c.Topology)) {
+	case "", "single", "cluster", "sentinel":
+	default:
+		return false // 不认识的拓扑直接拒(比如把 MySQL 的 replica 填给了 Redis)
+	}
+	// 给了多地址但没写拓扑: 能推断成 cluster, 不拦(但 sentinel 必须显式写, 因为
+	// "多个地址"既有可能是 cluster 种子, 也有可能是哨兵列表 —— 这个不能猜)
+	if strings.TrimSpace(c.RedisSentinelMaster) != "" {
+		// 要 Sentinel 就必须有哨兵地址列表(单个 host 字段不够表达多个哨兵)
+		if len(splitHostsList(c.Hosts)) == 0 {
+			return false
+		}
+	}
+	if strings.ToLower(strings.TrimSpace(c.Topology)) == "sentinel" &&
+		strings.TrimSpace(c.RedisSentinelMaster) == "" {
+		return false // 说是 sentinel 却没给 master 名
 	}
 	switch c.EnvTag {
 	case "", "dev", "staging", "prod":

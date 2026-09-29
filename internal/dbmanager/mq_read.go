@@ -64,7 +64,10 @@ func isMQEngine(engine string) bool { return mqEngineKind(engine) != "" }
 // → 只读锁把 GET/TTL 也拦下, 还会因为 isReadOnlySQL=false 被送到 Exec 通道。
 // 与 MQ 是同一个坑, 所以共用这个入口。
 var redisReadWords = map[string]bool{
-	"GET": true, "MGET": true, "STRLEN": true, "GETRANGE": true, "TTL": true, "PTTL": true,
+	// PUBSUB 的子命令(CHANNELS/NUMSUB/NUMPAT/SHARDCHANNELS/SHARDNUMSUB)全是**只读**,
+	// 所以列频道不需要订阅长连接。注意 PUBLISH 是写 —— 它不在这个表里, 走写通道。
+	"PUBSUB": true,
+	"GET":    true, "MGET": true, "STRLEN": true, "GETRANGE": true, "TTL": true, "PTTL": true,
 	"TYPE": true, "EXISTS": true, "DBSIZE": true, "INFO": true, "SCAN": true, "HSCAN": true,
 	"SSCAN": true, "ZSCAN": true, "HGET": true, "HMGET": true, "HGETALL": true, "HKEYS": true,
 	"HVALS": true, "HLEN": true, "HEXISTS": true, "HSTRLEN": true, "LRANGE": true, "LLEN": true,
