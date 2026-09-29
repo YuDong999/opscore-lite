@@ -79,7 +79,8 @@
   /* 工作区标签与工具栏 */
   --db-tabbar-h: 40px;    /* AppTabBar.vue:642 */
   --db-tab-h: 28px;       /* AppTabBar.vue:810 */
-  --db-tab-min-w: 152px;  /* AppTabBar.vue:813 */
+  --db-tab-min-w: 92px;   /* 原 152px(dbx AppTabBar.vue:813) 的下限是给"长表名"用的, 但长名靠 max-width+省略号已经够;
+                             min-width 只会把短标签(备份/审计/驱动…)也撑成 152, ✕ 后面剩 ~60px 空位。收到 92 = 短标签刚好贴边 */
   --db-tab-fs: 12px;      /* AppTabBar.vue:805 */
   --db-toolbar-h: 32px;   /* DataGrid.vue:12531 */
   --db-btn-h: 20px;       /* DataGridToolbar.vue:264 */
@@ -2712,13 +2713,14 @@ body {
 .db-tab-thumb:hover, .db-tab-thumb:active { background: color-mix(in srgb, var(--text) 42%, transparent); }
 .db-tab-thumb:active { cursor: grabbing; }
 .db-worktab { display: inline-flex; align-items: center; gap: 6px; height: var(--db-tab-h); min-width: 0; max-width: 200px; padding: 0 8px 0 10px; border-radius: 0; cursor: pointer; font-size: var(--db-tab-fs); border: 1px solid transparent; border-bottom: none; margin-bottom: -1px; flex-shrink: 0; box-sizing: border-box; }
-/* 152px 是"够长表名的下限": 用 min-width 而非 width, 长名靠 label 的省略号截, 短名不吃满。
+/* 下限用 min-width 而非 width: 长表名靠 label 省略号截到 max-width, 短标签(功能页签)靠 label 的
+   flex:1 把 ✕ 顶到右边缘 —— 两种情况下 ✕ 后面都不该留空位。
    必须带 .db-module 前缀: 文件尾 `.db-module * { min-width: 0 }` 是 0,1,0 且写在后面, 裸类名会被压成 0。 */
 .db-module .db-worktab { min-width: var(--db-tab-min-w); }
 .db-worktab:hover { background: var(--row-hover); }
 .db-worktab.active { background: var(--surface-solid); border-color: var(--border); font-weight: 600; }
 .db-worktab-kind { font-size: 10px; color: var(--accent); font-weight: 800; letter-spacing: 0.03em; }
-.db-worktab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-worktab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 .db-worktab-close { appearance: none; background: none; border: none; font-family: inherit; color: var(--text-dim); border-radius: var(--radius-sm); padding: 0; font-size: 13px; line-height: 1; width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .db-worktab-close:hover { background: var(--row-hover); color: var(--danger); }
 .db-worktab-close:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
