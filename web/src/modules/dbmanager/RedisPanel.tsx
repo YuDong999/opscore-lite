@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { redisCapabilities, redisWrite, runQueryRaw, type RedisCapability, type RedisWriteBody } from './api'
+import RedisChannelsPanel from './RedisChannelsPanel'
 import { useToast } from '../../components/Toast'
 import { useConfirm } from '../../lib/hooks/useConfirm'
 import { SqlPreviewBody } from '../../components/common/SqlPreview'
@@ -39,10 +40,12 @@ export default function RedisPanel({ connId, database, preset, onWriteLocked }: 
 }) {
   const toast = useToast()
   const { confirm: askConfirm, confirmEl } = useConfirm()
+  const [tab, setTab] = useState<'keys' | 'channels'>('keys')
   const [cap, setCap] = useState<RedisCapability | null>(null)
   const [capErr, setCapErr] = useState('')
   const [keys, setKeys] = useState<string[]>([])
   const [dbsize, setDbsize] = useState<number | null>(null)
+  const [sizeNote, setSizeNote] = useState('')
   const [selected, setSelected] = useState('')
   const [detail, setDetail] = useState<Table>(null)
   const [err, setErr] = useState('')
@@ -83,8 +86,11 @@ export default function RedisPanel({ connId, database, preset, onWriteLocked }: 
     const col = KEY_COLS.find(c => r.columns.includes(c)) || r.columns[0]
     const idx = r.columns.indexOf(col)
     setKeys(r.rows.map(row => String(row[idx] ?? '')).filter(Boolean))
-    const sizeIdx = sz.columns.indexOf('value')
+    // 单机 DBSIZE 是 {value}; Cluster 版是 {dbsize, primary_nodes, note}(汇总口径, 见驱动)
+    const sizeIdx = ['value', 'dbsize'].reduce((acc, c) => acc >= 0 ? acc : sz.columns.indexOf(c), -1)
     if (sizeIdx >= 0 && sz.rows[0]) setDbsize(Number(sz.rows[0][sizeIdx]))
+    const noteIdx = sz.columns.indexOf('note')
+    setSizeNote(noteIdx >= 0 && sz.rows[0] ? String(sz.rows[0][noteIdx] || '') : '')
     setBusy(false)
   }, [run])
 
@@ -103,6 +109,7 @@ export default function RedisPanel({ connId, database, preset, onWriteLocked }: 
   useEffect(() => {
     if (!preset || keys.length === 0 || presetDone.current === preset) return
     presetDone.current = preset
+    setTab('keys') // 人点的是键, 就得落在键空间页签上
     if (!keys.includes(preset)) { setErr(`当前键列表里没有 ${preset}(可能超过 SCAN 上限)`); return }
     void openKey(preset)
   }, [preset, keys, openKey])
@@ -172,21 +179,44 @@ export default function RedisPanel({ connId, database, preset, onWriteLocked }: 
   if (capErr) return <div className="db-empty">{capErr}</div>
   if (!cap) return <div className="db-empty">读取能力清单中…</div>
 
+  const TOPOLOGY: Record<string, string> = { single: '单机', sentinel: 'Sentinel', cluster: 'Cluster' }
+  const topoLabel = TOPOLOGY[cap.topology || 'single'] || cap.topology
+
   return (
     <div className="db-mq">
       <div className="db-mq-tabs">
-        <span className="dim" style={{ fontSize: '0.75rem' }}>
-          库 <b>{database}</b> · {shown.length} 个键{dbsize !== null ? ` / 共 ${dbsize}` : ''}
-          {keys.length >= 2000 ? ' (SCAN 上限 2000, 可能不全)' : ''}
+        <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'keys' ? 'btn-glass-soft-accent' : ''}`}
+          onClick={() => setTab('keys')}>键空间</button>
+        {cap.pubsub !== false && (
+          <button className={`btn-glass-soft btn-glass-soft-sm ${tab === 'channels' ? 'btn-glass-soft-accent' : ''}`}
+            onClick={() => setTab('channels')}>频道</button>
+        )}
+        <span className="dim" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>
+          {topoLabel}{cap.multiDb === false ? ' · 这个拓扑只有 db0' : ''}
         </span>
-        <input className="input log-input" style={{ maxWidth: 220, marginLeft: 'auto' }} placeholder="过滤键名"
-          value={filter} onChange={e => setFilter(e.target.value)} aria-label="过滤键名" />
-        <button className="btn-glass-soft btn-glass-soft-sm" onClick={reload} disabled={busy}>
-          {busy ? '读取中…' : '刷新'}
-        </button>
+        {tab === 'keys' && (
+          <>
+            <span className="dim" style={{ fontSize: '0.75rem' }}>
+              库 <b>{database}</b> · {shown.length} 个键{dbsize !== null ? ` / 共 ${dbsize}` : ''}
+              {keys.length >= 2000 ? ' (SCAN 上限 2000, 可能不全)' : ''}
+            </span>
+            <input className="input log-input" style={{ maxWidth: 220 }} placeholder="过滤键名"
+              value={filter} onChange={e => setFilter(e.target.value)} aria-label="过滤键名" />
+            <button className="btn-glass-soft btn-glass-soft-sm" onClick={reload} disabled={busy}>
+              {busy ? '读取中…' : '刷新'}
+            </button>
+          </>
+        )}
       </div>
-      {cap.note && <div className="db-mq-note">{cap.note}</div>}
       {err && <div className="banner banner-err small">{err}</div>}
+
+      {tab === 'channels' && (
+        <RedisChannelsPanel connId={connId} database={database} topology={cap.topology} onWriteLocked={onWriteLocked} />
+      )}
+
+      {tab === 'keys' && (<>
+      {cap.note && <div className="db-mq-note">{cap.note}</div>}
+      {sizeNote && <div className="db-mq-note">{sizeNote}</div>}
 
       <div className="table-wrap" style={{ maxHeight: '16rem', overflow: 'auto' }}>
         <table className="db-table">
@@ -283,6 +313,7 @@ export default function RedisPanel({ connId, database, preset, onWriteLocked }: 
           ) : <div className="db-empty-sm">{busy ? '读取中…' : '没有读到值'}</div>}
         </div>
       )}
+      </>)}
       {confirmEl}
     </div>
   )
