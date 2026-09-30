@@ -2,6 +2,7 @@ package cicd
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,29 @@ func TestActionStepExecution(t *testing.T) {
 	run, _ := e.GetRun(r.ID)
 	if run.Stages[0].Steps[0].Command == "" {
 		t.Error("运行视图应展示合成命令")
+	}
+}
+
+// Actions() 的结果必须能过 json.Marshal —— 2026-10-01 真机: ActionSpec.Build 是 func 字段
+// 且没有 json tag, json.Marshal 直接报 "unsupported type: func(...)", 而 WriteJSON 当时吞掉
+// 错误, /api/cicd/actions 回 200 + 空 body, 前端动作下拉只剩"Shell 命令"(8 个动作全丢)。
+func TestActionsCatalogIsJSONSerializable(t *testing.T) {
+	acts := Actions()
+	if len(acts) == 0 {
+		t.Fatal("动作库不应为空")
+	}
+	b, err := json.Marshal(acts)
+	if err != nil {
+		t.Fatalf("动作库必须能序列化(检查 func 字段的 json tag): %v", err)
+	}
+	// 序列化后不能再出现 func 字段名(Build), 且关键字段都在
+	s := string(b)
+	if strings.Contains(s, "Build") {
+		t.Errorf("Build 是编译期函数, 不该出现在 JSON 里: %s", s[:200])
+	}
+	for _, want := range []string{"\"type\"", "\"title\"", "\"category\"", "\"fields\"", "nginx.bgswitch", "nginx.canary", "docker.build", "k8s.apply"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("动作库 JSON 缺少 %s", want)
+		}
 	}
 }

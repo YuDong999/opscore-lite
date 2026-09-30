@@ -38,6 +38,9 @@ export const API = {
   repoTest: '/api/cicd/repo/test',
   repoBranches: '/api/cicd/repo/branches',
   actions: '/api/cicd/actions',
+  // 动作预览: 前端转 Shell 要把结构化动作编译成 shell, 这个 POST 必须打到 /actions/preview
+  // 以前打的是 /api/cicd/actions(GET-only), 回 405 被 .catch 吞掉, 表现成“转了但命令丢了”。
+  actionsPreview: '/api/cicd/actions/preview',
   runLogDownload: '/api/cicd/run/log/download',
   registries: '/api/cicd/registries',
   registrySave: '/api/cicd/registry/save',

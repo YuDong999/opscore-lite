@@ -26,8 +26,10 @@ type ActionSpec struct {
 	Title    string        `json:"title"`
 	Category string        `json:"category"` // 构建 | 发布 | 验证
 	Fields   []ActionField `json:"fields"`
-	// Command 由参数合成最终 shell 命令($字段名 引用环境变量); 校验失败返回错误
-	Build func(params map[string]string) (string, error)
+	// Build 是编译期函数, **必须 json:"-"**: 无 tag 的 func 字段会让 json.Marshal 直接报
+	// "unsupported type: func(...)" —— 而 WriteJSON 当时吞掉了错误, /api/cicd/actions 于是
+	// 回 200 + 空 body, 前端 actions.data 永远为空, 步骤编辑器里 8 个动作全部不可选。
+	Build func(params map[string]string) (string, error) `json:"-"`
 }
 
 func required(params map[string]string, names ...string) error {
@@ -118,7 +120,7 @@ var actionRegistry = map[string]ActionSpec{
 			return fmt.Sprintf("kubectl rollout status deploy/%s%s --timeout=%ss", shq(p["DEPLOYMENT"]), ns, timeout), nil
 		},
 	},
-"test.junit": {
+	"test.junit": {
 		Type: "test.junit", Title: "运行测试(JUnit 报告)", Category: "测试",
 		Fields: []ActionField{
 			{Name: "COMMAND", Label: "测试命令", Placeholder: "mvn test / npm test / go test ./...", Required: true},

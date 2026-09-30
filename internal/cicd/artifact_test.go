@@ -70,14 +70,14 @@ func TestArtifactPatternWhiteList(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		"a b",       // 空格
+		"a b",        // 空格
 		"a;rm -rf /", // 命令分隔
-		"a$(id)",    // 命令替换
-		"`id`",      // 反引号
-		"a|b",       // 管道
-		"a>b",       // 重定向
-		"a&b",       // 后台执行
-		`a"b`,       // 引号
+		"a$(id)",     // 命令替换
+		"`id`",       // 反引号
+		"a|b",        // 管道
+		"a>b",        // 重定向
+		"a&b",        // 后台执行
+		`a"b`,        // 引号
 		"a'b",
 		"a\\b", // 反斜杠
 		"",     // 空
@@ -165,6 +165,11 @@ func TestCloneCommandCommitMarker(t *testing.T) {
 
 // TestCommitCapture 真实执行: 本机 git 仓库拉取后 Run.Commit 应被捕获
 func TestCommitCapture(t *testing.T) {
+	// 本用例用真实 shell 跑 cloneCommand: Windows 没有 sh 时假 Exec 会拿到空路径,
+	// 命令从未执行、输出为空, 测试就会在这里假红(不是产品缺陷)。
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("需要 POSIX sh 才能跑 cloneCommand 的真实 shell：" + err.Error())
+	}
 	e := newTestEngine(t)
 	// 建一个真实 git 仓库作为拉取目标
 	base := t.TempDir()
@@ -203,8 +208,8 @@ func TestCommitCapture(t *testing.T) {
 	}
 
 	p := &Pipeline{Name: "commit-capture", Trigger: Trigger{Manual: true},
-		Source: Source{RepoID: "repo-x", Branch: "main"},
-		Stages: []Stage{{Name: "构建", Host: "", Workspace: ws, Steps: []Step{{Name: "拉取", Command: "true"}}}},
+		Source:  Source{RepoID: "repo-x", Branch: "main"},
+		Stages:  []Stage{{Name: "构建", Host: "", Workspace: ws, Steps: []Step{{Name: "拉取", Command: "true"}}}},
 		MaxRuns: 10}
 	if err := e.SavePipeline(p); err != nil {
 		t.Fatalf("SavePipeline: %v", err)

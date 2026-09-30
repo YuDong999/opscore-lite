@@ -837,6 +837,7 @@ function ConfigCell({ label, value }: { label: string; value: string }) {
 // ==================== 流水线编辑器 ====================
 
 function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast()
   // 容错初始化: 后端历史数据或经 API 直建的流水线可能缺 env/params/stages(Go nil slice → JSON null),
   // 而下方编辑器对这些字段是直接 .map() 的, 拿到 null 会抛
   // "Cannot read properties of null (reading 'map')" 导致整个编辑模块白屏, 故此处统一兜底为空数组。
@@ -1082,10 +1083,10 @@ function PipelineEditor({ value, onClose, onSaved }: { value: Pipeline; onClose:
                           </span>
                           <Button variant="ghost" size="sm" className="h-6 text-xs" title="按当前参数合成 Shell 命令, 转为普通步骤"
                             onClick={() => {
-                              fetch(API.actions, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: sp.action, params: sp.params }) })
+                              fetch(API.actionsPreview, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: sp.action, params: sp.params }) })
                                 .then(r => r.json())
                                 .then((d: any) => setStep(si, i, { action: undefined, params: undefined, command: d.command || sp.command }))
-                                .catch(() => setStep(si, i, { action: undefined, params: undefined }))
+                                .catch(() => toast.error('转 Shell 失败: 未能拿到编译结果'))
                             }}>转 Shell</Button>
                         </div>
                       </div>

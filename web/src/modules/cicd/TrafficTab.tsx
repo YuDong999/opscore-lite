@@ -54,7 +54,8 @@ export default function TrafficTab() {
   const [dirty, setDirty] = useState(false)
 
   const doProbe = () => {
-    if (host === undefined) return
+    // host 是字符串: '' = 本机(合法目标), 只有 undefined/null 才是没选
+    if (host === undefined || host === null) return
     setProbing(true); setErr(''); setProbe(null); setDraft([]); setDirty(false)
     postJSON<NginxProbeT>(API.nginxProbe, { host })
       .then(d => {
@@ -109,7 +110,7 @@ export default function TrafficTab() {
             <Label className="text-xs">目标主机</Label>
             <HostSelect value={host} onChange={v => { setHost(v); setProbe(null); setDraft([]) }} />
           </div>
-          <Button size="sm" className="h-9" disabled={!host || probing} onClick={doProbe}>
+          <Button size="sm" className="h-9" disabled={probing} onClick={doProbe}>
             {probing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}{probing ? '检测中...' : '检测 nginx 配置'}
           </Button>
           {probe && confFiles.length > 0 && (
