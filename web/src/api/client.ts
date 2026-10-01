@@ -65,24 +65,32 @@ async function fetchJSON<T = any>(url: string): Promise<T> {
 //   ② 过期但有旧值   → 先同步返回旧数据(页面立即可渲染),
 //                      同时去重后台拉新并写缓存 —— 下次进入即为新值
 //   ③ 无缓存/被排除  → 正常请求
-export function getJSON<T = any>(url: string): Promise<T> {
+// force=true 时**绕过缓存读取**, 直接拉新值并写回缓存 —— 供"用户主动刷新/写操作后重载"使用。
+//
+// 为什么必须有这个开关(2026-10-02 真机): 原来的 SWR 分支在缓存过期时
+// `return Promise.resolve(hit.data)` 立刻把**旧值**交给调用方, 新数据只在后台写进缓存。
+// 但这里的唯一消费者 useResource 拿到 Promise 就结束了 —— 没有任何订阅者会被通知,
+// 于是"后台拉到的新值"永远没人用。表现就是: 跑完流水线 / 点刷新按钮, 左侧列表纹丝不动,
+// 只有硬刷新(Ctrl+F5, 缓存整个没了)才变。SWR 的"stale"部分生效了, "revalidate"部分断了。
+export function getJSON<T = any>(url: string, opts?: { force?: boolean }): Promise<T> {
   if (swrBypassed(url)) return fetchJSON<T>(url)
   const hit = swrCache.get(url)
-  if (hit) {
+  if (hit && !opts?.force) {
     const age = Date.now() - hit.ts
     if (age < SWR_TTL) return Promise.resolve(hit.data as T)
+    // 过期: 立刻给旧值让界面先渲染, 同时后台刷新(去重)。下一次 reload(force) 就能拿到新值。
     if (!swrInflight.has(url)) {
-      const p = fetchJSON<T>(url)
+      const bg = fetchJSON<T>(url)
         .then((d) => {
           swrCache.set(url, { data: d, ts: Date.now() })
           swrInflight.delete(url)
           return d
         })
-        .catch((e) => {
+        .catch(() => {
           swrInflight.delete(url)
-          throw e
+          return hit.data as T
         })
-      swrInflight.set(url, p)
+      swrInflight.set(url, bg)
     }
     return Promise.resolve(hit.data as T)
   }

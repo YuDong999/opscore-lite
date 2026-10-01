@@ -364,6 +364,9 @@ export default function CicdModule() {
     })
   }, [setSp])
 
+  // listTick: 顶层(详情弹层关闭/运行完成)要求左侧流水线列表重刷的信号
+  const [listTick, setListTick] = useState(0)
+
   const loadOverview = useCallback(() => {
     fetch(API.overview).then(r => r.json()).then(setOverview).catch(() => {})
   }, [])
@@ -407,7 +410,7 @@ export default function CicdModule() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} onOpenRun={openRun} /></TabsContent>
+        <TabsContent value="pipelines"><PipelinesTab onChanged={loadOverview} onOpenRun={openRun} refreshSignal={listTick} /></TabsContent>
         <TabsContent value="runs"><RunsTab onChanged={loadOverview} onOpenRun={openRun} /></TabsContent>
         <TabsContent value="scripts"><ScriptsTab /></TabsContent>
         <TabsContent value="repos"><ReposTab /></TabsContent>
@@ -419,7 +422,7 @@ export default function CicdModule() {
       {detailRunId && (
         <RunDetail runId={detailRunId} initialStep={sp.get('step') || ''}
           onRerun={openRun} onStepSelect={(si, j) => openRun(detailRunId, `s${si + 1}-${j + 1}`)}
-          onChanged={loadOverview} onClose={closeRun} />
+          onChanged={() => { loadOverview(); setListTick(t => t + 1) }} onClose={closeRun} />
       )}
     </div>
   )
@@ -440,7 +443,7 @@ function priorArtifactSteps(p: Pipeline, si: number, i: number): { value: string
 
 // ==================== 流水线 Tab(v3 主从布局: 左列表 + 右详情) ====================
 
-function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenRun: (id: string) => void }) {
+function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: () => void; onOpenRun: (id: string) => void; refreshSignal?: number }) {
   const { data, err, setErr, reload } = useResource<PipelineView[]>(API.pipelines)
   const pipes = data || []
   const [selId, setSelId] = useState('')
@@ -453,6 +456,8 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
   const [tplType, setTplType] = useState<ProjType>('node')
   const [tplChains, setTplChains] = useState<string[]>(DEFAULT_CHAIN.node)
   const [tick, setTick] = useState(0) // 右栏运行列表手动刷新信号
+  // 外部(详情弹层关闭/运行结束)要求刷新时, 强制重拉列表并带动运行列表
+  useEffect(() => { if (refreshSignal > 0) { reload(); setTick(t => t + 1) } }, [refreshSignal, reload])
   const { confirm, confirmEl } = useConfirm()
 
   // 收藏星标(B6): 本地偏好, 星标组置顶(组内保持原有顺序)
@@ -465,6 +470,14 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
   const [sp] = useSearchParams()
   const urlRun = sp.get('run') || ''
   useEffect(() => { if (!urlRun) { reload(); setTick(t => t + 1) } }, [urlRun])
+
+  // 列表轮询: 左侧状态点/时间/耗时自动跟上(不用手动刷新)。
+  // 详情打开时跳过(详情自己有 1.5s 轮询 + 关闭时 reload), 免得两个请求互相打架。
+  useEffect(() => {
+    if (urlRun) return
+    const t = setInterval(() => { reload(); setTick(x => x + 1) }, 5000)
+    return () => clearInterval(t)
+  }, [urlRun, reload])
 
   // 选中项不存在(未加载/已被删)时回落到第一条
   const sel = pipes.find(p => p.id === selId) || pipes[0] || null
