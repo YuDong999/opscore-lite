@@ -12,13 +12,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,15 +198,7 @@ func cicdExecLocal(ctx context.Context, workspace, command string, env []cicd.Va
 	if workspace != "" {
 		cmd.Dir = workspace
 	}
-	if len(env) > 0 {
-		e := os.Environ()
-		for _, v := range env {
-			if v.Name != "" {
-				e = append(e, v.Name+"="+v.Value)
-			}
-		}
-		cmd.Env = e
-	}
+	cmd.Env = cicdLocalEnv(env)
 	stdout, perr := cmd.StdoutPipe()
 	if perr != nil {
 		return -1, perr
@@ -243,6 +237,90 @@ func cicdExecLocal(ctx context.Context, workspace, command string, env []cicd.Va
 	return -1, waitErr
 }
 
+// cicdLocalEnv 组装本机执行环境。
+//
+// 背景(2026-10-01 真机): OpsCore 以 systemd 服务运行, 而服务环境里**没有 HOME**,
+// PATH 也只有 /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin。后果是模板流水线全线崩:
+//   - `go build` 报 "GOCACHE is not defined and neither $XDG_CACHE_HOME nor $HOME are defined"
+//     (Go 要靠 HOME 定位构建缓存) —— 装好了 go 也用不了;
+//   - 用户级工具链一律找不到: nvm 装的 node/npm、~/.local/bin 的 pip 工具、~/go/bin 等
+//     → "npm: command not found"(可 npm 明明装着)。
+//
+// 这里做两件事: 补上 HOME; 把**确实存在**的常见用户级工具链目录追加进 PATH。
+// 流水线自己的环境变量优先级最高(最后合并, 可覆盖 PATH/HOME), 所以用户仍能自行指定。
+func cicdLocalEnv(extra []cicd.Var) []string {
+	merged := map[string]string{}
+	order := []string{}
+	set := func(k, v string) {
+		if _, ok := merged[k]; !ok {
+			order = append(order, k)
+		}
+		merged[k] = v
+	}
+	for _, kv := range os.Environ() {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			set(kv[:i], kv[i+1:])
+		}
+	}
+	home := merged["HOME"]
+	if home == "" {
+		// 注意: os.UserHomeDir() 在 Linux 上**就是读 $HOME**, 服务里没有它照样返回空 ——
+		// 第一版回退用它, 结果真机上一点没变(实测 go build 仍报 GOCACHE 未定义)。
+		// os/user 走 /etc/passwd(getpwuid, 纯 Go 实现不依赖环境变量), 才是真正能兜住的回退。
+		if h, err := os.UserHomeDir(); err == nil && h != "" {
+			home = h
+		} else if u, uerr := user.Current(); uerr == nil && u.HomeDir != "" {
+			home = u.HomeDir
+		}
+		if home != "" {
+			set("HOME", home)
+		}
+	}
+	if home != "" {
+		// 只加存在的目录, 不制造悬空 PATH 项; nvm 取版本号最大(通常最新)的一个
+		// 用 filepath.Join 而不是硬拼 "/": 分隔符跟平台走(上测试在 Windows 上暴露过这个混斜杠问题)
+		cands := []string{
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, "bin"),
+			filepath.Join(home, "go", "bin"),
+			"/usr/local/go/bin",
+		}
+		if vers, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); err == nil && len(vers) > 0 {
+			sort.Strings(vers)
+			cands = append(cands, vers[len(vers)-1])
+		}
+		sep := string(os.PathListSeparator) // 分隔符跟随平台: Linux ":", Windows ";"
+		path := merged["PATH"]
+		if path == "" {
+			path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		}
+		has := func(dir string) bool {
+			for _, p := range filepath.SplitList(path) {
+				if p == dir {
+					return true
+				}
+			}
+			return false
+		}
+		for _, d := range cands {
+			if st, err := os.Stat(d); err == nil && st.IsDir() && !has(d) {
+				path += sep + d
+			}
+		}
+		set("PATH", path)
+	}
+	for _, v := range extra {
+		if v.Name != "" {
+			set(v.Name, v.Value)
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, k := range order {
+		out = append(out, k+"="+merged[k])
+	}
+	return out
+}
+
 func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env []cicd.Var, onLine func(string)) (int, error) {
 	h := resolveAnsibleHost(hostID)
 	if h == nil {
@@ -259,8 +337,8 @@ func cicdExecRemote(ctx context.Context, hostID, workspace, command string, env 
 	line := ArgsToLine([]string{"sh", "-c", "{ " + script + "; } > " + Shq(logFile) + " 2>&1"})
 
 	var mu sync.Mutex
-	off := 0       // 已回传字节数
-	rest := ""     // 未收尾的行尾段(避免切断掩码边界)
+	off := 0   // 已回传字节数
+	rest := "" // 未收尾的行尾段(避免切断掩码边界)
 	emit := func(chunk string) {
 		mu.Lock()
 		defer mu.Unlock()
