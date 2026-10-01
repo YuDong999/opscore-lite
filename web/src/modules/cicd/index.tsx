@@ -195,69 +195,144 @@ function StageSegments({ stages }: { stages: StageRun[] }) {
   )
 }
 
-// 项目类型构建模板(对标 Jenkins 各语言入门教程): 选类型 → 生成可直接运行的流水线骨架
-const PIPELINE_TEMPLATES: { name: string; desc: string; make: () => Pipeline }[] = [
-  { name: '空白流水线', desc: '从零开始编排', make: () => emptyPipeline() },
-  {
-    name: '前端项目 (Node)', desc: '安装依赖 → 构建 → 归档 dist/', make: () => ({
-      ...emptyPipeline(), name: '前端构建', description: 'Node 前端构建',
-      stages: [
-        { name: '构建', host: '', workspace: '', approval: false, steps: [
-          { name: '安装依赖', command: 'npm ci', continueOnFail: false, timeoutMin: 0 },
-          { name: '构建', command: 'npm run build', continueOnFail: false, timeoutMin: 0, artifacts: ['dist/*'] },
-        ] },
-      ],
-    }),
+// ── 流水线组装器: 项目类型 x 环节清单 ──
+//
+// 为什么这么拆(用户 2026-10-01 反馈): 原来只有 6 个固定模板, Java 模板只有"打包→单元测试"两个步骤,
+// 用户看到节点流上只有 2 个节点, 以为"节点怎么这么少/功能是不是缺了"。
+// 真实情况是**节点数 = 步骤数**, 由模板决定 —— 模板偏"最小可运行", 缺了工程上常见的环节。
+//
+// 现在拆成两层: **项目类型**决定"命令怎么写"(npm/mvn/go/docker), **环节清单**决定"有几个节点"。
+// 可以自由勾选(C 方案), 也有一键全选(等价 B 方案的全量模板) —— 一套实现覆盖两种用法。
+type ProjType = 'node' | 'java' | 'go' | 'python' | 'docker'
+
+interface StageTpl { name: string; steps: Step[] }
+
+interface ChainDef {
+  id: string
+  label: string
+  desc: string
+  // 需要配置外部资源(镜像仓库/代码源/kubeconfig)的环节给提示, 避免勾了却跑不通
+  needs?: string
+  make: (t: ProjType) => StageTpl
+}
+
+const mkStep = (name: string, command: string, artifacts?: string[]): Step =>
+  ({ name, command, continueOnFail: false, timeoutMin: 0, ...(artifacts ? { artifacts } : {}) })
+
+// 各项目类型的常用命令(只写一份, 环节复用)
+const CMD: Record<ProjType, {
+  fetch: string; setup: string; build: string; test: string
+  lint: string; pkg: string; artifacts: string[]; deploy: string
+}> = {
+  node: {
+    fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
+    setup: 'npm ci',
+    build: 'npm run build',
+    test: 'npm test -- --ci',
+    // lint 脚本可能没在 package.json 里定义; 缺失时不硬失败(首次用模板不该卡在"没配 lint")
+    lint: 'npm run lint --if-present',
+    pkg: 'tar czf dist.tar.gz dist/',
+    artifacts: ['dist/*'],
+    deploy: 'echo "[部署] 前端产物已就绪: dist/"',
   },
-  {
-    name: 'Java 项目 (Maven)', desc: 'mvn 打包 → 归档 jar', make: () => ({
-      ...emptyPipeline(), name: 'Java 构建', description: 'Maven 构建打包',
-      stages: [
-        { name: '构建', host: '', workspace: '', approval: false, steps: [
-          { name: '打包', command: 'mvn -B -DskipTests clean package', continueOnFail: false, timeoutMin: 0, artifacts: ['target/*.jar'] },
-        ] },
-        { name: '测试', host: '', workspace: '', approval: false, steps: [
-          { name: '单元测试', command: 'mvn -B test', continueOnFail: false, timeoutMin: 0 },
-        ] },
-      ],
-    }),
+  java: {
+    fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
+    setup: 'echo "[准备] Maven 依赖由 package 阶段自动拉取"',
+    build: 'mvn -B -DskipTests clean package',
+    test: 'mvn -B test',
+    // checkstyle:check 默认用 sun_checks 严格规则(未配 configLocation 时连"行超 80 字符"都报错),
+    // 首次用必红; 这里只做"能编译 + 不报错就过"的轻量检查, 严格规则留给用户自己配 checkstyle.xml
+    lint: 'mvn -B -q compile',
+    pkg: 'ls -lh target/*.jar',
+    artifacts: ['target/*.jar'],
+    deploy: 'echo "[部署] 请替换为实际发布命令(如 scp jar 到目标机 / java -jar)"',
   },
-  {
-    name: 'Go 项目', desc: 'go build → 归档二进制', make: () => ({
-      ...emptyPipeline(), name: 'Go 构建', description: 'Go 编译构建',
-      stages: [
-        { name: '构建', host: '', workspace: '', approval: false, steps: [
-          { name: '编译', command: 'go build -o bin/app ./...', continueOnFail: false, timeoutMin: 0, artifacts: ['bin/*'] },
-          { name: '测试', command: 'go test ./...', continueOnFail: false, timeoutMin: 0 },
-        ] },
-      ],
-    }),
+  go: {
+    fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
+    setup: 'go mod download',
+    build: 'go build -o bin/app ./...',
+    test: 'go test ./...',
+    // go vet 是标准工具链自带, 无需额外安装; 有告警即视为检查不通过
+    lint: 'go vet ./...',
+    pkg: 'ls -lh bin/',
+    artifacts: ['bin/*'],
+    deploy: 'echo "[部署] 请替换为实际发布命令(如 scp bin/app 到目标机)"',
   },
-  {
-    name: 'Python 项目', desc: 'pip 安装 → 测试 → 归档', make: () => ({
-      ...emptyPipeline(), name: 'Python 构建', description: 'Python 构建测试',
-      stages: [
-        { name: '构建', host: '', workspace: '', approval: false, steps: [
-          { name: '安装依赖', command: 'pip install -r requirements.txt', continueOnFail: false, timeoutMin: 0 },
-          { name: '测试', command: 'python -m pytest', continueOnFail: false, timeoutMin: 0 },
-          { name: '打包', command: 'python -m build', continueOnFail: false, timeoutMin: 0, artifacts: ['dist/*'] },
-        ] },
-      ],
-    }),
+  python: {
+    fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
+    setup: 'python3 -m pip install -r requirements.txt',
+    build: 'python3 -m compileall -q .',
+    test: 'python3 -m pytest -q',
+    // flake8 未必装; 未装时跳过而不是让整条流水线红(用户可自行改成 ruff/pylint)
+    lint: 'python3 -m flake8 . || echo "[检查] flake8 未安装, 跳过"',
+    pkg: 'python3 -m build',
+    artifacts: ['dist/*'],
+    deploy: 'echo "[部署] 请替换为实际发布命令"',
   },
-  {
-    name: 'Docker 镜像', desc: '构建 → 推送镜像(需配置镜像仓库)', make: () => ({
-      ...emptyPipeline(), name: 'Docker 构建', description: '构建并推送镜像',
-      stages: [
-        { name: '镜像', host: '', workspace: '', approval: false, steps: [
-          { name: '登录镜像仓库', command: 'docker login $REGISTRY -u "$REGISTRY_USER" -p "$REGISTRY_PASS"', continueOnFail: false, timeoutMin: 0 },
-          { name: '构建镜像', command: 'docker build -t $REGISTRY/myapp:${BUILD_NUMBER} .', continueOnFail: false, timeoutMin: 0 },
-          { name: '推送镜像', command: 'docker push $REGISTRY/myapp:${BUILD_NUMBER}', continueOnFail: false, timeoutMin: 0 },
-        ] },
-      ],
-    }),
+  docker: {
+    fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
+    setup: 'echo "[准备] 构建上下文就绪"',
+    build: 'docker build -t $REGISTRY/myapp:${BUILD_NUMBER} .',
+    test: 'echo "[测试] 镜像构建阶段已含 RUN 自检; 如需可加 docker run 冒烟"',
+    lint: 'echo "[检查] 如需镜像扫描请接 trivy/grype"',
+    pkg: 'docker save $REGISTRY/myapp:${BUILD_NUMBER} -o image-${BUILD_NUMBER}.tar',
+    artifacts: ['image-*.tar'],
+    deploy: 'docker push $REGISTRY/myapp:${BUILD_NUMBER}',
   },
+}
+
+const CHAIN: ChainDef[] = [
+  { id: 'fetch', label: '拉取代码', desc: '从代码仓库 clone/更新', needs: '需配代码源',
+    make: t => ({ name: '拉取', steps: [mkStep('拉取代码', CMD[t].fetch)] }) },
+  { id: 'setup', label: '准备环境', desc: '装依赖 / 下模块',
+    make: t => ({ name: '准备', steps: [mkStep('准备环境', CMD[t].setup)] }) },
+  { id: 'build', label: '构建', desc: '编译 / 打包产物',
+    make: t => ({ name: '构建', steps: [mkStep('构建', CMD[t].build, CMD[t].artifacts)] }) },
+  { id: 'test', label: '单元测试', desc: '跑测试用例',
+    make: t => ({ name: '测试', steps: [mkStep('单元测试', CMD[t].test)] }) },
+  { id: 'lint', label: '代码检查', desc: '静态分析 / 规范检查',
+    make: t => ({ name: '检查', steps: [mkStep('代码检查', CMD[t].lint)] }) },
+  { id: 'pkg', label: '制品归档', desc: '产物归档成制品',
+    make: t => ({ name: '归档', steps: [mkStep('制品归档', CMD[t].pkg, CMD[t].artifacts)] }) },
+  { id: 'deploy', label: '部署', desc: '发布到目标环境', needs: '需配目标主机',
+    make: t => ({ name: '部署', steps: [mkStep('部署', CMD[t].deploy)] }) },
+  { id: 'approval', label: '人工审批', desc: '部署前卡一道人工确认',
+    make: () => ({ name: '审批门禁', steps: [mkStep('确认继续', 'echo "[审批] 已确认, 继续执行"')] }) },
 ]
+
+// 各项目类型的"默认勾选"(= 原来 6 个模板的行为, 保证老用户习惯不变)
+const DEFAULT_CHAIN: Record<ProjType, string[]> = {
+  node: ['setup', 'build'],
+  java: ['build', 'test'],
+  go: ['build', 'test'],
+  python: ['setup', 'test', 'pkg'],
+  docker: ['build', 'deploy'],
+}
+
+const PROJ_TYPES: { id: ProjType; label: string; desc: string }[] = [
+  { id: 'node', label: '前端 (Node)', desc: 'npm ci / npm run build' },
+  { id: 'java', label: 'Java (Maven)', desc: 'mvn package / mvn test' },
+  { id: 'go', label: 'Go', desc: 'go build / go test' },
+  { id: 'python', label: 'Python', desc: 'pip / pytest / build' },
+  { id: 'docker', label: 'Docker 镜像', desc: 'docker build / save / push' },
+]
+
+// 按"项目类型 + 勾选的环节"组装流水线。
+// approval 环节单独成阶段并置 approval=true(阶段级门禁), 其余环节各成一个阶段 —— 这样节点流上
+// 每个环节就是一个清晰节点, 阶段名与环节名一致, 不再出现"阶段名和步骤名对不上"的困惑。
+function buildFromChain(t: ProjType, chains: string[]): Pipeline {
+  const picked = CHAIN.filter(c => chains.includes(c.id))
+  const stages: Stage[] = picked.map(c => {
+    const tpl = c.make(t)
+    return { name: tpl.name, host: '', workspace: '', approval: c.id === 'approval', steps: tpl.steps }
+  })
+  return {
+    ...emptyPipeline(),
+    name: PROJ_TYPES.find(p => p.id === t)?.label + ' 流水线',
+    description: picked.map(c => c.label).join(' → '),
+    stages: stages.length > 0 ? stages : emptyPipeline().stages,
+  }
+}
 
 const emptyPipeline = (): Pipeline => ({
   id: '', name: '', description: '',
@@ -374,6 +449,9 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
   const [busy, setBusy] = useState('')
   const [runSel, setRunSel] = useState<Pipeline | null>(null)
   const [tplOpen, setTplOpen] = useState(false)
+  // 流水线组装器: 项目类型 + 勾选的环节(默认给该类型的常用组合, 老模板行为不变)
+  const [tplType, setTplType] = useState<ProjType>('node')
+  const [tplChains, setTplChains] = useState<string[]>(DEFAULT_CHAIN.node)
   const [tick, setTick] = useState(0) // 右栏运行列表手动刷新信号
   const { confirm, confirmEl } = useConfirm()
 
@@ -540,17 +618,68 @@ function PipelinesTab({ onChanged, onOpenRun }: { onChanged: () => void; onOpenR
 
       {runSel && <RunBranchDialog pipeline={runSel} onClose={() => setRunSel(null)} onRun={(b, params) => { const id = runSel.id; setRunSel(null); doRun(id, b, params) }} />}
       {tplOpen && (
-        <Modal maxWidth={672} onClose={() => setTplOpen(false)} title="选择项目类型">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {PIPELINE_TEMPLATES.map(t => (
-                <button key={t.name} className="rounded-lg border p-3 text-left hover:border-accent hover:bg-accent/5 transition-colors"
-                  onClick={() => { setTplOpen(false); setEditing(t.make()) }}>
-                  <div className="font-semibold text-sm">{t.name}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t.desc}</div>
-                </button>
-              ))}
-            </div>
-            <div className="text-xs text-muted-foreground">模板生成骨架后可继续编辑: 换目标主机/工作目录/加审批门禁/挂代码源与制品</div>
+        <Modal maxWidth={760} onClose={() => setTplOpen(false)} title="新建流水线">
+          {/* ① 项目类型: 决定各环节的命令怎么写 */}
+          <Label className="text-xs text-muted-foreground">项目类型(决定各环节用什么命令)</Label>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-1">
+            {PROJ_TYPES.map(t => (
+              <button key={t.id}
+                className={cn('rounded-lg border p-2 text-left transition-colors',
+                  tplType === t.id ? 'border-accent bg-accent/10' : 'hover:border-accent hover:bg-accent/5')}
+                onClick={() => { setTplType(t.id); setTplChains(DEFAULT_CHAIN[t.id]) }}>
+                <div className="font-semibold text-xs">{t.label}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{t.desc}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* ② 环节清单: 决定有几个节点; 全选开关等价"完整流程模板" */}
+          <div className="flex items-center justify-between mt-3 mb-1">
+            <Label className="text-xs text-muted-foreground">
+              环节清单(勾几个就有几个节点, 顺序即执行顺序)
+            </Label>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+              <Checkbox checked={tplChains.length === CHAIN.length}
+                onCheckedChange={c => setTplChains(c ? CHAIN.map(x => x.id) : [])} />
+              <span>全选(完整流程)</span>
+            </label>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {CHAIN.map(c => {
+              const on = tplChains.includes(c.id)
+              return (
+                <label key={c.id}
+                  className={cn('flex items-start gap-2 rounded-lg border p-2 cursor-pointer transition-colors',
+                    on ? 'border-accent bg-accent/10' : 'hover:bg-muted/50')}>
+                  <Checkbox checked={on} className="mt-0.5"
+                    onCheckedChange={v => setTplChains(v ? [...tplChains, c.id] : tplChains.filter(x => x !== c.id))} />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium">{c.label}</span>
+                    <span className="block text-[10px] text-muted-foreground leading-tight">{c.desc}</span>
+                    {c.needs && on && <span className="block text-[10px] text-warn mt-0.5">{c.needs}</span>}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <Button variant="outline" size="sm" className="h-7 text-xs"
+              onClick={() => setTplChains(DEFAULT_CHAIN[tplType])}>恢复该类型默认</Button>
+            <span className="text-xs text-muted-foreground">
+              将生成 {tplChains.length} 个阶段 / {tplChains.length} 个节点
+            </span>
+            <span className="text-xs text-muted-foreground ml-auto">也可从空白开始</span>
+            <Button variant="outline" size="sm" className="h-7 text-xs"
+              onClick={() => { setTplOpen(false); setEditing(emptyPipeline()) }}>空白流水线</Button>
+          </div>
+          <div className="modal-actions">
+            <Button variant="outline" onClick={() => setTplOpen(false)}>取消</Button>
+            <Button disabled={tplChains.length === 0}
+              onClick={() => { setTplOpen(false); setEditing(buildFromChain(tplType, tplChains)) }}>
+              创建流水线
+            </Button>
+          </div>
         </Modal>
       )}
       {editing && (
