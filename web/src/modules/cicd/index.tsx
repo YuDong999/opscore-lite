@@ -233,7 +233,7 @@ const CMD: Record<ProjType, {
     lint: 'npm run lint --if-present',
     pkg: 'tar czf dist.tar.gz dist/',
     artifacts: ['dist/*'],
-    deploy: 'echo "[部署] 前端产物已就绪: dist/"',
+    deploy: 'rsync -a dist/ /var/www/myapp/ && nginx -s reload',
   },
   java: {
     fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
@@ -245,7 +245,7 @@ const CMD: Record<ProjType, {
     lint: 'mvn -B -q compile',
     pkg: 'ls -lh target/*.jar',
     artifacts: ['target/*.jar'],
-    deploy: 'echo "[部署] 请替换为实际发布命令(如 scp jar 到目标机 / java -jar)"',
+    deploy: 'systemctl restart myapp && systemctl is-active myapp',
   },
   go: {
     fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
@@ -256,7 +256,7 @@ const CMD: Record<ProjType, {
     lint: 'go vet ./...',
     pkg: 'ls -lh bin/',
     artifacts: ['bin/*'],
-    deploy: 'echo "[部署] 请替换为实际发布命令(如 scp bin/app 到目标机)"',
+    deploy: 'systemctl restart myapp && systemctl is-active myapp',
   },
   python: {
     fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
@@ -267,7 +267,7 @@ const CMD: Record<ProjType, {
     lint: 'python3 -m flake8 . || echo "[检查] flake8 未安装, 跳过"',
     pkg: 'python3 -m build',
     artifacts: ['dist/*'],
-    deploy: 'echo "[部署] 请替换为实际发布命令"',
+    deploy: 'systemctl restart myapp && systemctl is-active myapp',
   },
   docker: {
     fetch: 'git clone --depth 1 "$CICD_REPO_URL" .',
@@ -294,7 +294,21 @@ const CHAIN: ChainDef[] = [
     make: t => ({ name: '检查', steps: [mkStep('代码检查', CMD[t].lint)] }) },
   { id: 'pkg', label: '制品归档', desc: '产物归档成制品',
     make: t => ({ name: '归档', steps: [mkStep('制品归档', CMD[t].pkg, CMD[t].artifacts)] }) },
-  { id: 'deploy', label: '部署', desc: '发布到目标环境', needs: '需配目标主机',
+  // K8s 发布: 复用引擎的 KUBECONFIG 注入(编辑器选"KUBECONFIG 凭据"后, 引擎会把 kubeconfig 写到
+  // 目标主机并注入 $KUBECONFIG); 命令里的 myapp 改成你的 Deployment 名
+  { id: 'k8s', label: 'K8s 发布', desc: 'kubectl apply + 等待滚动完成', needs: '需配 KUBECONFIG 凭据',
+    make: () => ({ name: 'K8s 发布', steps: [
+      mkStep('应用清单', 'kubectl apply -f k8s/'),
+      mkStep('等待滚动完成', 'kubectl rollout status deploy/myapp --timeout=180s'),
+    ] }) },
+  // K8s 滚动更新: 用本次构建的镜像更新 Deployment 并等待滚动完成(K8s 原生滚动发布);
+  // myapp 改成你的 Deployment 名(容器名同名的常见约定)
+  { id: 'rolling', label: 'K8s 滚动更新', desc: 'kubectl set image + 等待滚动完成', needs: '需配 KUBECONFIG 凭据 + 镜像仓库',
+    make: () => ({ name: '滚动更新', steps: [
+      mkStep('更新镜像', 'kubectl set image deploy/myapp myapp=$REGISTRY/myapp:${BUILD_NUMBER}'),
+      mkStep('等待滚动完成', 'kubectl rollout status deploy/myapp --timeout=180s'),
+    ] }) },
+  { id: 'deploy', label: '部署', desc: '在目标机重启/同步服务(myapp 改成你的服务名)', needs: '需配目标主机',
     make: t => ({ name: '部署', steps: [mkStep('部署', CMD[t].deploy)] }) },
   { id: 'approval', label: '人工审批', desc: '部署前卡一道人工确认',
     make: () => ({ name: '审批门禁', steps: [mkStep('确认继续', 'echo "[审批] 已确认, 继续执行"')] }) },
