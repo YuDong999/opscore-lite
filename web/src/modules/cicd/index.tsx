@@ -28,7 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Play, Copy, Link2, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Download,
   Upload, RefreshCw, X, Check, Package, FileCode2, LoaderCircle, Pause, Minus, GitCommitHorizontal, ChevronRight, CircleDashed,
-  Star, Settings2, Filter,
+  Star, Settings2, Filter, Search,
 } from 'lucide-react'
 import {
   API, SELECT_NONE, STATUS_COLOR, useResource, useConfirm, StatusBadge, statusText, ErrBanner,
@@ -461,10 +461,16 @@ function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: 
   const { confirm, confirmEl } = useConfirm()
 
   // 收藏星标(B6): 本地偏好, 星标组置顶(组内保持原有顺序)
+  // 搜索: 按名称/描述过滤(流水线多了以后滑动找太费劲)
+  const [q, setQ] = useState('')
   const [stars, setStars] = useLocalJSON<string[]>('cicd-stars', [])
   const toggleStar = (id: string) => setStars(stars.includes(id) ? stars.filter(x => x !== id) : [...stars, id])
-  const ordered = useMemo(() =>
-    [...pipes].sort((a, b) => (stars.includes(b.id) ? 1 : 0) - (stars.includes(a.id) ? 1 : 0)), [pipes, stars])
+  const filtered = useMemo(() => {
+    const k = q.trim().toLowerCase()
+    const base = k ? pipes.filter(p => p.name.toLowerCase().includes(k) || (p.description || '').toLowerCase().includes(k)) : pipes
+    return [...base].sort((a, b) => (stars.includes(b.id) ? 1 : 0) - (stars.includes(a.id) ? 1 : 0))
+  }, [pipes, q, stars])
+  const ordered = filtered
 
   // 详情弹窗由模块顶层按 URL 渲染; 关闭(参数消失)时刷新列表, 兜住运行状态已变的情况
   const [sp] = useSearchParams()
@@ -554,7 +560,7 @@ function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: 
             <div className="flex items-center justify-between gap-1">
               <CardTitle className="text-sm tabular-nums">流水线 ({pipes.length})</CardTitle>
               <div className="flex gap-1">
-                <Button asChild variant="ghost" size="icon" className="size-6" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
+                <Button asChild variant="ghost" size="icon" className="size-8" title="导入流水线 JSON(重置 ID 与凭证, 重名自动加后缀)">
                   <label className="cursor-pointer">
                     <Upload className="size-4" />
                     <input type="file" accept=".json,application/json" className="hidden" onChange={async ev => {
@@ -570,17 +576,34 @@ function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: 
                     }} />
                   </label>
                 </Button>
-                <Button variant="ghost" size="icon" className="size-6" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
+                <Button variant="ghost" size="icon" className="size-8" title="导出全部流水线为 JSON(不含触发凭证)" onClick={() => {
                   const t = localStorage.getItem('opscore-token')
                   window.open(`${API.pipelineExport}${t ? `?token=${encodeURIComponent(t)}` : ''}`)
                 }}><Download className="size-4" /></Button>
-                <Button size="sm" className="h-6 px-2 text-xs" onClick={() => setTplOpen(true)}><Plus />新建</Button>
+                <Button size="sm" className="h-8 px-3 text-xs" onClick={() => setTplOpen(true)}><Plus />新建</Button>
               </div>
             </div>
           </CardHeader>
+          {/* 搜索框: 流水线多了以后滑动找很费劲; 支持名称/描述 */}
+          <div className="px-2 pb-1.5 shrink-0">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+              <Input value={q} onChange={e => setQ(e.target.value)} placeholder="搜索流水线名/描述"
+                className="h-7 pl-7 pr-7 text-xs" />
+              {q && (
+                <button type="button" onClick={() => setQ('')} title="清空"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
           <CardContent className="px-2 pb-2 pt-0 flex-1 min-h-0 hover-scroll">
-            {pipes.length === 0 && (
-              <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">暂无流水线, 点「新建」开始编排</div>
+                        {pipes.length === 0 && (
+              <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">还没有流水线, 点「新建」开始编排</div>
+            )}
+            {pipes.length > 0 && ordered.length === 0 && (
+              <div className="h-20 flex items-center justify-center text-sm text-muted-foreground">没有匹配「{q}」的流水线</div>
             )}
             <div className="flex flex-col gap-1">
               {ordered.map(p => {
@@ -589,11 +612,11 @@ function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: 
                 return (
                   <button key={p.id} onClick={() => setSelId(p.id)}
                     onContextMenu={e => { e.preventDefault(); setSelId(p.id); setCtx({ x: e.clientX, y: e.clientY, p }) }}
-                    className={cn('text-left rounded-lg px-2.5 py-1.5 border transition-colors',
+                    className={cn('text-left rounded-lg px-3 py-2 border transition-colors',
                       active ? 'border-[#057748] bg-[#057748] font-semibold shadow-sm [&_.font-medium]:text-white [&_.font-semibold]:text-white [&_.text-muted-foreground]:text-white/75 [&_[data-slot=badge]]:text-white/85 [&_[data-slot=badge]]:border-white/40 [&_.size-2]:ring-1 [&_.size-2]:ring-white/60' : 'border-transparent hover:bg-muted/60')}>
                     <div className="flex items-center gap-2">
                       <LastRunDot run={p.lastRun} />
-                      <span className="font-medium text-sm truncate flex-1">{p.name}</span>
+                      <span className="font-medium text-sm truncate flex-1" title={p.name}>{p.name}</span>
                       <span role="button" tabIndex={-1} title={starred ? '取消收藏' : '收藏置顶'}
                         onClick={e => { e.stopPropagation(); toggleStar(p.id) }}
                         className={cn('shrink-0 rounded p-0.5 transition-colors hover:bg-muted',
@@ -601,7 +624,7 @@ function PipelinesTab({ onChanged, onOpenRun, refreshSignal = 0 }: { onChanged: 
                         <Star className={cn('size-3.5', starred && 'fill-current')} />
                       </span>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
+                    <div className="text-xs text-muted-foreground mt-1 flex gap-2 items-center flex-wrap">
                       {p.lastRun ? (
                         <>
                           <span>{fmtTime(p.lastRun.startedAt)}</span>
