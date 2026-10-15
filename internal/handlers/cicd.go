@@ -454,13 +454,9 @@ func CicdPipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pipes := cicdEngine.ListPipelines()
-	runs := cicdEngine.ListRuns("", 0)
-	lastByPipe := map[string]cicd.Run{}
-	for _, run := range runs {
-		if _, ok := lastByPipe[run.PipelineID]; !ok {
-			lastByPipe[run.PipelineID] = run
-		}
-	}
+	// 每个流水线各取最新一条(不能用 ListRuns 的默认 limit: 全局运行超过 50 条后,
+	// 更早跑过的流水线会匹配不到运行, 列表误显示"从未运行")
+	lastByPipe := cicdEngine.LatestRunByPipeline()
 	type pipeView struct {
 		cicd.Pipeline
 		StageCount int        `json:"stageCount"`

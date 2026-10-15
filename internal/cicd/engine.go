@@ -1573,6 +1573,23 @@ func (e *Engine) ListRuns(pipelineID string, limit int) []Run {
 	return out
 }
 
+// LatestRunByPipeline 每个流水线最近一次运行(id → 最新 Run)。
+//
+// 存在的理由(2026-10-15 真机): 流水线列表的 lastRun 原先走 ListRuns("", 0),
+// 而它的默认 limit 是 50 —— 全局运行数超过 50 之后, 靠后(更早跑过)的流水线
+// 匹配不到任何运行, 列表里就误显示"从未运行"。这里按流水线聚合, 与总数无关。
+func (e *Engine) LatestRunByPipeline() map[string]Run {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make(map[string]Run, len(e.pipes))
+	for _, r := range e.runs { // e.runs 按时间顺序追加, 后者覆盖前者即最新
+		c := *r
+		c.Progress = runProgress(&c)
+		out[c.PipelineID] = c
+	}
+	return out
+}
+
 // GetRun 运行详情(含终态与取消中标记)
 func (e *Engine) GetRun(runID string) (Run, bool) {
 	e.mu.RLock()
