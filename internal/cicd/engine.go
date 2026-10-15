@@ -1144,6 +1144,16 @@ overall:
 			stepEnv := stageEnv
 			var exit int
 			var execErr error
+			// 阶段首个步骤: 工作目录不存在时自动创建(cd 前置要求, 不再仅限克隆步骤)。
+			// 必须在 pullArtifact 之前: 制品要落到 stage.Workspace, 目录不存在时远程 cat> 会失败。
+			if j == 0 && stage.Workspace != "" {
+				if stage.Host == "" {
+					os.MkdirAll(stage.Workspace, 0755)
+				} else {
+					writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
+					e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
+				}
+			}
 			if step.PullArtifact != "" {
 				if perr := e.pullArtifact(ctx, run.ID, step.PullArtifact, stage, writeLine); perr != nil {
 					exit, execErr = -1, perr
@@ -1174,15 +1184,6 @@ overall:
 				}
 				stepOnLine := writeLine
 				isCloneStep := i == 0 && rt.clone != nil && j == 0
-				if j == 0 && stage.Workspace != "" {
-					// 阶段首个步骤: 工作目录不存在时自动创建(cd 前置要求, 不再仅限克隆步骤)
-					if stage.Host == "" {
-						os.MkdirAll(stage.Workspace, 0755)
-					} else {
-						writeLine(fmt.Sprintf("📁 [准备] 创建工作目录 %s @ %s", stage.Workspace, displayHost(stage.Host)))
-						e.execCall(ctx, stage.Host, "", "mkdir -p "+shq(stage.Workspace), stageEnv, writeLine)
-					}
-				}
 				if isCloneStep {
 					// 拉取代码步骤: 捕获 commit 标记
 					stepOnLine = func(line string) {
@@ -1233,7 +1234,7 @@ overall:
 				writeLine("[error] " + execErr.Error())
 			}
 			writeLine(fmt.Sprintf("──── [步骤 %d/%d] %s → %s (exit %d, %s) ────",
-				j+1, len(defs), step.Name, spr.Status, exit, time.Duration(spr.DurationMs).Round(time.Millisecond)))
+				j+1, len(defs), step.Name, spr.Status, exit, time.Duration(spr.DurationMs)*time.Millisecond))
 
 			if spr.Status == StatusSuccess && len(step.Artifacts) > 0 {
 				e.collectArtifacts(ctx, run.ID, i, j, step, stage, writeLine, spr)
@@ -1305,7 +1306,7 @@ func (e *Engine) finalize(run *Run, status, errMsg string) {
 	if status == StatusFailed {
 		log.Printf("[cicd] 运行 %s (%s) 失败: %s", run.ID, run.Pipeline, errMsg)
 	} else {
-		log.Printf("[cicd] 运行 %s (%s) %s, 耗时 %s", run.ID, run.Pipeline, status, time.Duration(run.DurationMs).Round(time.Millisecond))
+		log.Printf("[cicd] 运行 %s (%s) %s, 耗时 %s", run.ID, run.Pipeline, status, time.Duration(run.DurationMs)*time.Millisecond)
 	}
 	e.pruneRuns(run.PipelineID)
 	e.notify(run)
@@ -1342,6 +1343,23 @@ func (e *Engine) pruneRuns(pipelineID string) {
 	e.mu.Unlock()
 }
 
+// notifyTargetURL 计算通知请求的最终地址: 钉钉启用加签时在 URL 上追加 timestamp+sign
+// (sign = base64(HmacSHA256(secret, "<timestamp>\n<secret>")))。其余渠道原样返回。
+func notifyTargetURL(url, channel, secret string, now time.Time) string {
+	if channel != "dingtalk" || secret == "" {
+		return url
+	}
+	ts := now.UnixMilli()
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(fmt.Sprintf("%d\n%s", ts, secret)))
+	sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	sep := "&"
+	if !strings.Contains(url, "?") {
+		sep = "?"
+	}
+	return fmt.Sprintf("%s%stimestamp=%d&sign=%s", url, sep, ts, urlQueryEscape(sign))
+}
+
 // notify 终态通知(notifyURL, 10s 超时, 失败不重试)
 func (e *Engine) notify(run *Run) {
 	e.mu.RLock()
@@ -1358,22 +1376,10 @@ func (e *Engine) notify(run *Run) {
 	}
 	go func() {
 		body := buildNotifyBody(run, channel)
-		target := url
-		// 钉钉加签: timestamp+sign=HmacSHA256(secret, "<ts>\n<secret>") base64
-		if channel == "dingtalk" && secret != "" {
-			ts := time.Now().UnixMilli()
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write([]byte(fmt.Sprintf("%d\n%s", ts, secret)))
-			sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-			sep := "&"
-			if !strings.Contains(target, "?") {
-				sep = "?"
-			}
-			target = fmt.Sprintf("%s%stimestamp=%d&sign=%s", target, sep, ts, urlQueryEscape(sign))
-		}
+		target := notifyTargetURL(url, channel, secret, time.Now())
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 		if err != nil {
 			return
 		}
@@ -1408,7 +1414,7 @@ func notifyStatusText(status string) string {
 // buildNotifyBody 按渠道组装消息体; 空 channel 为通用 JSON(webhook 自用)
 func buildNotifyBody(run *Run, channel string) []byte {
 	title := fmt.Sprintf("OpsCore 流水线「%s」%s", run.Pipeline, notifyStatusText(run.Status))
-	info := fmt.Sprintf("触发: %s · 耗时: %s", run.Trigger, time.Duration(run.DurationMs).Round(time.Second))
+	info := fmt.Sprintf("触发: %s · 耗时: %s", run.Trigger, time.Duration(run.DurationMs)*time.Millisecond)
 	if run.Error != "" {
 		info += "\n失败原因: " + run.Error
 	}

@@ -1,6 +1,9 @@
 package cicd
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -72,6 +75,34 @@ func TestBuildNotifyBody(t *testing.T) {
 		t.Errorf("通用消息不符合预期: %v", generic)
 	}
 }
+
+func TestNotifyTargetURLDingtalkSign(t *testing.T) {
+	now := time.UnixMilli(1700000000123)
+	got := notifyTargetURL("https://oapi.dingtalk.com/robot/send?access_token=abc", "dingtalk", "SECxyz", now)
+	wantPrefix := "https://oapi.dingtalk.com/robot/send?access_token=abc&timestamp=1700000000123&sign="
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("钉钉加签 URL 前缀不符:\n got %s\nwant %s...", got, wantPrefix)
+	}
+	mac := hmac.New(sha256.New, []byte("SECxyz"))
+	mac.Write([]byte("1700000000123\nSECxyz"))
+	wantSign := urlQueryEscape(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	if !strings.HasSuffix(got, wantSign) {
+		t.Fatalf("钉钉加签值与预期不符:\n got %s\nwant suffix %s", got, wantSign)
+	}
+	// 无 secret / 非钉钉渠道: 原样返回
+	if notifyTargetURL("http://x/y", "dingtalk", "", now) != "http://x/y" {
+		t.Error("无 secret 时不应加签")
+	}
+	if notifyTargetURL("http://x/y", "feishu", "SECxyz", now) != "http://x/y" {
+		t.Error("非钉钉渠道不应加签")
+	}
+	// URL 无查询串时用 ?
+	got2 := notifyTargetURL("http://x/y", "dingtalk", "S", now)
+	if !strings.HasPrefix(got2, "http://x/y?timestamp=") {
+		t.Errorf("无查询串时应以 ? 拼接, 实际 %s", got2)
+	}
+}
+
 
 func TestImportPipelineRenameOnConflict(t *testing.T) {
 	e := newTestEngine(t)
